@@ -3,7 +3,7 @@
   "displayName": "xpTURN.ContentLink",
   "version": "0.1.0",
   "unity": "6000.6",
-  "description": "Scope-owned asset loading for Unity 6.6 content directories. Sprites, prefabs, scenes and audio are loaded by name and owned by a GameObject, scene or explicit scope that ends on its own, so a forgotten release costs a little peak memory instead of leaking forever. Includes serialized links with an inspector drawer, owned instances and content scenes, a build pipeline (profiles, build window, size-split archives for download, post-processing, command line) and an editor simulation that plays straight from the project without a build.",
+  "description": "Scope-owned asset loading for Unity 6.6 content directories. Assets are loaded by name and owned by a GameObject, scene or explicit scope, so a forgotten release cannot leak forever. Includes serialized links, owned instances, content scenes, a build pipeline (profiles, window, split archives, CLI) and a no-build editor simulation.",
   "license": "Apache-2.0",
   "documentationUrl": "https://github.com/xpTURN/ContentLink/blob/main/README.md",
   "changelogUrl": "https://github.com/xpTURN/ContentLink/blob/main/com.xpTURN.ContentLink/CHANGELOG.md",
