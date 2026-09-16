@@ -1,0 +1,102 @@
+name: Check
+
+# Verifies pushed source: builds the package against the API stubs and runs the dotnet
+# verification harness (com.xpTURN.ContentLink/Tests~/Verify), checks that every Unity
+# source file carries its .meta sidecar, and checks that the version manifests agree.
+# The Unity Test Runner suites (tools/run-all-tests.sh: EditMode, PlayMode, player) are
+# not run here — they need a licensed editor.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'Docs/**'
+      - '*.png'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  harness:
+    name: Verification harness (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Tests~/Verify targets net8.0.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/nuget.config') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # The harness is a console program, not a `dotnet test` project: it prints one
+      # "  PASS <check>" / "  FAIL <check>" line per check and ends with "ALL PASS" or
+      # "<n> FAIL". run-all-tests.sh compiles the package against the stubs, runs it, parses
+      # that output and exits non-zero on any failure (or on no final line: a build error).
+      - name: Build & run
+        run: tools/run-all-tests.sh --dotnet-only
+
+      # Job logs need repo admin rights to download, so surface the failed checks as
+      # annotations + job summary instead.
+      - name: Summarize harness results
+        if: always()
+        run: .github/scripts/summarize-harness.py Logs/test-results
+
+      - name: Upload harness log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-results
+          path: Logs/test-results/harness-*.log
+          if-no-files-found: warn
+
+  sidecar-check:
+    name: Unity sidecars are complete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # A file without its .meta is invisible to Unity: a .cs is left out of the generated
+      # csproj and the assembly stops compiling, an asset simply does not exist — while the
+      # dotnet harness stays green because it never reads .meta. Checked on the tracked files
+      # of the package and of the two Unity projects.
+      - name: Check .meta sidecars
+        run: .github/scripts/check-asset-sidecars.sh
+
+  version-check:
+    name: Version manifests agree
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check versions
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            .github/scripts/check-versions.sh --tag "${GITHUB_REF_NAME}"
+          else
+            .github/scripts/check-versions.sh
+          fi

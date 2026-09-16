@@ -1,0 +1,23 @@
+{
+  "name": "com.xpturn.contentlink",
+  "displayName": "xpTURN.ContentLink",
+  "version": "0.1.0",
+  "unity": "6000.6",
+  "description": "Scope-owned asset loading for Unity 6.6 content directories. Sprites, prefabs, scenes and audio are loaded by name and owned by a GameObject, scene or explicit scope that ends on its own, so a forgotten release costs a little peak memory instead of leaking forever. Includes serialized links with an inspector drawer, owned instances and content scenes, a build pipeline (profiles, build window, size-split archives for download, post-processing, command line) and an editor simulation that plays straight from the project without a build.",
+  "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/xpTURN/ContentLink/blob/main/README.md",
+  "changelogUrl": "https://github.com/xpTURN/ContentLink/blob/main/com.xpTURN.ContentLink/CHANGELOG.md",
+  "licensesUrl": "https://github.com/xpTURN/ContentLink/blob/main/LICENSE",
+  "keywords": [
+    "xpTURN",
+    "content directory",
+    "asset management",
+    "loadable",
+    "memory leak"
+  ],
+  "author": {
+    "name": "xpTURN",
+    "email": "xpturn@gmail.com",
+    "url": "https://github.com/xpTURN"
+  }
+}

@@ -1,0 +1,7 @@
+{
+    "name": "xpTURN.ContentLink.Editor",
+    "rootNamespace": "xpTURN.ContentLink.Editor",
+    "references": ["xpTURN.ContentLink"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": []
+}

@@ -1,0 +1,193 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7401525409182624120
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 5423060067416562199}
+  - component: {fileID: 5410026729493444310}
+  m_Layer: 0
+  m_Name: DeclaringLinks
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &5423060067416562199
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7401525409182624120}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5410026729493444310
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7401525409182624120}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2b0e5fc5719f84b5a9588e52e68465aa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Linkers
+  assetReference:
+    m_AssetGUID: 
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 0
+  spriteReference:
+    m_AssetGUID: 480930fe4247142129cf7992922043e8
+    m_SubObjectName: piece_2_2_0
+    m_SubObjectType: UnityEngine.Sprite, UnityEngine.CoreModule, Version=0.0.0.0,
+      Culture=neutral, PublicKeyToken=null
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  atlasedSpriteReference:
+    m_AssetGUID: cf1b2283d28ff47658f9318abda41f71
+    m_SubObjectName: piece_1_3
+    m_SubObjectType: UnityEngine.Sprite, UnityEngine.CoreModule, Version=0.0.0.0,
+      Culture=neutral, PublicKeyToken=null
+    m_SubObjectGUID: 9185f8b0a6ec2474b94d4212208f279b
+    m_EditorAssetChanged: 1
+  link:
+    m_AssetName: Prefabs/Empty.prefab
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  gameObjectLink:
+    m_AssetName: Prefabs/Empty.prefab
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  spriteLink:
+    m_AssetName: Atlas/piece_2_3.jpg
+    m_SubObjectName: piece_2_3
+    m_SubObjectType: UnityEngine.Sprite, UnityEngine.CoreModule, Version=0.0.0.0,
+      Culture=neutral, PublicKeyToken=null
+    m_EditorAssetChanged: 1
+  atlasSpriteLink:
+    m_AssetName: Atlas/SampleAtlas.spriteatlasv2
+    m_SubObjectName: piece_2_1
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  textureLink:
+    m_AssetName: Textures/sample.jpg
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  texture2DLink:
+    m_AssetName: Textures/sample.jpg
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  texture3DLink:
+    m_AssetName: Textures/Example3DTexture.asset
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  typedLink:
+    m_AssetName: Wav/descent.mp3
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  materialLink:
+    m_AssetName: Materials/Test.mat
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  ref:
+    m_AssetGUID: 23f2109d9f7d945669a1e705e9e3f1ac
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  gameObjectRef:
+    m_AssetGUID: 23f2109d9f7d945669a1e705e9e3f1ac
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  spriteRef:
+    m_AssetGUID: b5389a2ca524540c2a5549de1092242d
+    m_SubObjectName: piece_3_1
+    m_SubObjectType: UnityEngine.Sprite, UnityEngine.CoreModule, Version=0.0.0.0,
+      Culture=neutral, PublicKeyToken=null
+    m_SubObjectGUID: b5389a2ca524540c2a5549de1092242d
+    m_EditorAssetChanged: 1
+  atlasSpriteRef:
+    m_AssetGUID: cf1b2283d28ff47658f9318abda41f71
+    m_SubObjectName: piece_3_1
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  textureRef:
+    m_AssetGUID: 901221460c3a046f8b3dd3c0aa1631a4
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  texture2DRef:
+    m_AssetGUID: 901221460c3a046f8b3dd3c0aa1631a4
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  texture3DRef:
+    m_AssetGUID: 55a77c0295c5e48b2845f36f031517b7
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  typedRef:
+    m_AssetGUID: 2cf6474698fdc4ace8dbd2a4dc26441a
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  materialRef:
+    m_AssetGUID: 3ddeed47717d744969a51b1253ce9ca6
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  assetLinkSpawner:
+    m_AssetName: Prefabs/Empty.prefab
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  sceneLink:
+    m_AssetName: Scenes/Empty1.unity
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  sceneRef:
+    m_AssetGUID: 6a69d13e01a764f3aa4035c9b9a6934d
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_SubObjectGUID: 
+    m_EditorAssetChanged: 1
+  linkHavLabels:
+    m_AssetName: Prefabs/Dog.prefab
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1
+  linkHavLabels2:
+    m_AssetName: Prefabs/Dog.prefab
+    m_SubObjectName: 
+    m_SubObjectType: 
+    m_EditorAssetChanged: 1

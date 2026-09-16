@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);UNITY_EDITOR</DefineConstants>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Stubs.cs;Test.cs;../../Runtime/*.cs;../../Editor/*.cs" />
+    <!-- IMGUI drawers are verified in the Unity EditMode suite, not against these stubs.
+         The glob stays so any other new Editor file still has to compile here. -->
+    <Compile Remove="../../Editor/*Drawer.cs" />
+    <!-- The build window is IMGUI too; its logic lives in ContentBuildWindowModel.cs, which stays in. -->
+    <Compile Remove="../../Editor/*Window.cs" />
+  </ItemGroup>
+</Project>

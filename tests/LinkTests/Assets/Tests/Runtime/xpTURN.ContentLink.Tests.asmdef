@@ -1,0 +1,22 @@
+{
+    "name": "xpTURN.ContentLink.Tests",
+    "rootNamespace": "xpTURN.ContentLink.Tests",
+    "references": [
+        "xpTURN.ContentLink",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
