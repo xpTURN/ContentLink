@@ -15,13 +15,19 @@ MonoBehaviour:
   m_Entries:
   - name: Icons/shared
     id: {fileID: 2800000, loadable: 1, guid: 15dad587430c477d9215f1313c1aec2a, type: 3}
+    guid: 15dad587430c477d9215f1313c1aec2a
+    sub: 
   - name: 'Icons/shared[shared]'
     id: {fileID: 21300000, loadable: 1, guid: 15dad587430c477d9215f1313c1aec2a, type: 3}
+    guid: 15dad587430c477d9215f1313c1aec2a
+    sub: shared
   m_Scenes:
   - name: Scenes/One
     id:
       m_SceneGUID: 28afaf2c2aba44a3b9c07adebc1fa2a3
+    guid: 28afaf2c2aba44a3b9c07adebc1fa2a3
   - name: Scenes/Two
     id:
       m_SceneGUID: d925c1e576ae4991bbf43a74c80125e5
+    guid: d925c1e576ae4991bbf43a74c80125e5
   m_SourceRoot: Assets/TestContent/C

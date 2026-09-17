@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.2.0] - 2026-09-18
+
+GUID references that survive moves and renames (`ContentRef<T>`, `ContentSceneRef`), and links that keep a sprite's
+name apart from its main name.
+
+### Serialized links
+- `ContentRef<T>` and `ContentSceneRef` hold an asset's GUID (and a sprite's name) instead of its path, so moving or
+  renaming the file does not break them. The fields have the names of Addressables' `AssetReference`
+  (`m_AssetGUID`, `m_SubObjectName`), so changing an `AssetReferenceSprite` field to `ContentRef<Sprite>` keeps its data.
+- A reference holds a key only — no load state, copies are harmless — and loads through a scope:
+  `this.Scope().LoadAsync(icon)`, `Load`, `InstantiateAsync` (a component type is fine: the prefab is instantiated),
+  `Release`, `Contains`, `ShareTo`, `LoadSceneAsync(level)`. `ContentService` has `TryGetName` / `TryGetSceneName`,
+  `Contains` / `ContainsScene`, `Acquire` / `AcquireAsync` and `LoadSceneAsync` for references.
+- A reference resolves to the catalog name the build recorded for its GUID and then loads by name, so a reference and
+  a name load of the same asset are one slot and one scope key. `RuntimeKeyIsValid()` means "a registered catalog can
+  load it", as for `ContentLink`; `IsSet` says whether a value is set. Lookups allocate nothing, hit or miss; a load
+  that cannot resolve logs the reference and why (not set, a scene where an asset was expected or the reverse, a
+  sprite name the asset does not have).
+- `ContentLink<T>` stores a sprite as its main name and its sprite name (`m_Name`, `m_SubObjectName` — the field names
+  of `ContentRef`): `("Icons/sheet", "s0")` loads the catalog name `Icons/sheet[s0]`, the same slot and scope key as a
+  name or a reference load. `SetName(name, subObjectName)`, the constructor and `SubObjectName` take it, and the load
+  and rename refusals name the sprite. A whole name with no sprite name still loads as it is, so a data-driven
+  `SetName(table.IconName)` keeps working.
+- **Changed:** `ContentLink<T>.Name` of a sprite link is the main name (`Icons/sheet`, not `Icons/sheet[s0]`), and
+  `SetName(name)` clears the sprite name: copy a link with `SetName(a.Name, a.SubObjectName)`.
+- `ContentService.TryGetName(name, sub, out catalogName)` and `Contains(name, sub)` answer whether a (main name,
+  sprite name) pair can be loaded. After a pair's first lookup they allocate nothing — a miss too, in a player.
+- Reference drawer: pick an asset to store its GUID; a read-only, copyable line shows the name it resolves to, red for
+  a GUID with no asset, a renamed slice or the wrong type, amber for a file that is not built yet, lies outside the
+  content roots, or is a sprite atlas. Click the link icon beside that line to switch between the name and the GUID.
+  Values carried over from Addressables are shown, never rejected.
+- Link drawer: picking a sprite writes both fields; the name line shows them in the catalog's form `Icons/sheet[s0]`,
+  and a name typed there is split against the catalogs (a name no catalog has stays whole).
+
+### Building content
+- Catalog entries record the asset's GUID and a sprite's sub-asset name (`guid`, `sub`), and scene entries the scene's
+  GUID. Rebuild content directories to resolve references against them.
+
+### Editor simulation
+- The simulation answers references too, from the same folder scan, and follows a file moved during Play. With
+  nested content roots a reference takes the name under the root that is served.
+- **Fixed:** a name the folder scan cannot see (a sprite `name[sub]`, a file added during Play) was filed under the
+  deepest content root holding the file, so with nested profile roots it could be refused even though its own root
+  was served.
+
 ## [0.1.0] - 2026-09-16
 
 First release of ContentLink for Unity 6.6 content directories. Everything below is new.

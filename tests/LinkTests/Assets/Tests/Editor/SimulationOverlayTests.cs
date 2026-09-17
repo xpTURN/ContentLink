@@ -1,7 +1,9 @@
+using System.Collections;
 using System.IO;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 using xpTURN.ContentLink.Editor;
 
 namespace xpTURN.ContentLink.Tests.Editor
@@ -97,6 +99,45 @@ namespace xpTURN.ContentLink.Tests.Editor
             ContentLinkSimulation.Drop();
             Assert.That(ContentLinkSimulation.TryGetPath("volatile", out _, out _), Is.False,
                 "the overlay must be volatile — Play exit drops it and nothing is stored");
+        }
+
+        // ───────────── references (ContentRef) ─────────────
+
+        [UnityTest]
+        public IEnumerator O4_AFilesGuid_AnswersItsName_AndAMoveAnswersTheNewOne()
+        {
+            bool enabled = ContentLinkSimulation.Enabled;
+            ContentLinkSimulation.Enabled = true;   // the reference seam answers only while the simulation is on (or a directory is served from the project)
+            try
+            {
+                ContentDirectoryBuilder.SourceRoot = k_Root;
+                ContentDirectoryBuilder.CatalogPath = m_TempCatalog;
+                Assert.That(ContentDirectoryBuilder.UpdateCatalog(), Is.True);
+                var path = $"{k_Root}/late.txt";
+                File.WriteAllText(path, "late");
+                AssetDatabase.ImportAsset(path);
+                ContentLinkEditorUtility.Invalidate();
+
+                ContentLinkSimulation.Rebuild();
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                Assert.That(ContentLinkSimulation.OverlayNameFor(guid, "", false), Is.EqualTo("late"), "the scan did not answer the file's GUID with its name");
+                Assert.That(ContentLinkSimulation.OverlayNameFor(guid, "", true), Is.Null, "a text file is not a scene");
+                Assert.That(ContentLinkSimulation.OverlayNameFor("0123456789abcdef0123456789abcdef", "", false), Is.Null, "an unknown GUID");
+
+                AssetDatabase.CreateFolder(k_Root, "Sub");
+                Assert.That(AssetDatabase.MoveAsset(path, $"{k_Root}/Sub/late.txt"), Is.Empty, "the move itself failed");
+                string now = null;
+                int frames = -1;
+                for (int i = 0; i <= 30; ++i)
+                {
+                    now = ContentLinkSimulation.OverlayNameFor(guid, "", false);
+                    if (now == "Sub/late") { frames = i; break; }
+                    yield return null;
+                }
+                Debug.Log($"[ContentLink.Tests] edit mode: after MoveAsset the GUID answered '{now}' after {frames} editor update(s)");
+                Assert.That(frames, Is.GreaterThanOrEqualTo(0), "the project change did not drop the stale answer");
+            }
+            finally { ContentLinkSimulation.Enabled = enabled; }
         }
     }
 }

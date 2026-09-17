@@ -13,6 +13,7 @@ using Object = UnityEngine.Object;
 class IconView : MonoBehaviour { public ContentLinkSprite icon = new ContentLinkSprite(); }
 class SiblingKiller : MonoBehaviour { public GameObject victim; void OnDestroy() { if (victim != null) Object.Destroy(victim); } }
 class SceneHolder : MonoBehaviour { public ContentSceneLink level = new ContentSceneLink(); }
+class RefEnemy : MonoBehaviour { }
 
 // Drawer fixture stand-in: the field shapes that AssetTypeOf has to unwrap
 class LinkFields
@@ -23,6 +24,16 @@ class LinkFields
     public ContentLink<Texture2D> direct = new ContentLink<Texture2D>();
     public ContentSceneLink scene = new ContentSceneLink();
     public int notALink;
+}
+
+// Drawer fixture stand-in for references: the shapes AssetTypeOfRef has to unwrap
+class RefFields
+{
+    public ContentRef<Sprite> one;
+    public ContentRef<Sprite>[] many = new ContentRef<Sprite>[0];
+    public System.Collections.Generic.List<ContentRef<GameObject>> list = new();
+    public ContentSceneRef scene;
+    public ContentLinkSprite link = new ContentLinkSprite();
 }
 
 static class Test
@@ -117,7 +128,7 @@ static class Test
         Object.Destroy(view.gameObject); Tick();
         Check(Ref(SWORD) == 0, "GameObject destroyed → released at end of frame");
 
-        Console.WriteLine("1b) the engine throws from a load (F-11 · injected: the stub's next load throws after it has started)");
+        Console.WriteLine("1b) the engine throws from a load (injected: the stub's next load throws after it has started)");
         {
             const int X11 = SWORD + 900;
             FakeEngine.Assets[X11] = new Sprite { name = "x11" }; FakeEngine.IdDir[X11] = "F11";
@@ -207,7 +218,7 @@ static class Test
         int w3 = Warn(() => SceneManager.UnloadScene(sceneB)); Tick();
         Check(w3 == 1 && forgotten.IsDisposed && Ref(SHIELD) == 0, "missed Dispose → reclaimed on scene unload + one leak warning");
 
-        Console.WriteLine("3b) the scope tree's child list: removal in any order keeps it consistent (O-1 · Plan-O1-ChildIndex)");
+        Console.WriteLine("3b) the scope tree's child list: removal in any order keeps it consistent");
         {
             var fIdx3 = typeof(ContentScope).GetField("m_IndexInParent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var fKids3 = typeof(ContentScope).GetField("m_Children", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -239,7 +250,7 @@ static class Test
             bool invRoot3 = Invariant3(ContentScope.Root, out var whyR3);
             Check(allGone3 && parent3.Children.Count == 0 && (fIdx3 == null || (int)fIdx3.GetValue(parent3) == -1) && invRoot3, $"③ the cascade disposes every remaining child; the parent leaves Root; Root stays consistent (actual: {whyR3})");
 
-            // ④ / ⑤ the scene handoff (the §5 move scenario) keeps both lists consistent
+            // ④ / ⑤ the scene handoff, where an object moves to another scene, keeps both lists consistent
             var sc3a = NewScene(31, "O1A"); var sc3b = NewScene(32, "O1B");
             var goA3 = NewGO("A", sc3a); goA3.Scope().Load<Sprite>("Icons/sword");
             var goB3 = NewGO("B", sc3a); var lb3 = goB3.Scope().Load<Sprite>("Icons/shield");
@@ -267,7 +278,7 @@ static class Test
             bool invRoot3c = Invariant3(ContentScope.Root, out var whyR3c);
             Check(scopeC3.IsDisposed && Ref(SWORD) == 0 && Debug.Errors == errs3 && Debug.Warnings == warns3 && invRoot3c, $"⑥ OnDestroy destroying siblings during the unload: everything disposed, assets released, no log, Root consistent (actual: ref={Ref(SWORD)} errors=+{Debug.Errors - errs3} warnings=+{Debug.Warnings - warns3} {whyR3c})");
 
-            // ⑦ / ⑧ a consumer that casts Children back to List and mutates it: still no exception, and the parent's cascade clears what was left (D5)
+            // ⑦ / ⑧ a consumer that casts Children back to List and mutates it: still no exception, and the parent's cascade clears what was left
             var parentX3 = ContentScope.Root.CreateChild("O1X");
             var kidsX3 = new System.Collections.Generic.List<ContentScope>(); for (int i = 0; i < 50; ++i) kidsX3.Add(parentX3.CreateChild("x" + i));
             var raw3 = (System.Collections.Generic.List<ContentScope>)parentX3.Children;
@@ -515,7 +526,7 @@ static class Test
             Check(ContentService.UnregisterDirectory(dirAtlas), "Atlas directory cleanup");
         }
 
-        Console.WriteLine("10d) a scope's entries after a forced unregistration killed their leases (F-6)");
+        Console.WriteLine("10d) a scope's entries after a forced unregistration killed their leases");
         {
             const int SIXA = 70, SIXB = 71;
             FakeEngine.Assets[SIXA] = new Sprite { name = "sixa" }; FakeEngine.IdDir[SIXA] = "Six";
@@ -588,7 +599,7 @@ static class Test
             Check(ContentService.LoadedSceneCount == 0 && SceneManager.loadedSceneCount == 1, "cleanup");
         }
 
-        Console.WriteLine("12b) which instance a scope's scene load claims (F-7)");
+        Console.WriteLine("12b) which instance a scope's scene load claims");
         {
             Scene Newest12() => FakeEngine.LoadedScenes[FakeEngine.LoadedScenes.Count - 1];
             SceneManager.LoadSceneAsync(SceneId(SC_ONE), new LoadSceneParameters(LoadSceneMode.Additive)); FakeEngine.CompleteLoads();
@@ -1159,7 +1170,7 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
         }
 
-        Console.WriteLine("22b) a source root with a trailing separator (F-3)");
+        Console.WriteLine("22b) a source root with a trailing separator");
         {
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
@@ -1208,7 +1219,7 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
         }
 
-        Console.WriteLine("22c) the output path and the source root must not contain each other (F-5)");
+        Console.WriteLine("22c) the output path and the source root must not contain each other");
         {
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
@@ -1329,7 +1340,7 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
         }
 
-        Console.WriteLine("23b) fresh profile with the default catalog path — the folder does not exist yet (F-1)");
+        Console.WriteLine("23b) fresh profile with the default catalog path — the folder does not exist yet");
         {
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
@@ -1392,7 +1403,7 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
         }
 
-        Console.WriteLine("23c) a build that fails before the engine runs leaves the previous output alone (F-4)");
+        Console.WriteLine("23c) a build that fails before the engine runs leaves the previous output alone");
         {
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
@@ -1598,7 +1609,7 @@ static class Test
             Check(Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space).Length == 0 && !FakeEngine.Registered.Contains(mountPath),
                   "ResetStatics: releases the previous session's registrations and unmounts the archives in our namespace");
 
-            // Partitioner selection and the packer's guards (D12): the profile names the type; the validator and the purity check refuse a bad answer
+            // Partitioner selection and the packer's guards: the profile names the type; the validator and the purity check refuse a bad answer
             Debug.Verbose = false;
             pk2.Partitioner = ContentBuildWindowModel.NameOf(typeof(ContentArchivePacker.SequentialFillPartitioner));
             var rs = ContentBuildRunner.Build(pk2, showProgress: false);
@@ -1661,7 +1672,7 @@ static class Test
             Init(typeof(ContentService), "ResetStatics");
         }
 
-        Console.WriteLine("24b) the session reset leaves other systems' namespaces alone (F-9)");
+        Console.WriteLine("24b) the session reset leaves other systems' namespaces alone");
         {
             FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear(); FakeEngine.MountFrames = 0;
             Init(typeof(ContentService), "ResetStatics");
@@ -1699,7 +1710,7 @@ static class Test
             Init(typeof(ContentService), "ResetStatics");
         }
 
-        Console.WriteLine("24c) an index that lists no archives is refused, not thrown (F-10)");
+        Console.WriteLine("24c) an index that lists no archives is refused, not thrown");
         {
             FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear(); FakeEngine.Registered.Clear(); FakeEngine.MountFrames = 0;
             Init(typeof(ContentService), "ResetStatics");
@@ -1750,7 +1761,7 @@ static class Test
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
             FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
-            FakeEngine.Folders.Add("Assets/ContentCatalogs");   // isolated from F-1: the window's default catalog folder exists in this project; 23b covers the missing-folder case
+            FakeEngine.Folders.Add("Assets/ContentCatalogs");   // isolated: the window's default catalog folder exists in this project; 23b covers the missing-folder case
             ContentLinkEditorUtility.Invalidate();
             Init(typeof(ContentService), "ResetStatics");
             var settings = ContentBuildSettings.instance;
@@ -2057,7 +2068,7 @@ static class Test
             FakeEngine.Dirs.Remove("real"); FakeEngine.Dirs.Remove("real2");
         }
 
-        Console.WriteLine("27b) a name the simulation resolved under a REAL directory's root (NoDirectory) vs. unregistering directories (F-2)");
+        Console.WriteLine("27b) a name the simulation resolved under a REAL directory's root (NoDirectory) vs. unregistering directories");
         {
             Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");   // Root was disposed by the quit scenario
             FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Refs.Clear();
@@ -2102,7 +2113,7 @@ static class Test
             Debug.Verbose = true;
             Check(forced && Ref(OTHER2) == 0 && s.Contains("Icons/new") && Ref(NEW) == 1, $"④ force on 'other' releases only its own asset; the simulated one is untouched (actual: forced={forced} other={Ref(OTHER2)} held={s.Contains("Icons/new")} ref={Ref(NEW)})");
 
-            // regression guard (IMP001 F-2 ⓑ): an id no catalog carries is still 'unknown' — it blocks, and force frees it
+            // regression guard: an id no catalog carries is still 'unknown' — it blocks, and force frees it
             var hOrphan = ContentService.Acquire<Texture2D>(new LoadableObjectId { value = ORPHAN });
             Debug.Verbose = false;
             bool refusedMain = !ContentService.UnregisterDirectory(main);
@@ -2218,7 +2229,7 @@ static class Test
             Init(typeof(ContentService), "ResetStatics");
         }
 
-        Console.WriteLine("28b) the simulation toggle turned off during Play: exit summary and reset (F-8)");
+        Console.WriteLine("28b) the simulation toggle turned off during Play: exit summary and reset");
         {
             Init(typeof(ContentService), "ResetStatics");
             FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
@@ -2289,7 +2300,7 @@ static class Test
             ContentLinkSimulation.Enabled = false;
             Check(hadOverlay && !ContentLinkSimulation.TryGetPath("Icons/a", out _, out _), "⑤ outside Play the toggle going off drops the overlay at once (as before)");
 
-            // Play 4: off then on again before the exit (the §28 order) still summarises
+            // Play 4: off then on again before the exit still summarises
             ContentLinkSimulation.Enabled = true;
             UnityEditor.EditorApplication.isPlaying = true;
             UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.EnteredPlayMode);
@@ -2388,7 +2399,7 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
         }
 
-        Console.WriteLine("OBS) observations O-2·3·4·6·7·8·9·10·11");
+        Console.WriteLine("OBS) build, packing, registration and owner-overload observations");
         {
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
             ContentDirectoryBuilder.ClearOverrides();
@@ -2407,22 +2418,22 @@ static class Test
             FakeEngine.AddProjectAsset("Assets/Content/Materials/m.mat", new Object { name = "m" });
             string ErrsO(ContentBuildResult x) => string.Join(" | ", x.Errors);
 
-            // O-2: a packed build whose manifest archive alone is over a tiny limit — no warning for it
+            // a packed build whose manifest archive alone is over a tiny limit — no warning for it
             var pkO = settingsO.Add("PkO"); pkO.SourceRoot = "Assets/Content"; pkO.OutputPath = System.IO.Path.Combine(tmpO, "pko");
             pkO.Archive = ContentBuildSettings.ArchiveMode.Packed; pkO.Compression = ContentBuildSettings.CompressionKind.LZ4; pkO.CleanBuildCache = true;
             pkO.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Icons", CreateAt = "Assets/Cat/icons_o.asset" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Materials", CreateAt = "Assets/Cat/materials_o.asset" } };
             ContentArchivePacker.TestLimitBytes = 100;
             Debug.Verbose = false; int warnO2 = Debug.Warnings; var rO2 = ContentBuildRunner.Build(pkO, showProgress: false); Debug.Verbose = true;
-            Check(rO2.Succeeded && Debug.Warnings == warnO2, $"O-2 ① the manifest archive alone over the limit is not warned about — it is exempt by design (actual: ok={rO2.Succeeded} warnings=+{Debug.Warnings - warnO2}: \"{Debug.LastWarning}\")");
+            Check(rO2.Succeeded && Debug.Warnings == warnO2, $"the manifest archive alone over the limit is not warned about — it is exempt by design (actual: ok={rO2.Succeeded} warnings=+{Debug.Warnings - warnO2}: \"{Debug.LastWarning}\")");
 
-            // O-6: a manifest that names no file by ContentHash (older shape) — the packer says the keys fell back to names
+            // a manifest that names no file by ContentHash (older shape) — the packer says the keys fell back to names
             UnityEditor.BuildPipeline.ManifestWithoutContentHash = true;
             Debug.Verbose = false; int warnO6 = Debug.Warnings; var rO6 = ContentBuildRunner.Build(pkO, showProgress: false); Debug.Verbose = true;
             UnityEditor.BuildPipeline.ManifestWithoutContentHash = false;
-            Check(rO6.Succeeded && Debug.Warnings == warnO6 + 1 && Debug.LastWarning.Contains("keyed by name"), $"O-6 ① a manifest without ContentHash is warned about like a missing manifest (actual: ok={rO6.Succeeded} warnings=+{Debug.Warnings - warnO6}: \"{Debug.LastWarning}\")");
+            Check(rO6.Succeeded && Debug.Warnings == warnO6 + 1 && Debug.LastWarning.Contains("keyed by name"), $"a manifest without ContentHash is warned about like a missing manifest (actual: ok={rO6.Succeeded} warnings=+{Debug.Warnings - warnO6}: \"{Debug.LastWarning}\")");
             ContentArchivePacker.TestLimitBytes = null;
 
-            // O-11: a truncated archive is refused before anything is mounted
+            // a truncated archive is refused before anything is mounted
             var rO11 = ContentBuildRunner.Build(pkO, showProgress: false);
             var idxO11 = ContentArchives.ReadIndex(pkO.OutputPath);
             var archO11 = System.IO.Path.Combine(pkO.OutputPath, idxO11.Archives[1].File);
@@ -2433,11 +2444,11 @@ static class Test
             try { rcO11 = ContentService.RegisterPackedDirectoryAsync(pkO.OutputPath).GetAwaiter().GetResult(); } catch (Exception e) { exO11 = e.GetType().Name; }
             Debug.Verbose = true;
             Check(rcO11 == -1 && exO11 == "" && Debug.Errors == errO11 + 1 && Debug.LastError.Contains("bytes on disk") && FakeEngine.Mounts.Count == 0 && !FakeEngine.Namespaces.Contains(nsO11),
-                  $"O-11 ① an archive whose size differs from the index is refused with -1 and one error, before any mount (actual: rc={rcO11} exception={(exO11 == "" ? "none" : exO11)} errors=+{Debug.Errors - errO11} mounts={FakeEngine.Mounts.Count} last=\"{Debug.LastError}\")");
+                  $"an archive whose size differs from the index is refused with -1 and one error, before any mount (actual: rc={rcO11} exception={(exO11 == "" ? "none" : exO11)} errors=+{Debug.Errors - errO11} mounts={FakeEngine.Mounts.Count} last=\"{Debug.LastError}\")");
             if (rcO11 >= 0) ContentService.UnregisterDirectory(rcO11, force: true);
             FakeEngine.Dirs.Remove("ns:/" + nsO11 + "/" + ContentArchives.MountPrefix + "/"); FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear();
 
-            // O-10: an exception inside Build becomes a failed result with the reason — no exception escapes
+            // an exception inside Build becomes a failed result with the reason — no exception escapes
             var thO = settingsO.Add("ThrowO"); thO.SourceRoot = "Assets/Content"; thO.OutputPath = System.IO.Path.Combine(tmpO, "throw"); thO.Archive = ContentBuildSettings.ArchiveMode.None;
             thO.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/throw_o.asset" } };
             UnityEditor.BuildPipeline.ThrowNextBuild = true;
@@ -2445,16 +2456,16 @@ static class Test
             try { rO10 = ContentBuildRunner.Build(thO, showProgress: false); } catch (Exception e) { exO10 = e.GetType().Name; }
             string lastErrO10 = Debug.LastError; Debug.Verbose = true; UnityEditor.BuildPipeline.ThrowNextBuild = false;
             Check(exO10 == "" && rO10 != null && !rO10.Succeeded && rO10.Errors.Exists(x => x.Contains("boom")) && lastErrO10.Contains("boom"),
-                  $"O-10 ① a stage that throws makes a failed result that carries the reason, and the summary shows it (actual: exception={(exO10 == "" ? "none" : exO10)} errors={(rO10 != null ? ErrsO(rO10) : "-")} summary=\"{lastErrO10.Split('\n')[0]}\")");
+                  $"a stage that throws makes a failed result that carries the reason, and the summary shows it (actual: exception={(exO10 == "" ? "none" : exO10)} errors={(rO10 != null ? ErrsO(rO10) : "-")} summary=\"{lastErrO10.Split('\n')[0]}\")");
 
-            // O-7: a profile name with a path character fails validation
+            // a profile name with a path character fails validation
             var badO7 = settingsO.Add("bad/name"); var okO7 = settingsO.Add("good-name_1");
             var vBad = badO7 != null ? settingsO.Validate(badO7) : new System.Collections.Generic.List<string> { "(Add refused)" };
             var vOk = settingsO.Validate(okO7);
             Check(badO7 != null && vBad.Exists(x => x.Contains("cannot be in a file name")) && !vOk.Exists(x => x.Contains("cannot be in a file name")),
-                  $"O-7 ① 'bad/name' fails validation naming the rule; 'good-name_1' passes (actual: bad={string.Join(" | ", vBad)} good={string.Join(" | ", vOk)})");
+                  $"'bad/name' fails validation naming the rule; 'good-name_1' passes (actual: bad={string.Join(" | ", vBad)} good={string.Join(" | ", vOk)})");
 
-            // O-8: an archive name with ':' is rejected on every platform
+            // an archive name with ':' is rejected on every platform
             {
                 var sizesO = new System.Collections.Generic.Dictionary<string, long> { ["a.cf"] = 4, ["BuildManifestHash.txt"] = 1, ["abc123.json"] = 2 };
                 var inO = new ArchivePartitionInput { ProfileName = "T", LimitBytes = 8, Files = new[] { "a.cf", "BuildManifestHash.txt", "abc123.json" }, Sizes = sizesO, ManifestFiles = new[] { "BuildManifestHash.txt", "abc123.json" } };
@@ -2462,38 +2473,38 @@ static class Test
                 bool okO8 = ArchivePartitionValidator.Validate(inO, new[] { Grp("T.m.archive", "BuildManifestHash.txt", "abc123.json"), Grp("T:x.archive", "a.cf") }, errsO8, warnsO8);
                 var errsO8b = new System.Collections.Generic.List<string>();
                 bool okO8b = ArchivePartitionValidator.Validate(inO, new[] { Grp("T.m.archive", "BuildManifestHash.txt", "abc123.json"), Grp("T?x.archive", "a.cf") }, errsO8b, null);
-                Check(!okO8 && errsO8.Exists(x => x.Contains("T:x.archive")) && !okO8b && errsO8b.Exists(x => x.Contains("T?x.archive")), $"O-8 ① ':' and '?' in an archive name are rejected here on macOS too (actual: colon ok={okO8} question ok={okO8b})");
+                Check(!okO8 && errsO8.Exists(x => x.Contains("T:x.archive")) && !okO8b && errsO8b.Exists(x => x.Contains("T?x.archive")), $"':' and '?' in an archive name are rejected here on macOS too (actual: colon ok={okO8} question ok={okO8b})");
             }
 
-            // O-9: the CLI's 'all' value ignores case like its keys
-            Check(ContentBuildCLI.Parse(new[] { "-contentlink.profile", "All" }, out var optO9, out var errO9) && optO9.Profile == ContentBuildCLI.All, $"O-9 ① -contentlink.profile All means every profile (actual: profile='{optO9?.Profile}' error={errO9})");
+            // the CLI's 'all' value ignores case like its keys
+            Check(ContentBuildCLI.Parse(new[] { "-contentlink.profile", "All" }, out var optO9, out var errO9) && optO9.Profile == ContentBuildCLI.All, $"-contentlink.profile All means every profile (actual: profile='{optO9?.Profile}' error={errO9})");
 
-            // O-3: a null owner is an ArgumentNullException, like the scope overload
+            // a null owner is an ArgumentNullException, like the scope overload
             var linkO3 = new ContentLinkSprite(); linkO3.SetName("Icons/sword");
             string exO3a = "", exO3b = "", exO3c = "";
             try { linkO3.LoadAsync((Component)null); } catch (Exception e) { exO3a = e.GetType().Name; }
             try { linkO3.LoadAsync((GameObject)null); } catch (Exception e) { exO3b = e.GetType().Name; }
             try { linkO3.Load((Component)null); } catch (Exception e) { exO3c = e.GetType().Name; }
-            Check(exO3a == "ArgumentNullException" && exO3b == "ArgumentNullException" && exO3c == "ArgumentNullException", $"O-3 ① a null owner throws ArgumentNullException on every owner overload (actual: {exO3a} / {exO3b} / {exO3c})");
+            Check(exO3a == "ArgumentNullException" && exO3b == "ArgumentNullException" && exO3c == "ArgumentNullException", $"a null owner throws ArgumentNullException on every owner overload (actual: {exO3a} / {exO3b} / {exO3c})");
 
-            // O-4: a default token still cancels with the scope; a caller token still cancels; allocation per load measured
+            // a default token still cancels with the scope; a caller token still cancels; allocation per load measured
             var scO4 = ContentScope.Root.CreateChild("O4"); var linkO4 = new ContentLinkSprite(); linkO4.SetName("Icons/shield");
             var opO4 = linkO4.LoadAsync(scO4); scO4.Dispose();
             bool cancO4 = false; Sprite gotO4 = null; try { gotO4 = Run(opO4); } catch (OperationCanceledException) { cancO4 = true; }
             Tick();
-            Check((cancO4 || gotO4 == null) && !linkO4.IsValid && Ref(SHIELD) == 0, $"O-4 ① a default token: the scope ending mid-load still cancels and nothing is held (as before) (actual: cancelled={cancO4} got={(gotO4 != null ? gotO4.name : "null")} ref={Ref(SHIELD)})");
+            Check((cancO4 || gotO4 == null) && !linkO4.IsValid && Ref(SHIELD) == 0, $"① a default token: the scope ending mid-load still cancels and nothing is held (actual: cancelled={cancO4} got={(gotO4 != null ? gotO4.name : "null")} ref={Ref(SHIELD)})");
             var scO4b = ContentScope.Root.CreateChild("O4b"); var linkO4b = new ContentLinkSprite(); linkO4b.SetName("Icons/shield");
             var ctsO4 = new System.Threading.CancellationTokenSource(); var opO4b = linkO4b.LoadAsync(scO4b, ctsO4.Token); ctsO4.Cancel();
             bool cancO4b = false; Sprite gotO4b = null; try { gotO4b = Run(opO4b); } catch (OperationCanceledException) { cancO4b = true; }
             Tick();
-            Check((cancO4b || gotO4b == null) && !linkO4b.IsValid && Ref(SHIELD) == 0, $"O-4 ② a caller token still cancels and nothing is held (as before) (actual: cancelled={cancO4b} ref={Ref(SHIELD)})");
+            Check((cancO4b || gotO4b == null) && !linkO4b.IsValid && Ref(SHIELD) == 0, $"② a caller token still cancels and nothing is held (actual: cancelled={cancO4b} ref={Ref(SHIELD)})");
             scO4b.Dispose();
             var vO4 = NewGO("AllocView", sceneA).AddComponent<IconView>(); vO4.icon.SetName("Icons/sword");
             for (int i = 0; i < 50; ++i) { Run(vO4.icon.LoadAsync(vO4)); vO4.icon.Release(); }
             Tick(); long beforeO4 = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < 2000; ++i) { Run(vO4.icon.LoadAsync(vO4)); vO4.icon.Release(); }
             long perLoadO4 = (GC.GetAllocatedBytesForCurrentThread() - beforeO4) / 2000;
-            Console.WriteLine($"  O-4 allocation per LoadAsync with a default token ≈ {perLoadO4} B");
+            Console.WriteLine($"  allocation per LoadAsync with a default token ≈ {perLoadO4} B");
             Object.Destroy(vO4.gameObject); Tick();
 
             ContentArchivePacker.TestLimitBytes = null; UnityEditor.BuildPipeline.ThrowNextBuild = false; UnityEditor.BuildPipeline.ManifestWithoutContentHash = false;
@@ -2502,6 +2513,623 @@ static class Test
             FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear();
             ContentLinkEditorUtility.Invalidate();
             Init(typeof(ContentService), "ResetStatics");
+        }
+
+        Console.WriteLine("30) ContentRef — a GUID reference resolves to its catalog name and takes the name path");
+        {
+            Init(typeof(ContentService), "ResetStatics");
+            var saved30 = (ContentService.NameFallback, ContentService.DirectoryFallback, ContentService.RefFallback, ContentService.SceneContainsFallback, ContentService.SceneFallback, ContentService.SceneResultFallback);
+            ContentService.NameFallback = null; ContentService.DirectoryFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            SceneManager.Open(sceneA);
+
+            const int RTEX = 3000, RSPR = 3001, RPRE = 3002, RBTEX = 3003, SC_REF = 3100;
+            static LoadableObjectId Oid(int v) => new LoadableObjectId { value = v };
+            FakeEngine.Assets[RTEX] = new Texture2D { name = "sheet" };
+            FakeEngine.Assets[RSPR] = new Sprite { name = "s0" };
+            var enemyPrefab = new GameObject { name = "Enemy" }; enemyPrefab.AddComponent<RefEnemy>();
+            FakeEngine.Assets[RPRE] = enemyPrefab;
+            FakeEngine.Assets[RBTEX] = new Texture2D { name = "sheet (patch)" };
+            FakeEngine.IdDir[RTEX] = "RefA"; FakeEngine.IdDir[RSPR] = "RefA"; FakeEngine.IdDir[RPRE] = "RefA"; FakeEngine.IdDir[RBTEX] = "RefB";
+            FakeEngine.SceneDir[SC_REF] = "RefA"; FakeEngine.SceneNames[SC_REF] = "RefArena";
+            var catRefA = ScriptableObject.CreateInstance<ContentCatalog>();
+            catRefA.EditorSetEntries(new ContentCatalog.Entry[] {
+                new() { name = "Icons/sheet", id = Oid(RTEX), guid = "g-sheet", sub = "" },
+                new() { name = "Icons/sheet[s0]", id = Oid(RSPR), guid = "g-sheet", sub = "s0" },
+                new() { name = "Prefabs/Enemy", id = Oid(RPRE), guid = "g-enemy", sub = "" },
+            });
+            catRefA.EditorSetScenes(new ContentCatalog.SceneEntry[] { new() { name = "Scenes/RefArena", id = SceneId(SC_REF), guid = "g-arena" } });
+            FakeEngine.Dirs["RefA"] = new ScriptableObject[] { catRefA };
+            var catRefB = ScriptableObject.CreateInstance<ContentCatalog>();   // a patch directory: the same texture, moved before it was built
+            catRefB.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Moved/sheet", id = Oid(RBTEX), guid = "g-sheet", sub = "" } });
+            FakeEngine.Dirs["RefB"] = new ScriptableObject[] { catRefB };
+
+            var sheetTex = new ContentRef<Texture2D>("g-sheet");
+            var sheetSpr = new ContentRef<Sprite>("g-sheet", "s0");
+            var enemy = new ContentRef<RefEnemy>("g-enemy");
+            var enemyGo = new ContentRef<GameObject>("g-enemy");
+            var arena = new ContentSceneRef("g-arena");
+            var missing = new ContentRef<Sprite>("g-nope");
+
+            Check(!default(ContentRef<Sprite>).IsSet && default(ContentRef<Sprite>).AssetGUID == "" && default(ContentRef<Sprite>).SubObjectName == ""
+                  && new ContentRef<Sprite>("g", null).Equals(new ContentRef<Sprite>("g", "")) && new ContentRef<Sprite>("g", null).GetHashCode() == new ContentRef<Sprite>("g", "").GetHashCode()
+                  && !sheetSpr.Equals(new ContentRef<Sprite>("g-sheet")) && !new ContentRef<Sprite>("G-sheet", "s0").Equals(sheetSpr)
+                  && sheetSpr.ToString() == "ContentRef<Sprite>(g-sheet[s0])" && sheetTex.ToString() == "ContentRef<Texture2D>(g-sheet)" && arena.ToString() == "ContentSceneRef(g-arena)",
+                  "value basics: default is unset · a null sub equals \"\" · ordinal equality and hash · ToString");
+
+            var nameByRef = (System.Collections.IDictionary)typeof(ContentService).GetField("s_NameByRef", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            var refIndexDirty = typeof(ContentService).GetField("s_RefIndexDirty", BindingFlags.Static | BindingFlags.NonPublic);
+            int dirRefA = ContentService.RegisterDirectory("RefA");
+            Check(nameByRef.Count == 0 && (bool)refIndexDirty.GetValue(null), $"registering a directory only marks the reference index dirty and indexes nothing yet (entries={nameByRef.Count})");
+            Check(ContentService.TryGetName(sheetTex, out var n30Tex) && n30Tex == "Icons/sheet"
+                  && ContentService.TryGetName(sheetSpr, out var n30Spr) && n30Spr == "Icons/sheet[s0]"
+                  && ContentService.TryGetSceneName(arena, out var n30Scene) && n30Scene == "Scenes/RefArena"
+                  && nameByRef.Count == 3 && !(bool)refIndexDirty.GetValue(null)
+                  && sheetSpr.RuntimeKeyIsValid() && arena.RuntimeKeyIsValid() && !missing.RuntimeKeyIsValid(),
+                  $"main · sub-asset · scene references resolve to their catalog names; the first lookup built the index (entries={nameByRef.Count})");
+
+            var sc30 = ContentScope.ForScene(sceneA).CreateChild("Ref30");
+            int live30 = ContentService.LiveAssetCount;
+            var viaRef = Run(sc30.LoadAsync(sheetSpr));
+            var viaName = Run(sc30.LoadAsync<Sprite>("Icons/sheet[s0]"));
+            Check(viaRef != null && ReferenceEquals(viaRef, viaName) && ContentService.LiveAssetCount == live30 + 1 && Ref(RSPR) == 1
+                  && sc30.Contains("Icons/sheet[s0]") && sc30.Contains(sheetSpr) && sc30.Count == 1,
+                  $"a reference load and a name load of the same asset share one slot and one scope key (live={ContentService.LiveAssetCount - live30} ref={Ref(RSPR)} count={sc30.Count})");
+            Check(sc30.Release(sheetSpr) && !sc30.Contains("Icons/sheet[s0]") && !sc30.Release(sheetSpr), "Release(ref) returns the shared key, and the name load's hold goes with it; a second Release returns false");
+            Tick();
+            Check(Ref(RSPR) == 0, "released at the end of the frame");
+
+            var sync30 = sc30.Load(sheetTex);
+            var h30 = ContentService.Acquire(sheetTex);
+            var h30a = Run(ContentService.AcquireAsync(sheetTex));
+            Check(sync30 != null && h30.IsValid && h30.Key == "Icons/sheet" && h30a.IsValid && h30a.Key == "Icons/sheet" && Ref(RTEX) == 1 && ContentService.LiveAssetCount == live30 + 1,
+                  "Load(ref) · Acquire(ref) · AcquireAsync(ref) take their leases on the name's slot");
+            h30.Dispose(); h30a.Dispose(); sc30.Release(sheetTex); Tick();
+            Check(Ref(RTEX) == 0, "leases returned");
+
+            var inst30 = Run(sc30.InstantiateAsync(enemy));
+            Check(inst30 != null && inst30.GetComponent<RefEnemy>() != null && inst30.Scope().Contains("Prefabs/Enemy") && Ref(RPRE) == 1 && sc30.Count == 0,
+                  "InstantiateAsync(ContentRef<component>) instantiates the prefab; the lease lives with the instance");
+            Object.Destroy(inst30); Tick();
+            Check(Ref(RPRE) == 0, "instance destroyed → prefab released");
+
+            var from30 = ContentScope.ForScene(sceneA).CreateChild("RefFrom");
+            var to30 = ContentScope.ForScene(sceneA).CreateChild("RefTo");
+            Run(from30.LoadAsync(enemyGo));
+            Check(from30.ShareTo(to30, enemyGo) && to30.Contains("Prefabs/Enemy") && to30.Contains(enemy) && Ref(RPRE) == 1, "ShareTo(ref) gives the target the name key; a reference of another T to the same GUID answers Contains");
+            from30.Dispose(); to30.Dispose(); Tick();
+
+            var stage30 = ContentScope.ForScene(sceneA).CreateChild("RefStage");
+            var level30 = Run(stage30.LoadSceneAsync(arena));
+            Check(level30.IsValid() && stage30.SceneCount == 1 && ContentService.ContainsScene(arena), "scope.LoadSceneAsync(ContentSceneRef) owns the scene");
+            stage30.Dispose(); FakeEngine.CompleteLoads(); Tick();
+            var direct30 = Run(ContentService.LoadSceneAsync(arena));
+            Check(direct30.IsValid() && ContentService.LoadedSceneCount == 1, "ContentService.LoadSceneAsync(ContentSceneRef)");
+            SceneManager.UnloadSceneAsync(direct30); FakeEngine.CompleteLoads(); Tick();
+            Check(ContentService.LoadedSceneCount == 0, "scenes unloaded");
+
+            Debug.Verbose = false;
+            int e30 = Debug.Errors, w30 = Debug.Warnings;
+            bool anyHit30 = ContentService.TryGetName(missing, out _) || ContentService.Contains(missing) || missing.RuntimeKeyIsValid() || sc30.Contains(missing) || sc30.Release(missing)
+                            || ContentService.TryGetSceneName(new ContentSceneRef("g-nope"), out _) || ContentService.ContainsScene(new ContentSceneRef("g-nope")) || ContentService.Contains(default(ContentRef<Sprite>));
+            Check(!anyHit30 && Debug.Errors == e30 && Debug.Warnings == w30, "lookups through a reference that resolves nowhere are silent (TryGetName · Contains · RuntimeKeyIsValid · scope Contains/Release)");
+
+            for (int i = 0; i < 10; ++i) { ContentService.TryGetName(sheetSpr, out _); ContentService.Contains(sheetSpr); ContentService.Contains(missing); ContentService.TryGetName(missing, out _); }
+            long a30 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i) { ContentService.TryGetName(sheetSpr, out _); ContentService.Contains(sheetSpr); ContentService.Contains(missing); ContentService.TryGetName(missing, out _); }
+            long alloc30 = GC.GetAllocatedBytesForCurrentThread() - a30;
+            Check(alloc30 == 0, $"hit and miss lookups allocate nothing ({alloc30} B over 4000 calls)");
+
+            e30 = Debug.Errors;
+            var missed30 = Run(sc30.LoadAsync(missing));
+            Check(missed30 == null && Debug.Errors == e30 + 1 && Debug.LastError.Contains("ContentRef<Sprite>(g-nope)") && Debug.LastError.Contains("not in any registered ContentCatalog") && sc30.Count == 0,
+                  $"a load through a reference that resolves nowhere: null + 1 error naming the reference ({Debug.LastError})");
+            e30 = Debug.Errors;
+            var missedSync30 = sc30.Load(missing);
+            var missedHandle30 = ContentService.Acquire(missing);
+            var missedAsync30 = Run(ContentService.AcquireAsync(missing));
+            var missedScene30 = Run(ContentService.LoadSceneAsync(new ContentSceneRef("g-nope")));
+            var missedScopeScene30 = Run(sc30.LoadSceneAsync(new ContentSceneRef("g-nope")));
+            var missedInst30 = Run(sc30.InstantiateAsync(new ContentRef<GameObject>("g-nope")));
+            Check(missedSync30 == null && !missedHandle30.IsValid && !missedAsync30.IsValid && !missedScene30.IsValid() && !missedScopeScene30.IsValid() && missedInst30 == null && Debug.Errors == e30 + 6,
+                  $"Load · Acquire · AcquireAsync · LoadSceneAsync (service and scope) · InstantiateAsync through a missing reference: one error each, nothing held (errors={Debug.Errors - e30})");
+            e30 = Debug.Errors;
+            Run(sc30.LoadAsync(default(ContentRef<Sprite>))); bool unset30 = Debug.LastError.Contains("is not set");
+            Run(sc30.LoadAsync(new ContentRef<Sprite>("g-arena"))); bool sceneHint30 = Debug.LastError.Contains("use ContentSceneRef");
+            Run(sc30.LoadSceneAsync(new ContentSceneRef("g-sheet"))); bool assetHint30 = Debug.LastError.Contains("use ContentRef<T>");
+            Run(sc30.LoadAsync(new ContentRef<Sprite>("g-sheet", "renamed"))); bool subHint30 = Debug.LastError.Contains("no sprite named 'renamed'");
+            Check(unset30 && sceneHint30 && assetHint30 && subHint30 && Debug.Errors == e30 + 4,
+                  "miss messages: an unset reference · a scene GUID in an asset reference · an asset GUID in a scene reference · a sprite name the catalog does not have");
+
+            e30 = Debug.Errors;
+            var cts30 = new CancellationTokenSource(); cts30.Cancel();
+            string cancelled30 = "";
+            try { Run(sc30.LoadAsync(missing, cts30.Token)); } catch (OperationCanceledException) { cancelled30 = "scope"; }
+            try { Run(ContentService.AcquireAsync(missing, cts30.Token)); } catch (OperationCanceledException) { cancelled30 += "+service"; }
+            var gone30 = ContentScope.ForScene(sceneA).CreateChild("RefGone"); gone30.Dispose();
+            string disposed30 = "";
+            try { Run(gone30.LoadAsync(missing)); } catch (ObjectDisposedException) { disposed30 = "async"; }
+            try { gone30.Load(missing); } catch (ObjectDisposedException) { disposed30 += "+sync"; }
+            Check(cancelled30 == "scope+service" && disposed30 == "async+sync" && Debug.Errors == e30,
+                  $"a cancelled token and a disposed scope are reported the name overloads' way, not as a miss ({cancelled30} · {disposed30} · errors={Debug.Errors - e30})");
+            Debug.Verbose = true;
+
+            int dirRefB = ContentService.RegisterDirectory("RefB");
+            Check(ContentService.TryGetName(sheetTex, out var n30B) && n30B == "Moved/sheet" && ContentService.TryGetName(sheetSpr, out var n30Bs) && n30Bs == "Icons/sheet[s0]",
+                  "the most recently registered directory answers a GUID both carry; a (guid, sub) only the older one has still resolves there");
+            var patch30 = ContentScope.ForScene(sceneA).CreateChild("RefPatch");
+            Run(patch30.LoadAsync(sheetTex)); Run(patch30.LoadAsync<Texture2D>("Icons/sheet"));
+            Check(patch30.Count == 2 && Ref(RBTEX) == 1 && Ref(RTEX) == 1, "an asset moved between base and patch takes two slots: the reference loads the patch copy and the old name loads the base copy");
+            patch30.Dispose(); Tick();
+            Check(ContentService.UnregisterDirectory(dirRefB) && ContentService.TryGetName(sheetTex, out var n30A) && n30A == "Icons/sheet", "unregistering the patch hands the GUID back to the base directory");
+
+            int churn1 = ContentService.RegisterDirectory("RefB"); ContentService.UnregisterDirectory(churn1); int churn2 = ContentService.RegisterDirectory("RefB");
+            bool dirtyAfterChurn = (bool)refIndexDirty.GetValue(null);
+            Check(dirtyAfterChurn && ContentService.TryGetName(sheetTex, out var n30Churn) && n30Churn == "Moved/sheet" && !(bool)refIndexDirty.GetValue(null),
+                  "registrations and unregistrations in a row only mark the index dirty, and the next lookup rebuilds it once");
+            ContentService.UnregisterDirectory(churn2);
+
+            ContentService.RefFallback = (g, s, scene) => g == "g-sim" ? (scene ? "Scenes/RefArena" : "Icons/sheet") : null;
+            var viaSim30 = Run(sc30.LoadAsync(new ContentRef<Texture2D>("g-sim")));
+            Check(ContentService.TryGetName(new ContentRef<Texture2D>("g-sim"), out var n30Sim) && n30Sim == "Icons/sheet"
+                  && ContentService.TryGetSceneName(new ContentSceneRef("g-sim"), out var n30SimScene) && n30SimScene == "Scenes/RefArena"
+                  && viaSim30 != null && sc30.Contains("Icons/sheet"),
+                  "a GUID no catalog carries goes to RefFallback (the scene flag passed through), and the load takes the name path from there");
+            ContentService.RefFallback = (g, s, scene) => "";
+            Check(!ContentService.TryGetName(new ContentRef<Texture2D>("g-sim"), out var n30Empty) && n30Empty == null, "an empty RefFallback answer is a miss");
+            ContentService.RefFallback = null;
+            sc30.Dispose(); Tick();
+
+            Check(ContentService.UnregisterDirectory(dirRefA) && !ContentService.TryGetName(sheetTex, out _) && !ContentService.TryGetSceneName(arena, out _) && !arena.RuntimeKeyIsValid(),
+                  "after its directory is unregistered a reference resolves nowhere");
+            dirRefA = ContentService.RegisterDirectory("RefA");
+            ContentService.TryGetName(sheetTex, out _);
+            Init(typeof(ContentService), "ResetStatics");
+            bool emptied30 = nameByRef.Count == 0;
+            ContentService.RegisterDirectory("RefA");
+            Check(emptied30 && ContentService.TryGetName(sheetSpr, out var n30Reset) && n30Reset == "Icons/sheet[s0]", "ResetStatics empties the index; the next lookup after a registration rebuilds it");
+            Init(typeof(ContentService), "ResetStatics");
+
+            // the builder records the GUID and the sub-asset name, and a moved file keeps its GUID
+            FakeEngine.ClearProject();
+            const string GEM = "0123456789abcdef0123456789abcdef";
+            FakeEngine.AddProjectAsset("Assets/RefRoot/Icons/gem.png", new Texture2D { name = "gem" }, new Sprite { name = "gem" });
+            FakeEngine.SetGuid("Assets/RefRoot/Icons/gem.png", GEM);
+            FakeEngine.AddProjectAsset("Assets/RefRoot/Scenes/Hall.unity", new UnityEditor.SceneAsset { name = "Hall" });
+            var scanned30 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            static string Rows(System.Collections.Generic.List<ContentDirectoryBuilder.Scanned> l)
+            {
+                var rows = new System.Collections.Generic.List<string>();
+                foreach (var x in l) rows.Add(x.IsScene ? $"scene {x.Scene.name}|{x.Scene.guid}" : $"{x.Entry.name}|{x.Entry.guid}|{x.Entry.sub}");
+                rows.Sort(StringComparer.Ordinal);
+                return string.Join(" ; ", rows);
+            }
+            bool scan30 = ContentDirectoryBuilder.Scan("Assets/RefRoot", scanned30);
+            Check(scan30 && Rows(scanned30) == $"Icons/gem[gem]|{GEM}|gem ; Icons/gem|{GEM}| ; scene Scenes/Hall|Assets/RefRoot/Scenes/Hall.unity",
+                  $"the builder records each entry's asset GUID and a sprite's sub-asset name ({Rows(scanned30)})");
+            var gemRef = new ContentRef<Sprite>(GEM, "gem");
+            var catMove1 = ScriptableObject.CreateInstance<ContentCatalog>();
+            ContentDirectoryBuilder.Write(catMove1, "Assets/RefRoot", scanned30);
+            FakeEngine.Dirs["RefMove1"] = new ScriptableObject[] { catMove1 };
+            int dirMove1 = ContentService.RegisterDirectory("RefMove1");
+            bool beforeMove30 = ContentService.TryGetName(gemRef, out var n30Gem1) && n30Gem1 == "Icons/gem[gem]";
+            ContentService.UnregisterDirectory(dirMove1);
+            FakeEngine.MoveProjectAsset("Assets/RefRoot/Icons/gem.png", "Assets/RefRoot/UI/gem.png");
+            scanned30.Clear();
+            ContentDirectoryBuilder.Scan("Assets/RefRoot", scanned30);
+            var catMove2 = ScriptableObject.CreateInstance<ContentCatalog>();
+            ContentDirectoryBuilder.Write(catMove2, "Assets/RefRoot", scanned30);
+            FakeEngine.Dirs["RefMove2"] = new ScriptableObject[] { catMove2 };
+            int dirMove2 = ContentService.RegisterDirectory("RefMove2");
+            Check(beforeMove30 && ContentService.TryGetName(gemRef, out var n30Gem2) && n30Gem2 == "UI/gem[gem]" && UnityEditor.AssetDatabase.GUIDToAssetPath(GEM) == "Assets/RefRoot/UI/gem.png",
+                  "the file moved and the catalog was rewritten: the same reference resolves to the new name");
+            ContentService.UnregisterDirectory(dirMove2);
+
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            Init(typeof(ContentService), "ResetStatics");
+            (ContentService.NameFallback, ContentService.DirectoryFallback, ContentService.RefFallback, ContentService.SceneContainsFallback, ContentService.SceneFallback, ContentService.SceneResultFallback) = saved30;
+        }
+
+        Console.WriteLine("31) ContentRef — the editor simulation answers GUIDs from the overlay scan");
+        {
+            Init(typeof(ContentService), "ResetStatics");
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkSimulation.Drop();
+            ContentLinkSimulation.Enabled = true;
+            FakeEngine.EditorServesAnyId = true;
+            Init(typeof(ContentLinkSimulation), "Install");   // installs RefFallback next to the name seams
+            UnityEditor.EditorApplication.isPlaying = true;
+
+            const string GA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", GB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", GH = "cccccccccccccccccccccccccccccccc", GX = "dddddddddddddddddddddddddddddddd";
+            var texA31 = new Texture2D { name = "a" }; var sprA31 = new Sprite { name = "a" }; var texB31 = new Texture2D { name = "b" };
+            var hall31 = new UnityEditor.SceneAsset { name = "Hall" }; var texX31 = new Texture2D { name = "x" };
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/a.png", texA31, sprA31); FakeEngine.SetGuid("Assets/Content/Icons/a.png", GA);
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/b.png", texB31); FakeEngine.SetGuid("Assets/Content/Icons/b.png", GB);
+            FakeEngine.AddProjectAsset("Assets/Content/Scenes/Hall.unity", hall31); FakeEngine.SetGuid("Assets/Content/Scenes/Hall.unity", GH);
+            FakeEngine.AddProjectAsset("Assets/Other/x.png", texX31); FakeEngine.SetGuid("Assets/Other/x.png", GX);
+            foreach (var o in new Object[] { texA31, sprA31, texB31, texX31 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            var settings31 = ContentBuildSettings.instance;
+            var simA31 = settings31.Add("RefSimA"); simA31.SourceRoot = "Assets/Content"; simA31.OutputPath = "Build/Content/RefSimA";
+            simA31.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/refSimA.asset" } };
+            var simB31 = settings31.Add("RefSimB"); simB31.SourceRoot = "Assets/Content/Icons"; simB31.OutputPath = "Build/Content/RefSimB";
+            simB31.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/refSimB.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+
+            var namesByGuid = (System.Collections.IDictionary)typeof(ContentLinkSimulation).GetField("s_NamesByGuid", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            int simDir31 = ContentService.RegisterDirectory("Build/Content/RefSimA");
+            Check(FakeEngine.Registered.Count == 0 && namesByGuid.Contains(GA) && namesByGuid.Contains(GB),
+                  $"the registration's scan already filled GUID → name (entries={namesByGuid.Count}), before any reference asked");
+
+            var texRef31 = new ContentRef<Texture2D>(GA);
+            var sprRef31 = new ContentRef<Sprite>(GA, "a");
+            var hallRef31 = new ContentSceneRef(GH);
+            ContentService.TryGetName(sprRef31, out var n31Spr);
+            Check(ContentService.TryGetName(texRef31, out var n31Tex) && n31Tex == "Icons/a"
+                  && n31Spr == "Icons/a[a]"
+                  && ContentService.TryGetSceneName(hallRef31, out var n31Hall) && n31Hall == "Scenes/Hall"
+                  && ContentService.Contains(texRef31) && ContentService.Contains(sprRef31) && ContentService.ContainsScene(hallRef31),
+                  "a directory served from the project has no catalog: main · sprite · scene references resolve through RefFallback, and the name seams accept them");
+            Check(ContentService.TryGetName(sprRef31, out var n31Again) && ReferenceEquals(n31Spr, n31Again), "the composed \"name[sprite]\" is made once and handed out again");
+
+            var sc31 = ContentScope.ForScene(sceneA).CreateChild("RefSim");
+            var spr31 = Run(sc31.LoadAsync(sprRef31));
+            var tex31 = sc31.Load(texRef31);
+            Check(spr31 == sprA31 && tex31 == texA31 && sc31.Contains("Icons/a[a]") && sc31.Contains("Icons/a"), "loads through references are served from the project");
+            Check(ContentLinkSimulation.TryGetPath("Icons/a[a]", out _, out var root31) && root31 == "Assets/Content",
+                  $"a name the scan cannot see is filed under the root it was made under, not the deepest root holding the file — RefSimB's nested root used to win and the gate refused it (root={root31})");
+
+            for (int i = 0; i < 10; ++i) { ContentService.TryGetName(texRef31, out _); ContentService.TryGetName(sprRef31, out _); }
+            long a31 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i) { ContentService.TryGetName(texRef31, out _); ContentService.TryGetName(sprRef31, out _); }
+            long alloc31 = GC.GetAllocatedBytesForCurrentThread() - a31;
+            Check(alloc31 == 0, $"a repeated reference lookup through the simulation is a dictionary lookup, with no AssetDatabase call and no allocation ({alloc31} B over 2000 calls)");
+
+            Check(!ContentService.TryGetName(new ContentRef<Texture2D>("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), out _) && !ContentService.TryGetName(new ContentRef<Texture2D>(GX), out _)
+                  && !ContentService.TryGetName(new ContentRef<Texture2D>(GH), out _) && !ContentService.TryGetSceneName(new ContentSceneRef(GA), out _),
+                  "an unknown GUID, a file outside every content root, and a scene/asset GUID asked the other way resolve to nothing");
+
+            sc31.Dispose(); Tick();
+            FakeEngine.MoveProjectAsset("Assets/Content/Icons/a.png", "Assets/Content/UI/a.png");
+            bool stale31 = ContentService.TryGetName(texRef31, out var n31Stale) && n31Stale == "Icons/a";
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            var hMoved31 = ContentService.Acquire(texRef31);
+            Check(stale31 && ContentService.TryGetName(texRef31, out var n31Moved) && n31Moved == "UI/a" && hMoved31.IsValid && hMoved31.Asset == texA31,
+                  "a file moved during Play: the answer is stale until the project change, then the reference resolves to the new name and loads");
+            hMoved31.Dispose(); Tick();
+
+            int simDirB31 = ContentService.RegisterDirectory("Build/Content/RefSimB");
+            ContentLinkSimulation.Rebuild();   // both roots scanned: b.png has a name under each
+            var bRef31 = new ContentRef<Texture2D>(GB);
+            bool deepest31 = ContentService.TryGetName(bRef31, out var n31Deep) && n31Deep == "b";
+            ContentService.UnregisterDirectory(simDirB31, force: true);
+            ContentService.TryGetName(bRef31, out var n31Shallow);
+            Check(deepest31 && n31Shallow == "Icons/b",
+                  $"nested roots: the deepest root's name while its directory is served ({n31Deep}); once it is gone, the name a live directory serves ({n31Shallow})");
+
+            ContentService.UnregisterDirectory(simDir31, force: true);
+            ContentLinkSimulation.Enabled = false;
+            Check(!ContentService.HasSimulatedDirectories && !ContentService.TryGetName(texRef31, out _), "simulation off and no directory served from the project: RefFallback answers nothing");
+            ContentLinkSimulation.Enabled = true;
+            ContentService.TryGetName(texRef31, out _);
+            ContentLinkSimulation.Drop();
+            Check(namesByGuid.Count == 0, "Drop forgets the GUID answers with the overlay");
+
+            UnityEditor.EditorApplication.isPlaying = false;
+            FakeEngine.EditorServesAnyId = false;
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            Init(typeof(ContentService), "ResetStatics");
+        }
+
+        Console.WriteLine("32) ContentRef — editor utility: asset ↔ reference, name, status order");
+        {
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+
+            const string GS = "11111111111111111111111111111111", GP = "22222222222222222222222222222222", GM = "33333333333333333333333333333333";
+            const string GAT = "44444444444444444444444444444444", GO = "55555555555555555555555555555555", GN = "66666666666666666666666666666666", GSC = "77777777777777777777777777777777";
+            var sheet32 = new Texture2D { name = "sheet" }; var s0 = new Sprite { name = "s0" };
+            var enemy32 = new GameObject { name = "Enemy" }; enemy32.AddComponent<RefEnemy>();
+            var model32 = new Object { name = "model" }; var mesh32 = new Object { name = "body" };   // a sub-asset that is not a sprite
+            var atlas32 = new UnityEngine.U2D.SpriteAtlas { name = "atlas" };
+            var outside32 = new Texture2D { name = "far" };
+            var newTex32 = new Texture2D { name = "fresh" };
+            var arena32 = new UnityEditor.SceneAsset { name = "Arena" };
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/sheet.png", sheet32, s0); FakeEngine.SetGuid("Assets/Content/Icons/sheet.png", GS);
+            FakeEngine.AddProjectAsset("Assets/Content/Prefabs/Enemy.prefab", enemy32); FakeEngine.SetGuid("Assets/Content/Prefabs/Enemy.prefab", GP);
+            FakeEngine.AddProjectAsset("Assets/Content/Models/model.fbx", model32, mesh32); FakeEngine.SetGuid("Assets/Content/Models/model.fbx", GM);
+            FakeEngine.AddProjectAsset("Assets/Content/Atlas/atlas.spriteatlasv2", atlas32); FakeEngine.SetGuid("Assets/Content/Atlas/atlas.spriteatlasv2", GAT);
+            FakeEngine.AddProjectAsset("Assets/Other/far.png", outside32); FakeEngine.SetGuid("Assets/Other/far.png", GO);
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/fresh.png", newTex32); FakeEngine.SetGuid("Assets/Content/Icons/fresh.png", GN);
+            FakeEngine.AddProjectAsset("Assets/Content/Scenes/Arena.unity", arena32); FakeEngine.SetGuid("Assets/Content/Scenes/Arena.unity", GSC);
+            var cat32 = ScriptableObject.CreateInstance<ContentCatalog>();
+            var scanned32 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            FakeEngine.MainAssetAt.Remove("Assets/Content/Icons/fresh.png");   // added to the project after the catalog was built
+            ContentDirectoryBuilder.Scan("Assets/Content", scanned32);
+            FakeEngine.MainAssetAt["Assets/Content/Icons/fresh.png"] = newTex32;
+            ContentDirectoryBuilder.Write(cat32, "Assets/Content", scanned32);
+            FakeEngine.AddProjectAsset("Assets/Cat/catalog32.asset", cat32);
+            ContentLinkEditorUtility.Invalidate();
+
+            // asset → reference
+            Check(ContentLinkEditorUtility.TryGetRefForAsset(sheet32, out var g32a, out var sub32a, out _) && g32a == GS && sub32a == ""
+                  && ContentLinkEditorUtility.TryGetRefForAsset(s0, out var g32b, out var sub32b, out _) && g32b == GS && sub32b == "s0"
+                  && ContentLinkEditorUtility.TryGetRefForAsset(enemy32, out var g32c, out _, out _) && g32c == GP,
+                  "TryGetRefForAsset: a main asset gives (GUID, \"\"), a sprite (its texture's GUID, its name), a prefab its GUID");
+            Check(!ContentLinkEditorUtility.TryGetRefForAsset(mesh32, out _, out _, out var reason32a) && reason32a.Contains("only sprites")
+                  && !ContentLinkEditorUtility.TryGetRefForAsset(outside32, out _, out _, out var reason32b) && reason32b.Contains("not under a content root")
+                  && !ContentLinkEditorUtility.TryGetRefForAsset(null, out _, out _, out _),
+                  "TryGetRefForAsset refuses what no build can carry: a non-sprite sub-asset, a file outside every catalog and root, nothing");
+
+            // reference → asset, reference → name
+            Check(ContentLinkEditorUtility.ResolveRefAsset(GS, "") == sheet32 && ContentLinkEditorUtility.ResolveRefAsset(GS, "s0") == s0 && ContentLinkEditorUtility.ResolveRefAsset(GS, null) == sheet32
+                  && ContentLinkEditorUtility.ResolveRefAsset(GS, "nope") == null && ContentLinkEditorUtility.ResolveRefAsset("99999999999999999999999999999999", "") == null && ContentLinkEditorUtility.ResolveRefAsset("", "") == null,
+                  "ResolveRefAsset: main · sprite · null sub as \"\" · a missing sub · an unknown GUID · empty");
+            Check(ContentLinkEditorUtility.NameForRef(GS, "s0") == "Icons/sheet[s0]" && ContentLinkEditorUtility.NameForRef(GN, "") == "Icons/fresh" && ContentLinkEditorUtility.NameForRef(GSC, "", scene: true) == "Scenes/Arena"
+                  && ContentLinkEditorUtility.NameForRef(GO, "") == null,
+                  "NameForRef: a catalogued sprite · a file not catalogued yet (path rule) · a scene · outside every root");
+            FakeEngine.MoveProjectAsset("Assets/Content/Icons/sheet.png", "Assets/Content/UI/sheet.png");
+            ContentLinkEditorUtility.Invalidate();
+            Check(ContentLinkEditorUtility.NameForRef(GS, "s0") == "Icons/sheet[s0]" && ContentLinkEditorUtility.ResolveRefAsset(GS, "s0") == s0,
+                  "moved but not rebuilt: the catalog still answers the old name (catalog first), and the object field still finds the sprite by GUID");
+
+            // status order
+            NameStatus V(string g, string s, Type t, bool scene, out string tip) => ContentLinkEditorUtility.ValidateRef(g, s, t, scene, out tip);
+            Check(V("", "", typeof(Sprite), false, out _) == NameStatus.Empty
+                  && V("99999999999999999999999999999999", "", typeof(Sprite), false, out var tip1) == NameStatus.Missing && tip1.Contains("no asset has the GUID"),
+                  "1 empty · 2 an unknown GUID → Missing");
+            Check(V(GAT, "s0", typeof(Sprite), false, out var tip3) == NameStatus.NotInCatalog && tip3.Contains("sprite atlas"),
+                  "3 an atlas GUID + a sprite name → NotInCatalog (atlas), not Missing — the atlas has no such sub-asset either, so the order decides");
+            Check(V(GS, "renamed", typeof(Sprite), false, out var tip4) == NameStatus.Missing && tip4.Contains("renamed"),
+                  "4 a sprite name the file does not have → Missing (renamed slice)");
+            Check(V(GM, "body", typeof(Sprite), false, out var tip5) == NameStatus.NotInCatalog && tip5.Contains("not a sprite"),
+                  "5 a sub-asset that is not a sprite → NotInCatalog");
+            Check(V(GO, "", typeof(Texture2D), false, out var tip6) == NameStatus.NotInCatalog && tip6.Contains("moving it under one keeps its GUID"),
+                  "6 a file outside every catalog and root → NotInCatalog, with the hint that moving it keeps the reference");
+            Check(V(GS, "", typeof(Sprite), false, out var tip7) == NameStatus.TypeMismatch && tip7.Contains("pick the sprite itself")
+                  && V(GS, "s0", typeof(Sprite), false, out _) == NameStatus.Ok && V(GP, "", typeof(RefEnemy), false, out _) == NameStatus.Ok
+                  && V(GP, "", typeof(IconView), false, out _) == NameStatus.TypeMismatch && V(GN, "", typeof(Texture2D), false, out _) == NameStatus.NotInCatalog
+                  && V(GSC, "", null, true, out _) == NameStatus.Ok && V(GS, "", null, true, out _) == NameStatus.NotInCatalog,
+                  "7 the resolved name goes through Validate: a texture GUID without a sprite name in a Sprite field · Ok · component on the prefab · missing component · not built yet · scenes");
+            Check(V(GS, "", typeof(Sprite), false, out var tip7b) == NameStatus.TypeMismatch && ReferenceEquals(tip7, tip7b), "a status is cached with its tooltip until the project changes");
+
+            // field types
+            Type RF(string n) => ContentLinkEditorUtility.AssetTypeOfRef(typeof(RefFields).GetField(n));
+            Check(RF("one") == typeof(Sprite) && RF("many") == typeof(Sprite) && RF("list") == typeof(GameObject) && RF("scene") == null && RF("link") == null
+                  && ContentLinkEditorUtility.AssetTypeOfRefType(typeof(ContentRef<Texture2D>)) == typeof(Texture2D) && ContentLinkEditorUtility.AssetTypeOfRefType(null) == null,
+                  "AssetTypeOfRef: single · array · List · a scene reference and a link are not ContentRef<T>");
+
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+        }
+
+        Console.WriteLine("33) ContentLink sub-object name — (main, sprite) composes the catalog name and takes the name path");
+        {
+            Init(typeof(ContentService), "ResetStatics");
+            var saved33 = (ContentService.NameFallback, ContentService.DirectoryFallback, ContentService.RefFallback, ContentService.SceneContainsFallback, ContentService.SceneFallback, ContentService.SceneResultFallback);
+            ContentService.NameFallback = null; ContentService.DirectoryFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            SceneManager.Open(sceneA);
+
+            const int LTEX = 3200, LSPR = 3201, LSPR1 = 3202, LEXTRA = 3203;
+            static LoadableObjectId Lid(int v) => new LoadableObjectId { value = v };
+            FakeEngine.Assets[LTEX] = new Texture2D { name = "sheet" };
+            FakeEngine.Assets[LSPR] = new Sprite { name = "s0" };
+            FakeEngine.Assets[LSPR1] = new Sprite { name = "s1" };
+            FakeEngine.Assets[LEXTRA] = new Sprite { name = "e0" };
+            FakeEngine.IdDir[LTEX] = "LinkA"; FakeEngine.IdDir[LSPR] = "LinkA"; FakeEngine.IdDir[LSPR1] = "LinkA"; FakeEngine.IdDir[LEXTRA] = "LinkB";
+            var catLinkA = ScriptableObject.CreateInstance<ContentCatalog>();
+            catLinkA.EditorSetEntries(new ContentCatalog.Entry[] {
+                new() { name = "Icons/sheet", id = Lid(LTEX), guid = "g-lsheet", sub = "" },
+                new() { name = "Icons/sheet[s0]", id = Lid(LSPR), guid = "g-lsheet", sub = "s0" },
+                new() { name = "Icons/sheet[s1]", id = Lid(LSPR1), guid = "g-lsheet", sub = "s1" },
+            });
+            FakeEngine.Dirs["LinkA"] = new ScriptableObject[] { catLinkA };
+            var catLinkB = ScriptableObject.CreateInstance<ContentCatalog>();
+            catLinkB.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/extra[e0]", id = Lid(LEXTRA), guid = "g-lextra", sub = "e0" } });
+            FakeEngine.Dirs["LinkB"] = new ScriptableObject[] { catLinkB };
+
+            var linkKeys = (System.Collections.IDictionary)typeof(ContentService).GetField("s_LinkKeys", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            var linkMissesField = typeof(ContentService).GetField("s_LinkMisses", BindingFlags.Static | BindingFlags.NonPublic);
+            int Misses() => (int)linkMissesField.FieldType.GetProperty("Count").GetValue(linkMissesField.GetValue(null));
+
+            // value basics
+            var blank33 = new ContentLinkSprite();
+            var split33 = new ContentLink<Sprite>("Icons/sheet", "s0");
+            var copy33 = new ContentLink<Sprite>("Icons/sheet", "s0"); copy33.SetName("Icons/sheet[s0]");
+            var nullSub33 = new ContentLink<Sprite>("Icons/sheet");
+            typeof(ContentLink<Sprite>).GetField("m_SubObjectName", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(nullSub33, null);
+            Check(blank33.Name == "" && blank33.SubObjectName == "" && split33.Name == "Icons/sheet" && split33.SubObjectName == "s0"
+                  && split33.ToString() == "ContentLink<Sprite>(Icons/sheet[s0])" && new ContentLink<Sprite>("Icons/sheet", null).SubObjectName == ""
+                  && copy33.Name == "Icons/sheet[s0]" && copy33.SubObjectName == "" && copy33.ToString() == "ContentLink<Sprite>(Icons/sheet[s0])"
+                  && nullSub33.SubObjectName == "" && nullSub33.ToString() == "ContentLink<Sprite>(Icons/sheet)",
+                  "value basics: Name is the main name · SetName(name) clears the sprite name · a null field reads as \"\"");
+
+            int dirLinkA = ContentService.RegisterDirectory("LinkA");
+            Check(ContentService.TryGetName("Icons/sheet", "s0", out var n33a) && n33a == "Icons/sheet[s0]"
+                  && ContentService.TryGetName("Icons/sheet", "", out var n33b) && n33b == "Icons/sheet"
+                  && ContentService.TryGetName("Icons/sheet", null, out var n33c) && n33c == "Icons/sheet"
+                  && !ContentService.TryGetName("Icons/sheet", "nope", out var n33d) && n33d == null
+                  && !ContentService.TryGetName("", "s0", out _) && !ContentService.TryGetName(null, "s0", out _)
+                  && ContentService.Contains("Icons/sheet", "s0") && !ContentService.Contains("Icons/sheet", "nope")
+                  && ContentService.Contains("Icons/sheet", "") == ContentService.Contains("Icons/sheet") && ContentService.Contains("Icons/nope", "") == ContentService.Contains("Icons/nope")
+                  && split33.RuntimeKeyIsValid() && nullSub33.RuntimeKeyIsValid() && !new ContentLink<Sprite>("Icons/sheet", "nope").RuntimeKeyIsValid(),
+                  "TryGetName / Contains (name, sub): composed name · empty or null sub is the name itself · a missing sprite · no main name");
+            Check(linkKeys.Count == 1 && Misses() == 1, $"a hit keeps the composed string, a miss is remembered; an empty main name is neither (keys={linkKeys.Count} misses={Misses()})");
+
+            // one slot for every way of asking
+            var owner33 = NewGO("LinkOwner", sceneA).AddComponent<IconView>();
+            var bracket33 = new ContentLinkSprite(); bracket33.SetName("Icons/sheet[s0]");
+            var sc33 = ContentScope.ForScene(sceneA).CreateChild("Link33");
+            int live33 = ContentService.LiveAssetCount;
+            owner33.icon.SetName("Icons/sheet", "s0");
+            var viaSplit = Run(owner33.icon.LoadAsync(owner33));
+            var viaBracket = Run(bracket33.LoadAsync(sc33));
+            var viaName33 = Run(sc33.LoadAsync<Sprite>("Icons/sheet[s0]"));
+            var viaRef33 = Run(sc33.LoadAsync(new ContentRef<Sprite>("g-lsheet", "s0")));
+            Check(viaSplit != null && viaSplit.name == "s0" && ReferenceEquals(viaSplit, viaBracket) && ReferenceEquals(viaSplit, viaName33) && ReferenceEquals(viaSplit, viaRef33)
+                  && ContentService.LiveAssetCount == live33 + 1 && Ref(LSPR) == 1,
+                  $"a split link · a full-name link · a name load · a reference load are one slot (live={ContentService.LiveAssetCount - live33} ref={Ref(LSPR)})");
+            var copyOf33 = new ContentLinkSprite(); copyOf33.SetName(owner33.icon.Name, owner33.icon.SubObjectName);
+            Check(ReferenceEquals(copyOf33.Load(sc33), viaSplit) && ContentService.LiveAssetCount == live33 + 1, "SetName(a.Name, a.SubObjectName) copies a link onto the same slot");
+
+            Debug.Verbose = false;
+            int e33 = Debug.Errors;
+            owner33.icon.SetName("Icons/other");
+            bool refusedRename = Debug.LastError.Contains("'Icons/sheet[s0]'") && owner33.icon.Name == "Icons/sheet" && owner33.icon.SubObjectName == "s0";
+            Run(owner33.icon.LoadAsync(owner33));
+            bool refusedReload = Debug.LastError.Contains("'Icons/sheet[s0]' is already loaded");
+            Check(refusedRename && refusedReload && Debug.Errors == e33 + 2, "the SetName and double-load refusals name the sprite");
+
+            int keys33 = linkKeys.Count, misses33 = Misses();
+            var gone33 = ContentScope.ForScene(sceneA).CreateChild("LinkGone"); gone33.Dispose();
+            string threw33 = "";
+            try { Run(new ContentLink<Sprite>("Icons/untouched", "u0").LoadAsync(gone33)); } catch (ObjectDisposedException) { threw33 = "async"; }
+            try { new ContentLink<Sprite>("Icons/untouched", "u0").Load(gone33); } catch (ObjectDisposedException) { threw33 += "+sync"; }
+            Check(threw33 == "async+sync" && linkKeys.Count == keys33 && Misses() == misses33, "a load refused by BeginLoad looks nothing up: the key is taken after it");
+
+            e33 = Debug.Errors;
+            var missLink33 = new ContentLink<Sprite>("Icons/sheet", "renamed");
+            var missed33 = Run(missLink33.LoadAsync(sc33));
+            bool missLog = Debug.LastError.Contains("'Icons/sheet[renamed]' is not in any registered ContentCatalog");
+            var emptyMain33 = new ContentLink<Sprite>("", "s0");
+            var missedEmpty33 = emptyMain33.Load(sc33);
+            bool emptyLog = Debug.LastError.Contains("'[s0]'");
+            Check(missed33 == null && missLog && missedEmpty33 == null && emptyLog && Debug.Errors == e33 + 2 && !missLink33.IsValid,
+                  $"a missing sprite name fails the name path's way with the composed name; an empty main name logs '[s0]' ({Debug.LastError})");
+            Debug.Verbose = true;
+
+            // allocation: hit and miss lookups, and the load key of a cached pair
+            var hitLink33 = new ContentLink<Sprite>("Icons/sheet", "s0");
+            for (int i = 0; i < 10; ++i) { ContentService.Contains("Icons/sheet", "s0"); ContentService.TryGetName("Icons/sheet", "renamed", out _); hitLink33.RuntimeKeyIsValid(); ContentService.LinkKey("Icons/sheet", "s0"); }
+            long a33 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i) { ContentService.Contains("Icons/sheet", "s0"); ContentService.TryGetName("Icons/sheet", "renamed", out _); hitLink33.RuntimeKeyIsValid(); ContentService.LinkKey("Icons/sheet", "s0"); }
+            long alloc33 = GC.GetAllocatedBytesForCurrentThread() - a33;
+            Check(alloc33 == 0, $"with no fallback installed, hit and miss lookups and a cached load key allocate nothing ({alloc33} B over 4000 calls)");
+
+            // misses are forgotten when a registration changes, so a cached string never answers for a directory that is gone
+            Check(!ContentService.Contains("Icons/extra", "e0") && Misses() > 0, "a pair no registered catalog has is a miss");
+            int dirLinkB = ContentService.RegisterDirectory("LinkB");
+            Check(Misses() == 0 && ContentService.Contains("Icons/extra", "e0"), "registering a directory forgets the misses: the pair it carries is found");
+            Check(ContentService.UnregisterDirectory(dirLinkB) && !ContentService.Contains("Icons/extra", "e0") && !ContentService.TryGetName("Icons/extra", "e0", out _)
+                  && linkKeys.Contains(new RefKey("Icons/extra", "e0")),
+                  "after its directory is gone a cached pair answers false: the string is kept, the answer is not");
+
+            // with a fallback installed nothing is remembered, and a pair already cached loads without asking the fallback
+            int fallbackCalls = 0; bool lateAnswer = false;
+            ContentService.NameFallback = n => { fallbackCalls++; return lateAnswer && n == "Icons/late[l0]" ? new ContentService.SimulatedAsset(Lid(LSPR1)) : default; };
+            int missesBefore = Misses();
+            bool lateMiss = !ContentService.Contains("Icons/late", "l0");
+            lateAnswer = true;
+            bool lateHit = ContentService.Contains("Icons/late", "l0");
+            Check(lateMiss && lateHit && Misses() == missesBefore, "with a fallback installed a miss is not remembered: a fallback that answers later is heard");
+            var holderLate33 = new ContentLinkSprite(); holderLate33.SetName("Icons/late", "l0");   // only the fallback knows this name, as for the editor simulation
+            var second33 = new ContentLinkSprite(); second33.SetName("Icons/late", "l0");
+            bool heldLate = holderLate33.Load(sc33) != null;
+            fallbackCalls = 0;
+            for (int i = 0; i < 5; ++i) { second33.Load(sc33); second33.Release(); }
+            Check(heldLate && fallbackCalls == 0 && holderLate33.IsValid, $"a cached pair's load goes straight to the live slot: the fallback is not asked (calls={fallbackCalls})");
+            holderLate33.Release();
+            ContentService.NameFallback = null;
+            ContentService.Contains("Icons/gone", "g0");
+            Check(Misses() == missesBefore + 1, "with the fallback removed misses are remembered again");
+
+            Object.Destroy(owner33.gameObject); sc33.Dispose(); bracket33.Release(); Tick();
+            Check(Ref(LSPR) == 0 && ContentService.LiveAssetCount == live33, "every hold released");
+
+            Init(typeof(ContentService), "ResetStatics");
+            Check(linkKeys.Count == 0 && Misses() == 0, "ResetStatics empties the link cache and the misses");
+            (ContentService.NameFallback, ContentService.DirectoryFallback, ContentService.RefFallback, ContentService.SceneContainsFallback, ContentService.SceneFallback, ContentService.SceneResultFallback) = saved33;
+        }
+
+        Console.WriteLine("34) ContentLink sub-object name — editor utility: asset → (name, sprite), resolve, status, the drawer's sprite field");
+        {
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+
+            var sheet34 = new Texture2D { name = "sheet" }; var s0 = new Sprite { name = "s0" }; var bracketed34 = new Sprite { name = "a[1]" };
+            var enemy34 = new GameObject { name = "Enemy" };
+            var mesh34 = new Object { name = "body" };
+            var outside34 = new Texture2D { name = "far" };
+            var fresh34 = new Texture2D { name = "fresh" }; var freshSprite34 = new Sprite { name = "b[2]" };
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/sheet.png", sheet34, s0, bracketed34);
+            FakeEngine.AddProjectAsset("Assets/Content/Prefabs/Enemy.prefab", enemy34);
+            FakeEngine.AddProjectAsset("Assets/Content/Models/model.fbx", new Object { name = "model" }, mesh34);
+            FakeEngine.AddProjectAsset("Assets/Other/far.png", outside34);
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/fresh.png", fresh34, freshSprite34);
+            var cat34 = ScriptableObject.CreateInstance<ContentCatalog>();
+            var scanned34 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            FakeEngine.MainAssetAt.Remove("Assets/Content/Icons/fresh.png");   // added to the project after the catalog was built
+            ContentDirectoryBuilder.Scan("Assets/Content", scanned34);
+            FakeEngine.MainAssetAt["Assets/Content/Icons/fresh.png"] = fresh34;
+            ContentDirectoryBuilder.Write(cat34, "Assets/Content", scanned34);
+            FakeEngine.AddProjectAsset("Assets/Cat/catalog34.asset", cat34);
+            ContentLinkEditorUtility.Invalidate();
+
+            // asset → (name, sprite)
+            static string L(Object a) => ContentLinkEditorUtility.TryGetLinkForAsset(a, out var n, out var s, out var r) ? $"{n}|{s}" : "refused:" + r;
+            Check(L(sheet34) == "Icons/sheet|" && L(s0) == "Icons/sheet|s0" && L(bracketed34) == "Icons/sheet|a[1]" && L(enemy34) == "Prefabs/Enemy|" && L(freshSprite34) == "Icons/fresh|b[2]",
+                  $"TryGetLinkForAsset: a main asset keeps its name whole · a sprite splits into (texture name, sprite name), a '[' in the sprite name included · a file not built yet by the path rule ({L(bracketed34)} · {L(freshSprite34)})");
+            Check(L(mesh34).StartsWith("refused:") && L(mesh34).Contains("only sprites") && L(outside34).StartsWith("refused:") && L(outside34).Contains("not under") && L(null).StartsWith("refused:"),
+                  "TryGetLinkForAsset refuses what TryGetNameForAsset refuses: a non-sprite sub-asset · outside every catalog and root · nothing");
+
+            // (name, sprite) → asset
+            Check(ContentLinkEditorUtility.ResolveAsset("Icons/sheet", "s0") == s0 && ContentLinkEditorUtility.ResolveAsset("Icons/sheet", "a[1]") == bracketed34
+                  && ContentLinkEditorUtility.ResolveAsset("Icons/sheet", "") == sheet34 && ContentLinkEditorUtility.ResolveAsset("Icons/sheet", null) == sheet34
+                  && ContentLinkEditorUtility.ResolveAsset("Icons/sheet", "nope") == null && ContentLinkEditorUtility.ResolveAsset("", "s0") == null && ContentLinkEditorUtility.ResolveAsset(null, "s0") == null,
+                  "ResolveAsset(name, sprite): catalogued sprites · an empty sprite name is the main asset · a missing sprite · no main name");
+            Check(ContentLinkEditorUtility.ResolveAsset("Icons/fresh", "b[2]") == freshSprite34 && ContentLinkEditorUtility.ResolveAsset("Icons/fresh[b[2]]") == null,
+                  "a sprite not built yet with '[' in its name is found with the name apart (no parsing), while the whole name does not resolve");
+
+            // status
+            Check(ContentLinkEditorUtility.Validate("Icons/sheet", "s0", typeof(Sprite)) == NameStatus.Ok
+                  && ContentLinkEditorUtility.Validate("Icons/sheet", "a[1]", typeof(Sprite)) == NameStatus.Ok
+                  && ContentLinkEditorUtility.Validate("Icons/sheet", "", typeof(Sprite)) == NameStatus.TypeMismatch
+                  && ContentLinkEditorUtility.Validate("Icons/sheet", "s0", typeof(Texture2D)) == NameStatus.TypeMismatch
+                  && ContentLinkEditorUtility.Validate("Icons/sheet", "nope", typeof(Sprite)) == NameStatus.NotInCatalog
+                  && ContentLinkEditorUtility.Validate("Icons/fresh", "b[2]", typeof(Sprite)) == NameStatus.NotInCatalog
+                  && ContentLinkEditorUtility.Validate("", "s0", typeof(Sprite)) == NameStatus.Empty
+                  && ContentLinkEditorUtility.Validate("Icons/sheet[s0]", "", typeof(Sprite)) == NameStatus.Ok,
+                  "Validate(name, sprite, type): Ok · the texture in a Sprite field · wrong type · a renamed slice and a file not built yet are amber · empty · a whole name with no sprite name");
+            Check(ReferenceEquals(ContentLinkEditorUtility.LinkName("Icons/sheet", "s0"), ContentLinkEditorUtility.LinkName("Icons/sheet", "s0"))
+                  && ContentLinkEditorUtility.LinkName("Icons/sheet", "s0") == "Icons/sheet[s0]" && ContentLinkEditorUtility.LinkName("Icons/sheet", "") == "Icons/sheet",
+                  "LinkName composes once per pair");
+
+            // a hand-made catalog: a sprite entry whose name splits, and one whose name does not end in [sub]
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/sheet.png", sheet34, s0, bracketed34);
+            var hand34 = ScriptableObject.CreateInstance<ContentCatalog>();
+            hand34.EditorSetSourceRoot("Assets/Content");
+            hand34.EditorSetEntries(new ContentCatalog.Entry[] {
+                new() { name = "Legacy/sheet", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(sheet34), sub = "" },
+                new() { name = "Legacy/sheet[s0]", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(s0), sub = "s0" },
+                new() { name = "Odd/name", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(bracketed34), sub = "a[1]" },
+            });
+            FakeEngine.AddProjectAsset("Assets/Cat/hand34.asset", hand34);
+            ContentLinkEditorUtility.Invalidate();
+            Check(L(s0) == "Legacy/sheet|s0" && L(bracketed34) == "Icons/sheet|a[1]",
+                  $"catalog-first: a sprite keeps the main name its catalog has; an entry whose name does not end in [sub] goes to the path rule ({L(s0)} · {L(bracketed34)})");
+
+            // the drawer's name line: one field in the catalog's form, a typed name split against the catalogs
+            static string S(string t) { ContentLinkEditorUtility.SplitLinkName(t, out var n, out var s); return $"{n}|{s}"; }
+            Check(S("Legacy/sheet[s0]") == "Legacy/sheet|s0" && S("Odd/name") == "Odd/name|" && S("Legacy/sheet") == "Legacy/sheet|"
+                  && S("Icons/fresh[b[2]]") == "Icons/fresh[b[2]]|" && S("") == "|" && S(null) == "|",
+                  "SplitLinkName: a catalogued sprite name splits · an entry whose name does not end in [sub] and a main name stay whole · a name no catalog has stays whole (no parsing) · empty");
+
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
         }
 
         Console.WriteLine(fails == 0 ? "\nALL PASS" : $"\n{fails} FAIL");

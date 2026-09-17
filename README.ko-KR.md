@@ -52,7 +52,7 @@ ContentLink 는 Unity 6.6 에 내장된 **콘텐츠 디렉터리**에서 스프�
 |---|---|
 | 로딩 | `scope.LoadAsync<T>("Icons/sword")` — 에셋은 스코프의 것, 해제할 것이 없다 |
 | 스코프 | 스스로 끝나는 Root / Scene / GameObject / Explicit 스코프 · 스코프당 중복 제거 · 경로가 찍히는 누수 경고 |
-| 직렬화 참조 | `ContentLink<T>` · `ContentSceneLink` 필드 — 인스펙터 드로어가 이름을 채우고 검증 |
+| 직렬화 참조 | `ContentLink<T>` · `ContentSceneLink`(이름) 와 `ContentRef<T>` · `ContentSceneRef`(GUID — 파일을 옮기거나 이름을 바꿔도 유지) 필드 — 인스펙터 드로어가 채우고 검증 |
 | 인스턴스 | `scope.InstantiateAsync("Prefabs/Cat")` — 프리팹 참조는 인스턴스와 그 복제본이 가진다 |
 | 씬 | 스코프나 링크가 소유하는 콘텐츠 씬 · 어떤 모드로든 비소유 로드 · 열린 씬 추적 |
 | 결정적 해제 | 엔진 해제는 프레임당 한 지점(`Collect()`)에서만 — 코드 중간에서 일어나지 않는다 |
@@ -151,7 +151,7 @@ public class ItemView : MonoBehaviour
 **5. 또는 직렬화 링크를 쓰고** 인스펙터에서 에셋을 고릅니다:
 
 ```csharp
-public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png 를 떨어뜨리면 → "Icons/sword[sword]"
+public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png 를 떨어뜨리면 → "Icons/sword" + 스프라이트 "sword"
 async void Start() => image.sprite = await icon.LoadAsync(this);   // this = 이 GameObject 의 스코프(4단계와 같다). 다른 스코프를 넘겨도 된다
 ```
 
@@ -165,11 +165,14 @@ async void Start() => image.sprite = await icon.LoadAsync(this);   // this = 이
   카테고리는 이름을 바꾸지 않습니다 — `Icons/sword` 는 어느 카탈로그에 들어 있든 `Icons/sword` 입니다.
 - **서브에셋**은 `<메인>[<서브>]`: `sword.png` 안의 스프라이트 `sword` 는 `Icons/sword[sword]`, 스프라이트 시트
   `sheet.png` 는 `Icons/sheet[run_01]`, `Icons/sheet[run_02]`, …
+- **링크**는 스프라이트 이름을 따로 둡니다: `("Icons/sheet", "run_01")` 은 `Icons/sheet[run_01]` 을 로드합니다. 스프라이트
+  이름 없이 전체 이름을 적어도 같은 키로 로드됩니다.
 - **씬**도 에셋처럼 이름 붙습니다: `Scenes/Arena`. 에셋과 씬은 이름 공간을 공유합니다.
 - 이름은 **프로파일 안에서 고유**합니다. 같은 이름을 받게 될 두 에셋(카테고리가 겹치거나, 두 폴더에 같은 이름)은
   콘솔에 두 경로를 찍으며 빌드를 실패시킵니다.
 - 인스펙터 드로어는 이름의 상태를 색으로 보여 줍니다: 빈 링크는 무채색, 아직 어느 카탈로그도 모르는 이름은
-  **호박색**(빌드하거나 *Update Content Catalog* 실행), 필드가 담을 수 없는 것으로 풀리는 이름은 **빨강**.
+  **호박색**(빌드하거나 *Update Content Catalog* 실행), 필드가 담을 수 없는 것으로 풀리는 이름은 **빨강**. 링크의 이름 줄은
+  스프라이트를 `Icons/sheet[run_01]` 로 보여 주고, 거기에 친 이름은 카탈로그에 있으면 두 필드로 나뉘어 저장됩니다.
 
 ## 콘텐츠 빌드
 
@@ -405,8 +408,40 @@ icon.Release();
 icon.SetName(table[itemId].IconName);
 image.sprite = await icon.LoadAsync(this);
 
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.RuntimeKeyIsValid();
+icon.SetName("Icons/sheet", "run_01");                       // 스프라이트: 메인 이름과 스프라이트 이름을 따로
+other.SetName(icon.Name, icon.SubObjectName);                // 링크 복사: Name 은 메인 이름뿐
+
+icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
+
+### GUID 직렬화 참조
+
+```csharp
+public ContentRef<Sprite> icon;                          // ContentRef<GameObject>, ContentRef<Enemy>(프리팹의 컴포넌트) …
+public ContentSceneRef level;
+
+image.sprite = await this.Scope().LoadAsync(icon);       // 이름과 똑같이 스코프가 소유
+this.Scope().Release(icon);                              // 일찍 돌려주기(선택)
+var enemy = await stage.InstantiateAsync(enemyRef);      // GameObject 를 돌려준다
+var scene = await this.Scope().LoadSceneAsync(level);
+
+icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
+```
+
+- 참조는 경로가 아니라 에셋의 **GUID**(와 스프라이트 이름)를 담습니다: 파일을 옮기거나 이름을 바꿔도 카탈로그를
+  갱신하면 그대로 동작합니다. 필드는 Addressables `AssetReference` 와 같습니다(`m_AssetGUID`, `m_SubObjectName`).
+- 빌드가 카탈로그 엔트리마다 GUID 를 기록하고, 런타임은 참조를 그 **카탈로그 이름**으로 풀어 이름으로 로드합니다.
+  그래서 같은 에셋의 참조 로드와 이름 로드는 **슬롯 하나 · 스코프 키 하나**입니다: `Release(icon)` 은
+  `LoadAsync<Sprite>("Icons/sword")` 도 돌려주고, 반대도 마찬가지입니다.
+- 참조는 로드가 아니라 키만 담습니다 — 복사해도 문제없고, 로드는 스코프를 거칩니다. 필드마다 따로 해제해야 하면
+  이름을 한 번 얻어 링크를 쓰세요: `ContentService.TryGetName(icon, out var name)` → `new ContentLink<Sprite>(name)`.
+- 서브에셋은 **스프라이트, 이름으로**입니다(Addressables 와 같음). 슬라이스 이름을 바꾸면 참조가 끊깁니다.
+- `RuntimeKeyIsValid()` 는 `ContentLink` 와 같이 "등록된 카탈로그(또는 에디터 시뮬레이션)가 로드할 수 있다"는
+  뜻입니다 — Addressables 의 "GUID 가 들어 있다"는 `IsSet` 입니다.
+- **인스펙터에서.** 에셋을 고르면 GUID 가 저장되고, 둘째 줄에 풀리는 이름이 읽기 전용으로 보입니다. 빨강: 그 GUID 의
+  에셋이 없음, 스프라이트 이름이 사라짐(슬라이스 이름 변경), 필드 타입과 다름. 노랑: 아직 카탈로그에 없음, 모든 콘텐츠
+  루트 밖(루트 아래로 옮겨도 GUID 는 유지), 스프라이트 아틀라스. 빌드에 담을 수 없는 선택은 링크처럼 거부하고,
+  필드에 이미 들어 있는 값은 거부하지 않고 표시만 합니다.
 
 ### 인스턴스
 
@@ -461,7 +496,7 @@ if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // id �
     h = await ContentService.AcquireAsync<Texture2D>(id);
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` 은 등록된 디렉터리가 그 이름을 갖고 있는지 알려 줍니다.
+`ContentService.Contains(name)` / `ContainsScene(name)` 은 등록된 디렉터리가 그 이름을 갖고 있는지 알려 줍니다. 같은 호출이 `ContentRef<T>` / `ContentSceneRef` 도 받고, `Acquire` / `AcquireAsync` 도 `ContentRef<T>` 를 받습니다.
 
 ## Release 는 언제 부르나
 
@@ -593,9 +628,22 @@ Addressables 의 *Use Asset Database* 플레이 모드에 해당합니다: 저�
 | `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
 | `AddressablesTracker.ReportUnreferencedHandles()`(GC 기반) | 씬 언로드/종료 때의 스코프 경고(결정적) |
 | Auto Regist Folder Pattern | 빌드 프로파일과 카테고리 |
-| `AssetRef`(GUID) | `ContentService.TryGetLoadableObjectId(name, out id)` → `AcquireAsync<T>(id)` + `scope.Attach(handle)` |
+| `AssetRef`(GUID) | `ContentRef<T>` / `ContentSceneRef` |
+| `AssetReference` / `AssetReferenceSprite` 필드 | `ContentRef<T>` 필드 — 타입만 바꾸면 데이터가 남는다(아래) |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` · `this.Scope().Release(ref)` 는 선택 |
+| `ref.RuntimeKeyIsValid()`("값이 있나") | `ref.IsSet` |
 | *Use Asset Database* 플레이 모드 | 에디터 시뮬레이션 |
 | Addressables 그룹 / 번들 | 프로파일 / 카테고리 · `Packed` 아카이브 |
+
+**`AssetReference` 필드에서.** 필드 타입을 `ContentRef<T>` 로 바꾸면 직렬화된 GUID 와 스프라이트 이름이 남습니다.
+에셋은 콘텐츠 루트 아래에 있어야 합니다(옮겨도 GUID 는 유지). Addressables 는 세 가지 모양으로 기록하고, 그대로
+풀리는 것은 하나입니다:
+
+| Addressables 에서 고른 것 | 저장된 값 | ContentLink 에서 |
+|---|---|---|
+| 스프라이트 | 텍스처 GUID + 스프라이트 이름 | 풀림 |
+| `AssetReferenceSprite` 에 떨군 텍스처 | 텍스처 GUID, 스프라이트 이름 없음 | 스프라이트가 아니라 텍스처: 필드가 빨강 — 스프라이트를 다시 고르세요 |
+| Addressable 스프라이트 아틀라스에 든 스프라이트 | 아틀라스 GUID + 스프라이트 이름 | 지원 안 함(아틀라스 경유 스프라이트는 카탈로그에 없음): 노랑 — 텍스처에서 스프라이트를 고르세요 |
 
 ## 주의와 제한
 
@@ -612,6 +660,15 @@ Addressables 의 *Use Asset Database* 플레이 모드에 해당합니다: 저�
   아카이브를 약 1.5배 만들고, 상한 근처에서 오가는 아카이브는 빌드마다 쪼개지고 합쳐질 수 있으며, `MaxArchiveMB`
   나 분류 구현체를 바꾸면 산출물이 다시 분할됩니다.
 - 빌드는 프로젝트 락이 필요합니다: 명령줄 빌드 전에 다른 에디터 인스턴스에서 프로젝트를 닫으세요.
+- 참조와 이름은 에셋의 스코프 키를 공유합니다: 어느 쪽으로 해제해도 둘 다 풀립니다. 두 필드를 따로 해제해야 하면
+  `ContentLink` 나 자식 스코프를 쓰세요.
+- 링크의 `Name` 은 메인 이름이고, 스프라이트 링크의 스프라이트 이름은 `SubObjectName` 입니다. `SetName(name)` 은 스프라이트
+  이름을 비우므로 링크는 `SetName(a.Name, a.SubObjectName)` 으로 복사하세요 — 그걸 잃은 `ContentLink<Object>` 는 에러 없이
+  텍스처를 로드합니다.
+- 서브에셋은 스프라이트만, 이름으로 참조합니다. 다른 서브에셋(모델 파일 안의 메시)과 스프라이트 아틀라스를 거친
+  스프라이트는 참조할 수 없습니다.
+- 같은 파일이 두 이름으로 빌드됐으면 — 베이스 디렉터리와 이후 패치 사이에 옮김 — 참조는 가장 최근에 등록된 디렉터리의
+  이름으로 풀리고 옛 이름을 가진 링크는 다른 사본을 로드합니다: 메모리에 사본이 둘입니다.
 
 ## 저장소 구조와 테스트
 

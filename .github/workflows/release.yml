@@ -1,0 +1,106 @@
+name: Release
+
+# Publishes the GitHub release of a version tag (v0.2.0): the CHANGELOG section of that
+# version under "What's Changed", then .github/release-install.md under it. Nothing is
+# built or attached — the package is installed from this repository by git URL.
+# The tag has to agree with package.json and the CHANGELOG (check-versions.sh) before
+# anything is published: check.yml runs the same script on tags, but it does not gate this.
+
+on:
+  push:
+    tags:
+      # Version tags only: v0.2.0 — not v0.2, not a name tag.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (v0.2.0). Empty = the newest version tag.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags: a manual run resolves one and reads the CHANGELOG at it
+
+      - name: Resolve tag
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            MANUAL=0
+          else
+            TAG="${INPUT_TAG}"
+            [ -n "${TAG}" ] || TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*')"
+            MANUAL=1
+          fi
+
+          # Checked before the checkout below, so a mistyped tag is reported as one.
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "not a version tag: '${TAG}' (expected vMAJOR.MINOR.PATCH)" >&2
+            exit 1
+          fi
+
+          # A manual run starts on a branch: read the CHANGELOG as of the tag instead.
+          [ "${MANUAL}" = 0 ] || git checkout --quiet --detach "${TAG}"
+
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version=${TAG#v}" >> "${GITHUB_OUTPUT}"
+          echo "Releasing ${TAG}"
+
+      # The version the notes are built from, and the one a user installs by the tag.
+      - name: Check versions
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: .github/scripts/check-versions.sh --tag "${TAG}"
+
+      - name: Build release notes
+        id: notes
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES="${RUNNER_TEMP}/release-notes.md"
+
+          # changelog-section.sh fails when that version has no section, so a release
+          # cannot go out with empty notes.
+          {
+            echo "## What's Changed"
+            echo
+            .github/scripts/changelog-section.sh "${VERSION}"
+            echo
+            sed "s|__TAG__|${TAG}|g" .github/release-install.md
+          } > "${NOTES}"
+
+          echo "path=${NOTES}" >> "${GITHUB_OUTPUT}"
+          echo "--- release notes ---"
+          cat "${NOTES}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

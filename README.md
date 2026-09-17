@@ -54,7 +54,7 @@ built while you work. The only dependency is Unity 6000.6.
 |---|---|
 | Loading | `scope.LoadAsync<T>("Icons/sword")` — the asset belongs to the scope; nothing to release |
 | Scopes | Root / Scene / GameObject / Explicit scopes that end automatically; dedupe per scope; leak warnings with a path |
-| Serialized references | `ContentLink<T>` and `ContentSceneLink` fields with an inspector drawer that fills in and validates the name |
+| Serialized references | `ContentLink<T>` / `ContentSceneLink` (by name) and `ContentRef<T>` / `ContentSceneRef` (by GUID — moving or renaming the file keeps them) fields, with inspector drawers that fill in and validate them |
 | Instances | `scope.InstantiateAsync("Prefabs/Cat")` — the prefab reference lives with the instance and its clones |
 | Scenes | Content scenes owned by a scope or a link; unowned loads in any mode; open scenes tracked |
 | Deterministic release | Engine releases happen at one point per frame (`Collect()`), never in the middle of your code |
@@ -153,7 +153,7 @@ public class ItemView : MonoBehaviour
 **5. Or use a serialized link** and pick the asset in the inspector:
 
 ```csharp
-public ContentLinkSprite icon;                       // drop Assets/Content/Icons/sword.png on it → "Icons/sword[sword]"
+public ContentLinkSprite icon;                       // drop Assets/Content/Icons/sword.png on it → "Icons/sword" + sprite "sword"
 async void Start() => image.sprite = await icon.LoadAsync(this);   // this = this GameObject's scope (same as step 4); any scope can be passed instead
 ```
 
@@ -167,11 +167,14 @@ are what you see, and the folder does not even have to exist. Build when you shi
   Categories do not change names — `Icons/sword` is `Icons/sword` whichever catalog holds it.
 - **Sub-assets** are `<main>[<sub>]`: the sprite `sword` inside `sword.png` is `Icons/sword[sword]`; a sprite
   sheet `sheet.png` gives `Icons/sheet[run_01]`, `Icons/sheet[run_02]`, …
+- A **link** keeps the sprite name apart: `("Icons/sheet", "run_01")` loads `Icons/sheet[run_01]`. A whole name with no
+  sprite name loads too, as the same key.
 - **Scenes** are named like assets: `Scenes/Arena`. Assets and scenes share one name space.
 - Names are **unique per profile**. Two assets that would get the same name (two categories overlapping, or the same
   name in two folders) fail the build with both paths in the console.
 - The inspector drawer shows a name's state: plain for empty, **amber** for a name no catalog has yet (build, or run
-  *Update Content Catalog*), **red** when the name resolves to something the field cannot hold.
+  *Update Content Catalog*), **red** when the name resolves to something the field cannot hold. A link's name line shows
+  a sprite as `Icons/sheet[run_01]`; a name typed there is split into the two fields when a catalog has it.
 
 ## Building content
 
@@ -417,8 +420,42 @@ icon.Release();
 icon.SetName(table[itemId].IconName);
 image.sprite = await icon.LoadAsync(this);
 
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.RuntimeKeyIsValid();
+icon.SetName("Icons/sheet", "run_01");                       // a sprite: the main name and the sprite name apart
+other.SetName(icon.Name, icon.SubObjectName);                // copy a link: Name is the main name only
+
+icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
+
+### Serialized references by GUID
+
+```csharp
+public ContentRef<Sprite> icon;                          // ContentRef<GameObject>, ContentRef<Enemy> (a component on a prefab), …
+public ContentSceneRef level;
+
+image.sprite = await this.Scope().LoadAsync(icon);       // the scope owns it, exactly as for a name
+this.Scope().Release(icon);                              // optional early return
+var enemy = await stage.InstantiateAsync(enemyRef);      // returns the GameObject
+var scene = await this.Scope().LoadSceneAsync(level);
+
+icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
+```
+
+- A reference stores the asset's **GUID** (and a sprite's name), not its path: moving or renaming the file keeps it
+  working once the catalog is updated. The fields are those of Addressables' `AssetReference` (`m_AssetGUID`,
+  `m_SubObjectName`).
+- The build records each catalog entry's GUID; at runtime a reference resolves to that **catalog name** and loads by
+  name. A reference and a name load of the same asset are therefore **one slot and one scope key**: `Release(icon)`
+  also returns `LoadAsync<Sprite>("Icons/sword")`, and the other way round.
+- A reference holds a key, not a load — copies are harmless, and loading goes through a scope. For a hold per field
+  (released on its own), resolve the name once and use a link: `ContentService.TryGetName(icon, out var name)` →
+  `new ContentLink<Sprite>(name)`.
+- A sub-asset is a **sprite, by name** (as in Addressables). Renaming a slice breaks the reference.
+- `RuntimeKeyIsValid()` means "a registered catalog (or the editor simulation) can load it", as for `ContentLink` —
+  not Addressables' "a GUID is set", which is `IsSet`.
+- **In the inspector.** Pick an asset to store its GUID; the second line shows the name it resolves to, read-only.
+  Red: no asset has the GUID, the sprite name is gone (a renamed slice), or the asset is not of the field's type.
+  Amber: not in a catalog yet, outside every content root (moving it under one keeps the GUID), or a sprite atlas.
+  A pick that no build could carry is refused like a link's; a value already in the field is never refused, only shown.
 
 ### Instances
 
@@ -476,7 +513,7 @@ if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // engin
     h = await ContentService.AcquireAsync<Texture2D>(id);
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` tell whether a registered directory carries a name.
+`ContentService.Contains(name)` / `ContainsScene(name)` tell whether a registered directory carries a name; the same calls take a `ContentRef<T>` / `ContentSceneRef`, and `Acquire` / `AcquireAsync` take a `ContentRef<T>` too.
 
 ## When to call Release
 
@@ -612,9 +649,22 @@ profile's catalogs do not carry yet: the links that need a build before they shi
 | `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
 | `AddressablesTracker.ReportUnreferencedHandles()` (GC based) | scope warnings at scene unload / quit (deterministic) |
 | Auto Regist Folder Pattern | build profiles and categories |
-| `AssetRef` (GUID) | `ContentService.TryGetLoadableObjectId(name, out id)` → `AcquireAsync<T>(id)` + `scope.Attach(handle)` |
+| `AssetRef` (GUID) | `ContentRef<T>` / `ContentSceneRef` |
+| `AssetReference` / `AssetReferenceSprite` field | `ContentRef<T>` field — change the type, the data carries over (see below) |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)`; `this.Scope().Release(ref)` optional |
+| `ref.RuntimeKeyIsValid()` ("is it set") | `ref.IsSet` |
 | *Use Asset Database* play mode | editor simulation |
 | Addressables groups / bundles | profiles / categories, `Packed` archives |
+
+**From an `AssetReference` field.** Change the field's type to `ContentRef<T>`: the serialized GUID and sprite name
+stay. The assets have to live under a content root (moving them there keeps their GUID). Addressables writes three
+shapes, and one of them resolves as it is:
+
+| What was picked in Addressables | Stored | In ContentLink |
+|---|---|---|
+| a sprite | texture GUID + sprite name | resolves |
+| a texture dropped on an `AssetReferenceSprite` | texture GUID, no sprite name | the texture, not a sprite: the field is red — pick the sprite |
+| a sprite held by an Addressable sprite atlas | atlas GUID + sprite name | not supported (sprites through an atlas are not catalogued): amber — pick the sprite from its texture |
 
 ## Notes and limitations
 
@@ -633,6 +683,16 @@ profile's catalogs do not carry yet: the links that need a build before they shi
   1.5× as many archives as a plain fill; an archive hovering at the limit may split and merge between builds; and
   changing `MaxArchiveMB` or the partitioner re-partitions the output.
 - Building needs the project lock: close the project in other editor instances before a command-line build.
+- A reference and a name share the scope key of their asset: releasing either releases both. Use a `ContentLink` or a
+  child scope when two fields must be released separately.
+- A link's `Name` is its main name; a sprite link's sprite name is `SubObjectName`. `SetName(name)` clears the sprite
+  name, so copy a link with `SetName(a.Name, a.SubObjectName)` — a `ContentLink<Object>` that lost it loads the
+  texture without an error.
+- Only sprites are sub-assets, by name. Other sub-assets (a mesh in a model file) and sprites reached through a sprite
+  atlas cannot be referenced.
+- When the same file was built under two names — moved between a base directory and a later patch — a reference
+  resolves to the most recently registered directory's name while a link that kept the old name loads the other
+  copy: two copies are in memory.
 
 ## Repository layout and tests
 

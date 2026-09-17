@@ -16,5 +16,11 @@ namespace xpTURN.ContentLink.Tests.Editor
         public ContentLink<Texture2D> direct = new ContentLink<Texture2D>();
         public ContentSceneLink scene = new ContentSceneLink();
         public int notALink;
+
+        // references: a generic struct, its collection elements, and the scene reference
+        public ContentRef<Sprite> refOne;
+        public ContentRef<Sprite>[] refMany = new ContentRef<Sprite>[2];
+        public List<ContentRef<GameObject>> refList = new List<ContentRef<GameObject>> { default };
+        public ContentSceneRef refScene;
     }
 }

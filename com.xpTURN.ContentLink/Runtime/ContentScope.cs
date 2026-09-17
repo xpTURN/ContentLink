@@ -268,6 +268,66 @@ namespace xpTURN.ContentLink
             AttachLease(handle.Lease, handle.Gen);
         }
 
+        // ───────────── references (ContentRef / ContentSceneRef) ─────────────
+        //
+        // A reference resolves to its catalog name and takes the name overload above, so it holds the same key a name load
+        // does: Contains("Icons/sword") is true after LoadAsync(ref), and Release(ref) also returns a name load of that asset.
+        // A load through a reference no catalog carries is logged with the reference and gives null (an invalid Scene).
+
+        /// <summary><see cref="LoadAsync{T}(string, CancellationToken)"/> through a reference.</summary>
+        public Awaitable<T> LoadAsync<T>(ContentRef<T> reference, CancellationToken ct = default) where T : Object
+        {
+            if (IsDisposed || ct.IsCancellationRequested)   // the name overload reports these its usual way
+            {
+                ContentService.TryGetName(reference, out var known);
+                return LoadAsync<T>(known, ct);
+            }
+            return ContentService.ResolveForLoad(reference, out var key) ? LoadAsync<T>(key, ct) : ContentService.Completed<T>(null);
+        }
+
+        /// <summary><see cref="Load{T}(string)"/> through a reference.</summary>
+        public T Load<T>(ContentRef<T> reference) where T : Object
+        {
+            ThrowIfDisposed();
+            return ContentService.ResolveForLoad(reference, out var key) ? Load<T>(key) : null;
+        }
+
+        /// <summary>
+        /// <see cref="InstantiateAsync(string, Transform, bool, CancellationToken)"/> through a reference. T may be a component
+        /// type: the catalog entry is the prefab either way, and the instance is returned as a GameObject.
+        /// </summary>
+        public Awaitable<GameObject> InstantiateAsync<T>(ContentRef<T> reference, Transform parent = null, bool worldPositionStays = false, CancellationToken ct = default) where T : Object
+        {
+            if (IsDisposed || ct.IsCancellationRequested)
+            {
+                ContentService.TryGetName(reference, out var known);
+                return InstantiateAsync(known, parent, worldPositionStays, ct);
+            }
+            return ContentService.ResolveForLoad(reference, out var key) ? InstantiateAsync(key, parent, worldPositionStays, ct) : ContentService.Completed<GameObject>(null);
+        }
+
+        /// <summary><see cref="Release(string)"/> through a reference — also returns a name load of the same asset.</summary>
+        public bool Release<T>(ContentRef<T> reference) where T : Object
+            => ContentService.TryGetName(reference, out var key) && Release(key);
+
+        public bool Contains<T>(ContentRef<T> reference) where T : Object
+            => ContentService.TryGetName(reference, out var key) && Contains(key);
+
+        /// <summary><see cref="ShareTo(ContentScope, string)"/> through a reference.</summary>
+        public bool ShareTo<T>(ContentScope target, ContentRef<T> reference) where T : Object
+            => ContentService.TryGetName(reference, out var key) && ShareTo(target, key);
+
+        /// <summary><see cref="LoadSceneAsync(string, CancellationToken)"/> through a scene reference.</summary>
+        public Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, CancellationToken ct = default)
+        {
+            if (IsDisposed)
+            {
+                ContentService.TryGetSceneName(reference, out var known);
+                return LoadSceneAsync(known, ct);
+            }
+            return ContentService.ResolveSceneForLoad(reference, out var name) ? LoadSceneAsync(name, ct) : ContentService.Completed<Scene>(default);
+        }
+
         // ───────────── dispose ─────────────
 
         public void Dispose()

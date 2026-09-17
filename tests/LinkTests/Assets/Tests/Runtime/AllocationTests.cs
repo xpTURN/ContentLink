@@ -19,8 +19,12 @@ namespace xpTURN.ContentLink.Tests
     public class AllocationTests
     {
         readonly string m_Texture = "Icons/single";
-        readonly string m_Sprite = "Icons/single[single]";
+        readonly string m_SpriteMain = "Icons/single";
+        readonly string m_SpriteSub = "single";
+        readonly string m_MissingSub = "nope";
         readonly string m_Missing = "Icons/nope";
+        readonly ContentRef<Texture2D> m_TextureRef = new ContentRef<Texture2D>("2db49f3267d3454694e93fa3d8354b29");   // TestContent/A/Icons/single.png
+        readonly ContentRef<Texture2D> m_MissingRef = new ContentRef<Texture2D>("00000000000000000000000000000000");
 
         int m_DirA = -1;
         ContentScope m_Scope;
@@ -52,7 +56,7 @@ namespace xpTURN.ContentLink.Tests
             Assert.That(m_Scope.Load<Texture2D>(m_Texture), Is.Not.Null);
             m_Owner = new GameObject("G1");
             m_Holder = m_Owner.AddComponent<LinkHolder>();
-            m_Holder.icon.SetName(m_Sprite);
+            m_Holder.icon.SetName(m_SpriteMain, m_SpriteSub);
             Assert.That(m_Holder.icon.Load(m_Holder), Is.Not.Null);
             yield return null;
         }
@@ -95,6 +99,29 @@ namespace xpTURN.ContentLink.Tests
             AssertNoAlloc(() => { ContentService.TryGetLoadableObjectId(m_Texture, out _); });
             AssertNoAlloc(() => { ContentService.Contains(m_Texture); });
             AssertNoAlloc(() => { ContentService.Contains(m_Missing); });
+        }
+
+        [Test, Timeout(10000)]
+        public void G1e_ReferenceLookups_AndAReferenceCacheHit_DoNotAllocate()
+        {
+            // a reference resolves to its catalog name through a dictionary, so the per-frame paths stay clean —
+            // including a miss, and a scope cache hit (the set-up holds Icons/single, the name m_TextureRef resolves to).
+            AssertNoAlloc(() => { ContentService.TryGetName(m_TextureRef, out _); });
+            AssertNoAlloc(() => { ContentService.Contains(m_TextureRef); });
+            AssertNoAlloc(() => { ContentService.Contains(m_MissingRef); });
+            AssertNoAlloc(() => { m_Scope.Contains(m_TextureRef); });
+            AssertNoAlloc(() => { m_Scope.Load(m_TextureRef); });
+        }
+
+        [Test, Timeout(10000)]
+        public void G1f_LinkSpriteNameLookups_HitAndMiss_DoNotAllocate()
+        {
+            // a (name, sprite) pair is composed once, and a miss is remembered while no editor fallback is installed
+            // (RestoreStatics removes it, so this is the player's contract).
+            AssertNoAlloc(() => { ContentService.Contains(m_SpriteMain, m_SpriteSub); });
+            AssertNoAlloc(() => { ContentService.TryGetName(m_SpriteMain, m_SpriteSub, out _); });
+            AssertNoAlloc(() => { ContentService.Contains(m_SpriteMain, m_MissingSub); });
+            AssertNoAlloc(() => { m_Holder.icon.RuntimeKeyIsValid(); });
         }
 
         // ───────────── the measurement artifact, kept as a guard for future test authors (records, never fails) ─────────────

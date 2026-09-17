@@ -53,7 +53,7 @@ ContentLink は、Unity 6.6 に組み込まれた **コンテンツディレク�
 |---|---|
 | ロード | `scope.LoadAsync<T>("Icons/sword")` — アセットはスコープのもの。解放するものがない |
 | スコープ | 自動で終わる Root / Scene / GameObject / Explicit スコープ · スコープごとの重複排除 · パス付きのリーク警告 |
-| シリアライズ参照 | `ContentLink<T>` と `ContentSceneLink` フィールド — インスペクター描画が名前を埋めて検証する |
+| シリアライズ参照 | `ContentLink<T>` / `ContentSceneLink`（名前）と `ContentRef<T>` / `ContentSceneRef`（GUID — ファイルを移動・改名しても保たれる）フィールド — インスペクター描画が埋めて検証する |
 | インスタンス | `scope.InstantiateAsync("Prefabs/Cat")` — プレハブ参照はインスタンスとその複製が持つ |
 | シーン | スコープやリンクが所有するコンテンツシーン · どのモードでも非所有ロード · 開いているシーンの追跡 |
 | 決定論的な解放 | エンジンへの解放はフレームごとに一箇所（`Collect()`）で — コードの途中では起きない |
@@ -152,7 +152,7 @@ public class ItemView : MonoBehaviour
 **5. あるいはシリアライズリンクを使い**、インスペクターでアセットを選びます:
 
 ```csharp
-public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png をドロップすると → "Icons/sword[sword]"
+public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png をドロップすると → "Icons/sword" + スプライト "sword"
 async void Start() => image.sprite = await icon.LoadAsync(this);   // this = この GameObject のスコープ（手順 4 と同じ）。別のスコープを渡してもよい
 ```
 
@@ -166,11 +166,14 @@ async void Start() => image.sprite = await icon.LoadAsync(this);   // this = こ
   カテゴリは名前を変えません — `Icons/sword` はどのカタログにあっても `Icons/sword` です。
 - **サブアセット** は `<メイン>[<サブ>]`: `sword.png` の中のスプライト `sword` は `Icons/sword[sword]`、スプライトシート
   `sheet.png` は `Icons/sheet[run_01]`、`Icons/sheet[run_02]`、…
+- **リンク** はスプライト名を分けて持ちます: `("Icons/sheet", "run_01")` は `Icons/sheet[run_01]` をロードします。スプライト名
+  なしで完全な名前を書いても、同じキーとしてロードされます。
 - **シーン** もアセットと同じように名付けられます: `Scenes/Arena`。アセットとシーンはひとつの名前空間を共有します。
 - 名前は **プロファイル内で一意** です。同じ名前になる二つのアセット（カテゴリの重なり、二つのフォルダの同名）は、両方の
   パスをコンソールに出してビルドを失敗させます。
 - インスペクター描画は名前の状態を色で示します: 空なら無色、まだどのカタログも知らない名前は **琥珀色**（ビルドするか
-  *Update Content Catalog* を実行）、フィールドが保持できないものに解決される名前は **赤**。
+  *Update Content Catalog* を実行）、フィールドが保持できないものに解決される名前は **赤**。リンクの名前行は
+  スプライトを `Icons/sheet[run_01]` と表示し、そこに入力した名前はカタログにあれば二つのフィールドに分けて保存されます。
 
 ## コンテンツのビルド
 
@@ -407,8 +410,41 @@ icon.Release();
 icon.SetName(table[itemId].IconName);
 image.sprite = await icon.LoadAsync(this);
 
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.RuntimeKeyIsValid();
+icon.SetName("Icons/sheet", "run_01");                       // スプライト: メイン名とスプライト名を分けて
+other.SetName(icon.Name, icon.SubObjectName);                // リンクのコピー: Name はメイン名だけ
+
+icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
+
+### GUID によるシリアライズ参照
+
+```csharp
+public ContentRef<Sprite> icon;                          // ContentRef<GameObject>, ContentRef<Enemy>（プレハブ上のコンポーネント）…
+public ContentSceneRef level;
+
+image.sprite = await this.Scope().LoadAsync(icon);       // 名前と同じくスコープが所有する
+this.Scope().Release(icon);                              // 早めに返す（任意）
+var enemy = await stage.InstantiateAsync(enemyRef);      // GameObject を返す
+var scene = await this.Scope().LoadSceneAsync(level);
+
+icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
+```
+
+- 参照はパスではなくアセットの **GUID**（とスプライト名）を持ちます: ファイルを移動・改名しても、カタログを更新すれば
+  そのまま動きます。フィールドは Addressables の `AssetReference` と同じです（`m_AssetGUID`, `m_SubObjectName`）。
+- ビルドがカタログエントリごとに GUID を記録し、ランタイムは参照をその **カタログ名** に解決して名前でロードします。
+  そのため同じアセットの参照ロードと名前ロードは **スロットひとつ · スコープキーひとつ** です: `Release(icon)` は
+  `LoadAsync<Sprite>("Icons/sword")` も返し、その逆も同じです。
+- 参照はロードではなくキーだけを持ちます — コピーしても問題なく、ロードはスコープを通します。フィールドごとに個別に
+  解放したいなら、名前を一度取得してリンクを使います: `ContentService.TryGetName(icon, out var name)` →
+  `new ContentLink<Sprite>(name)`。
+- サブアセットは **スプライト、名前で** です（Addressables と同じ）。スライス名を変えると参照は切れます。
+- `RuntimeKeyIsValid()` は `ContentLink` と同じく「登録済みカタログ（またはエディターシミュレーション）がロードできる」
+  の意味です — Addressables の「GUID が入っている」は `IsSet` です。
+- **インスペクターでは。** アセットを選ぶと GUID が保存され、2 行目に解決される名前が読み取り専用で表示されます。
+  赤: その GUID のアセットがない、スプライト名が消えた（スライスの改名）、フィールドの型と違う。黄: まだカタログにない、
+  どのコンテンツルートの外にもある（ルートの下へ移しても GUID は保たれる）、スプライトアトラス。ビルドに載せられない
+  選択はリンクと同じく拒否し、フィールドにすでにある値は拒否せず表示だけします。
 
 ### インスタンス
 
@@ -465,7 +501,7 @@ if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // id �
     h = await ContentService.AcquireAsync<Texture2D>(id);
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` は、登録済みディレクトリがその名前を持つかを教えます。
+`ContentService.Contains(name)` / `ContainsScene(name)` は、登録済みディレクトリがその名前を持つかを教えます。同じ呼び出しは `ContentRef<T>` / `ContentSceneRef` も受け取り、`Acquire` / `AcquireAsync` も `ContentRef<T>` を受け取ります。
 
 ## Release はいつ呼ぶか
 
@@ -598,9 +634,22 @@ Addressables の *Use Asset Database* プレイモードに相当します: 制�
 | `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
 | `AddressablesTracker.ReportUnreferencedHandles()`（GC ベース） | シーンアンロード/終了時のスコープ警告（決定論的） |
 | Auto Regist Folder Pattern | ビルドプロファイルとカテゴリ |
-| `AssetRef`（GUID） | `ContentService.TryGetLoadableObjectId(name, out id)` → `AcquireAsync<T>(id)` + `scope.Attach(handle)` |
+| `AssetRef`（GUID） | `ContentRef<T>` / `ContentSceneRef` |
+| `AssetReference` / `AssetReferenceSprite` フィールド | `ContentRef<T>` フィールド — 型を変えるだけでデータが残る（下記） |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` · `this.Scope().Release(ref)` は任意 |
+| `ref.RuntimeKeyIsValid()`（「値があるか」） | `ref.IsSet` |
 | *Use Asset Database* プレイモード | エディターシミュレーション |
 | Addressables のグループ / バンドル | プロファイル / カテゴリ · `Packed` アーカイブ |
+
+**`AssetReference` フィールドから。** フィールドの型を `ContentRef<T>` に変えると、シリアライズされた GUID とスプライト名が
+残ります。アセットはコンテンツルートの下に置く必要があります（移しても GUID は保たれる）。Addressables は三つの形で記録し、
+そのまま解決されるのはひとつです:
+
+| Addressables で選んだもの | 保存された値 | ContentLink では |
+|---|---|---|
+| スプライト | テクスチャの GUID + スプライト名 | 解決される |
+| `AssetReferenceSprite` に落としたテクスチャ | テクスチャの GUID、スプライト名なし | スプライトではなくテクスチャ: フィールドは赤 — スプライトを選び直す |
+| Addressable スプライトアトラスが持つスプライト | アトラスの GUID + スプライト名 | 非対応（アトラス経由のスプライトはカタログにない）: 黄 — テクスチャからスプライトを選ぶ |
 
 ## 注意と制限
 
@@ -618,6 +667,15 @@ Addressables の *Use Asset Database* プレイモードに相当します: 制�
   アーカイブを作り、上限近くを行き来するアーカイブはビルドごとに分割・結合されることがあり、`MaxArchiveMB` や分割実装を変えると
   出力は再分割されます。
 - ビルドにはプロジェクトロックが必要です: コマンドラインビルドの前に、ほかのエディターインスタンスでプロジェクトを閉じてください。
+- 参照と名前はアセットのスコープキーを共有します: どちらで解放しても両方が外れます。二つのフィールドを別々に解放するなら
+  `ContentLink` か子スコープを使ってください。
+- リンクの `Name` はメイン名で、スプライトリンクのスプライト名は `SubObjectName` です。`SetName(name)` はスプライト名を
+  空にするので、リンクは `SetName(a.Name, a.SubObjectName)` でコピーしてください — それを失った `ContentLink<Object>` は
+  エラーなしでテクスチャをロードします。
+- サブアセットはスプライトだけを名前で参照します。ほかのサブアセット（モデルファイル内のメッシュ）とスプライトアトラスを
+  経由するスプライトは参照できません。
+- 同じファイルが二つの名前でビルドされた場合 — ベースディレクトリと後のパッチの間で移動 — 参照は最後に登録された
+  ディレクトリの名前に解決され、古い名前のリンクは別のコピーをロードします: メモリにコピーが二つあります。
 
 ## リポジトリ構成とテスト
 

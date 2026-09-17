@@ -152,5 +152,27 @@ namespace xpTURN.ContentLink.Tests.Editor
             var again = Update("Assets/TestContent/C");
             Assert.That(again.Scenes.Select(e => (e.name, e.id.ToString())), Is.EqualTo(catalog.Scenes.Select(e => (e.name, e.id.ToString()))), "deterministic");
         }
+
+        // ───────────── GUID and sub-asset name (ContentRef) ─────────────
+
+        [Test]
+        public void B7_EveryEntryRecordsItsAssetGuid_AndSpritesTheirSubName()
+        {
+            var catalog = Update("Assets/TestContent/A");
+            foreach (var e in catalog.Entries)
+            {
+                var path = AssetDatabase.GetAssetPath(Resolve(e));
+                Assert.That(e.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(path)), $"'{e.name}' guid is its file's GUID");
+                Assert.That(e.guid, Does.Match("^[0-9a-f]{32}$"), $"'{e.name}' guid is 32 lowercase hex chars");
+            }
+            Assert.That(Find(catalog, "Icons/single").sub, Is.EqualTo(""), "a main asset has no sub name");
+            Assert.That(Find(catalog, "Icons/single[single]").sub, Is.EqualTo("single"));
+            Assert.That(Find(catalog, "Icons/sheet[s1]").sub, Is.EqualTo("s1"));
+            Assert.That(Find(catalog, "Icons/sheet[s1]").guid, Is.EqualTo(Find(catalog, "Icons/sheet").guid), "a sprite shares its texture's GUID");
+
+            var scenes = Update("Assets/TestContent/C").Scenes;
+            foreach (var e in scenes)
+                Assert.That(e.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID($"Assets/TestContent/C/{e.name}.unity")), $"scene '{e.name}' guid");
+        }
     }
 }

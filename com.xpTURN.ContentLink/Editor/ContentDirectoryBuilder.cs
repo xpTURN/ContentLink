@@ -120,26 +120,26 @@ namespace xpTURN.ContentLink.Editor
                     {
                         Path = path,
                         IsScene = true,
-                        Scene = new ContentCatalog.SceneEntry { name = name, id = LoadableSceneIdEditorUtility.CreateLoadableSceneId(path) },
+                        Scene = new ContentCatalog.SceneEntry { name = name, id = LoadableSceneIdEditorUtility.CreateLoadableSceneId(path), guid = guid },
                     });
                     continue;
                 }
 
-                ok &= Add(results, seen, name, main, path);
+                ok &= Add(results, seen, name, main, path, guid, "");
                 foreach (var sub in AssetDatabase.LoadAllAssetRepresentationsAtPath(path))
                     if (sub is Sprite)
-                        ok &= Add(results, seen, ContentLinkEditorUtility.ToName(sourceRoot, path, sub), sub, path);
+                        ok &= Add(results, seen, ContentLinkEditorUtility.ToName(sourceRoot, path, sub), sub, path, guid, sub.name);
             }
             return ok;
         }
 
-        static bool Add(List<Scanned> results, Dictionary<string, string> seen, string name, Object obj, string path)
+        static bool Add(List<Scanned> results, Dictionary<string, string> seen, string name, Object obj, string path, string guid, string sub)
         {
             if (!Unique(seen, name, path)) return false;
             results.Add(new Scanned
             {
                 Path = path,
-                Entry = new ContentCatalog.Entry { name = name, id = LoadableObjectIdEditorUtility.CreateLoadableObjectId(obj) },
+                Entry = new ContentCatalog.Entry { name = name, id = LoadableObjectIdEditorUtility.CreateLoadableObjectId(obj), guid = guid, sub = sub },
             });
             return true;
         }

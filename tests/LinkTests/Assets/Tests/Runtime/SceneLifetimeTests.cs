@@ -250,7 +250,7 @@ namespace xpTURN.ContentLink.Tests
         [UnityTest, Timeout(60000)]
         public IEnumerator L9_GameObjectScopesDestroyedInRandomOrder_ThenSceneUnload_LeavesNothing()
         {
-            // O-1: the scope tree's child list is edited in whatever order objects die; none of it may leak or log.
+            // the scope tree's child list is edited in whatever order objects die; none of it may leak or log.
             var scene = SceneManager.CreateScene("O1Random");
             var objects = new List<GameObject>();
             for (int i = 0; i < 300; ++i)

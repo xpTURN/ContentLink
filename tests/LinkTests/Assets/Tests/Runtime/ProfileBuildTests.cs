@@ -105,7 +105,7 @@ namespace xpTURN.ContentLink.Tests
         [Test, Timeout(120000)]
         public async Task B3_ManyArchives_MountTime()
         {
-            // U-6: MountAsync starts every mount first and then waits; the wall-clock cost is the slowest one, not the sum. Measured, not assumed.
+            // MountAsync starts every mount first and then waits; the wall-clock cost is the slowest one, not the sum. Measured, not assumed.
             if (!File.Exists(Path.Combine(Output("Packed3"), ContentArchives.IndexFile)))
                 Assert.Ignore("Runner/Packed3 is missing — run the EditMode test ContentArchivePackerTests.K5 first");
             var index = ContentArchives.ReadIndex(Output("Packed3"));
@@ -118,7 +118,7 @@ namespace xpTURN.ContentLink.Tests
                 Assert.That(dir, Is.GreaterThanOrEqualTo(0));
                 Assert.That(ArchiveFileInterface.GetMountedArchives(space).Length, Is.EqualTo(index.Archives.Length));
                 Assert.That(ContentService.Contains("t000"), Is.True);
-                Debug.Log($"[ContentLink.Tests] B3 (U-6): {index.Archives.Length} archives mounted and registered in {watch.Elapsed.TotalMilliseconds:F0} ms ({watch.Elapsed.TotalMilliseconds / index.Archives.Length:F2} ms per archive)");
+                Debug.Log($"[ContentLink.Tests] B3: {index.Archives.Length} archives mounted and registered in {watch.Elapsed.TotalMilliseconds:F0} ms ({watch.Elapsed.TotalMilliseconds / index.Archives.Length:F2} ms per archive)");
             }
             finally
             {

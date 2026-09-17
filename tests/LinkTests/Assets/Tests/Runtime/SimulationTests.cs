@@ -157,7 +157,7 @@ namespace xpTURN.ContentLink.Tests
                 Assert.That(e.name, Is.Not.EqualTo(k_NameA), "the simulated name reached the catalog asset");
         }
 
-        // ───────────── a held simulated asset vs. unregistering another directory (IMP008 F-2) ─────────────
+        // ───────────── a held simulated asset vs. unregistering another directory ─────────────
 
         [Test, Timeout(30000)]
         public async Task S7_HeldSimulatedAsset_DoesNotBlockUnregisteringAnotherDirectory()
@@ -179,6 +179,117 @@ namespace xpTURN.ContentLink.Tests
                 Assert.That(handle.IsValid && byId.IsValid, Is.True, "the simulated leases (by name and by id) survive the other directory's unregistration");
             }
             finally { if (handle.IsValid) handle.Dispose(); if (byId.IsValid) byId.Dispose(); }
+        }
+
+        // ───────────── references (ContentRef) ─────────────
+
+        [Test, Timeout(30000)]
+        public async Task S8_ContentRef_ToANewAssetUnderARegisteredRoot_ResolvesThroughTheSimulation()
+        {
+            Assert.That(ContentService.RefFallback, Is.Not.Null, "the editor did not install the reference seam");
+            var reference = new ContentRef<TextAsset>(AssetDatabase.AssetPathToGUID($"{k_FolderA}/late.txt"));
+            Assert.That(ContentService.TryGetName(reference, out var name), Is.True, "the simulation did not answer the file's GUID");
+            Assert.That(name, Is.EqualTo(k_NameA), "a reference must resolve to the name a link would use");
+            Assert.That(reference.RuntimeKeyIsValid(), Is.True);
+
+            var scope = ContentScope.Root.CreateChild("S8");
+            try
+            {
+                var asset = await scope.LoadAsync(reference);
+                Assert.That(asset != null && asset.text.Contains("simulation fixture"), Is.True, "the asset did not load through the reference");
+                Assert.That(scope.Contains(k_NameA), Is.True, "the reference holds the name's key, so a name load of the same asset shares it");
+            }
+            finally { scope.Dispose(); }
+
+            TestUtil.SetSimulation(false);
+            try
+            {
+                Assert.That(ContentService.TryGetName(reference, out _), Is.False, "with the simulation off only built catalogs answer a GUID");
+                LogAssert.Expect(LogType.Error, $"[ContentLink] {reference} is not in any registered ContentCatalog.");
+                var handle = await ContentService.AcquireAsync(reference);
+                Assert.That(handle.IsValid, Is.False, "the toggle must restore the failure a player build would produce");
+            }
+            finally { TestUtil.SetSimulation(true); }
+        }
+
+        [Test, Timeout(60000)]
+        public async Task S11_LinkWithASpriteName_ToANewSpriteUnderARegisteredRoot_LoadsThroughTheSimulation()
+        {
+            // the pair ("SimTemp/lateicon", "lateicon") composes the name the path rule gives the sprite, and the name seam
+            // serves it from the project — the catalog was built before the file existed.
+            const string path = k_FolderA + "/lateicon.png";
+            var texture = new Texture2D(2, 2);
+            File.WriteAllBytes(path, texture.EncodeToPNG());
+            Object.DestroyImmediate(texture);
+            AssetDatabase.ImportAsset(path);
+            var importer = (TextureImporter)AssetImporter.GetAtPath(path);
+            importer.textureType = TextureImporterType.Sprite;
+            importer.spriteImportMode = SpriteImportMode.Single;
+            importer.SaveAndReimport();
+
+            var scope = ContentScope.Root.CreateChild("S11");
+            var link = new ContentLink<Sprite>("SimTemp/lateicon", "lateicon");
+            try
+            {
+                Assert.That(link.RuntimeKeyIsValid(), Is.True, "the simulation did not answer the composed name");
+                var sprite = await link.LoadAsync(scope);
+                Assert.That(sprite != null && sprite.name == "lateicon", Is.True, "the sprite did not load through the simulation");
+
+                TestUtil.SetSimulation(false);
+                Assert.That(link.RuntimeKeyIsValid(), Is.False, "with the simulation off only built catalogs answer");
+            }
+            finally
+            {
+                TestUtil.SetSimulation(true);
+                link.Release();
+                scope.Dispose();
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test, Timeout(30000)]
+        public async Task S9_ContentRef_ToAnAssetOfAnUnregisteredDirectory_StaysUnresolved()
+        {
+            // The simulation answers the GUID with a name (it answers names only); the name seam then refuses it,
+            // exactly as for S3 — a reference must not hide a missing RegisterDirectory either.
+            var reference = new ContentRef<TextAsset>(AssetDatabase.AssetPathToGUID($"{k_FolderB}/unreg.txt"));
+            Assert.That(ContentService.Contains(reference), Is.False, "a reference into an unregistered directory resolved");
+
+            LogAssert.Expect(LogType.Error, $"[ContentLink] '{k_NameB}' is not in any registered ContentCatalog.");
+            var handle = await ContentService.AcquireAsync(reference);
+            Assert.That(handle.IsValid, Is.False);
+        }
+
+        [Test, Timeout(30000)]
+        public async Task S10_ContentRef_AssetMovedDuringPlay_ResolvesTheNewName()
+        {
+            // the simulation drops its GUID answers on EditorApplication.projectChanged. This measures whether that event
+            // arrives during Play, and after how many frames.
+            Create(k_FolderA, "mover.txt");
+            var reference = new ContentRef<TextAsset>(AssetDatabase.AssetPathToGUID($"{k_FolderA}/mover.txt"));
+            Assert.That(ContentService.TryGetName(reference, out var before), Is.True);
+            Assert.That(before, Is.EqualTo("SimTemp/mover"));
+
+            if (!AssetDatabase.IsValidFolder($"{k_FolderA}/Moved")) AssetDatabase.CreateFolder(k_FolderA, "Moved");
+            Assert.That(AssetDatabase.MoveAsset($"{k_FolderA}/mover.txt", $"{k_FolderA}/Moved/mover.txt"), Is.Empty, "the move itself failed");
+
+            int frames = -1;
+            string now = null;
+            for (int i = 0; i <= 30; ++i)
+            {
+                if (ContentService.TryGetName(reference, out now) && now == "SimTemp/Moved/mover") { frames = i; break; }
+                await TestUtil.NextFrame();
+            }
+            Debug.Log($"[ContentLink.Tests] after MoveAsset during Play the reference resolved to '{now}' after {frames} frame(s) (-1 = never within 30)");
+            Assert.That(frames, Is.GreaterThanOrEqualTo(0), "projectChanged did not reach the simulation during Play: the answer stayed stale");
+
+            var scope = ContentScope.Root.CreateChild("S10");
+            try
+            {
+                var asset = await scope.LoadAsync(reference);
+                Assert.That(asset, Is.Not.Null, "the moved asset did not load under its new name");
+            }
+            finally { scope.Dispose(); }
         }
 
         // ───────────── scenes ─────────────

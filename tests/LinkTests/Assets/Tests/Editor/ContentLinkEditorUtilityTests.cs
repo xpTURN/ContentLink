@@ -135,6 +135,28 @@ namespace xpTURN.ContentLink.Tests.Editor
         }
 
         [Test]
+        public void E1b_AssetToLink_SplitsTheSpriteName_AndBack()
+        {
+            Build(k_RootA);
+            ContentDirectoryBuilder.SourceRoot = k_RootA;
+
+            var tex = AssetDatabase.LoadAssetAtPath<Texture2D>($"{k_RootA}/Icons/single.png");
+            var sprite = AssetDatabase.LoadAllAssetRepresentationsAtPath($"{k_RootA}/Icons/single.png").OfType<Sprite>().Single();
+
+            Assert.That(ContentLinkEditorUtility.TryGetLinkForAsset(tex, out var texName, out var texSub, out _), Is.True);
+            Assert.That((texName, texSub), Is.EqualTo(("Icons/single", "")));
+            Assert.That(ContentLinkEditorUtility.TryGetLinkForAsset(sprite, out var spriteName, out var spriteSub, out _), Is.True);
+            Assert.That((spriteName, spriteSub), Is.EqualTo(("Icons/single", "single")), "a sprite is its texture's name plus its own name");
+
+            Assert.That(ContentLinkEditorUtility.ResolveAsset("Icons/single", "single"), Is.SameAs(sprite));
+            Assert.That(ContentLinkEditorUtility.ResolveAsset("Icons/single", ""), Is.SameAs(tex));
+            Assert.That(ContentLinkEditorUtility.ResolveAsset("Icons/single", "nope"), Is.Null);
+            Assert.That(ContentLinkEditorUtility.Validate("Icons/single", "single", typeof(Sprite)), Is.EqualTo(NameStatus.Ok));
+            Assert.That(ContentLinkEditorUtility.Validate("Icons/single", "", typeof(Sprite)), Is.EqualTo(NameStatus.TypeMismatch));
+            Assert.That(ContentLinkEditorUtility.Validate("Icons/single", "nope", typeof(Sprite)), Is.EqualTo(NameStatus.NotInCatalog));
+        }
+
+        [Test]
         public void E2_Validate_TypeRules()
         {
             Build(k_RootA);
@@ -232,6 +254,70 @@ namespace xpTURN.ContentLink.Tests.Editor
 
             Assert.That(ContentLinkEditorUtility.TryGetNameForAsset(x, out var name, out var reason), Is.True, reason);
             Assert.That(name, Is.EqualTo("x"), "the deepest root names the asset; the outer root would have called it 'Nested/x'");
+        }
+
+        // ───────────── references (ContentRef) ─────────────
+
+        [Test]
+        public void R1_AssetToReference_AndBack_ByGuid()
+        {
+            Build(k_RootA);
+            const string sheetPath = k_RootA + "/Icons/sheet.png";
+            var sheet = AssetDatabase.LoadAssetAtPath<Texture2D>(sheetPath);
+            var s1 = AssetDatabase.LoadAllAssetRepresentationsAtPath(sheetPath).OfType<Sprite>().First(s => s.name == "s1");
+
+            Assert.That(ContentLinkEditorUtility.TryGetRefForAsset(sheet, out var guid, out var sub, out var reason), Is.True, reason);
+            Assert.That(guid, Is.EqualTo(AssetDatabase.AssetPathToGUID(sheetPath)));
+            Assert.That(sub, Is.EqualTo(""), "a main asset has no sub name");
+            Assert.That(ContentLinkEditorUtility.TryGetRefForAsset(s1, out var spriteGuid, out var spriteSub, out reason), Is.True, reason);
+            Assert.That(spriteGuid, Is.EqualTo(guid), "a sprite is referenced by its texture's GUID");
+            Assert.That(spriteSub, Is.EqualTo("s1"));
+
+            Assert.That(ContentLinkEditorUtility.ResolveRefAsset(guid, ""), Is.EqualTo(sheet));
+            Assert.That(ContentLinkEditorUtility.ResolveRefAsset(guid, "s1"), Is.EqualTo(s1));
+            Assert.That(ContentLinkEditorUtility.NameForRef(guid, "s1"), Is.EqualTo("Icons/sheet[s1]"));
+
+            Assert.That(ContentLinkEditorUtility.ValidateRef(guid, "s1", typeof(Sprite), false, out var tip), Is.EqualTo(NameStatus.Ok), tip);
+            Assert.That(ContentLinkEditorUtility.ValidateRef(guid, "", typeof(Sprite), false, out tip), Is.EqualTo(NameStatus.TypeMismatch));
+            Assert.That(tip, Does.Contain("pick the sprite itself"), "a texture reference in a Sprite field says what to do");
+            Assert.That(ContentLinkEditorUtility.ValidateRef(guid, "renamed", typeof(Sprite), false, out _), Is.EqualTo(NameStatus.Missing), "a sprite name the texture does not have");
+            Assert.That(ContentLinkEditorUtility.ValidateRef("0123456789abcdef0123456789abcdef", "", typeof(Texture2D), false, out _), Is.EqualTo(NameStatus.Missing), "a GUID no asset has");
+        }
+
+        [Test]
+        public void R2_AssetOutsideEveryRoot_IsRefused_AndAnExistingValueSaysMovingKeepsTheGuid()
+        {
+            Build(k_RootA);
+            const string outsidePath = "Assets/Tests/Editor/DrawerFixture.cs";   // under no content root
+            var script = AssetDatabase.LoadAssetAtPath<MonoScript>(outsidePath);
+            Assert.That(script, Is.Not.Null);
+            Assert.That(ContentLinkEditorUtility.TryGetRefForAsset(script, out _, out _, out var reason), Is.False, "a pick outside every root must be refused");
+            Assert.That(reason, Does.Contain("not under a content root"));
+
+            var status = ContentLinkEditorUtility.ValidateRef(AssetDatabase.AssetPathToGUID(outsidePath), "", typeof(UnityEngine.Object), false, out var tip);
+            Assert.That(status, Is.EqualTo(NameStatus.NotInCatalog), "a value already in the field is shown, never refused");
+            Assert.That(tip, Does.Contain("moving it under one keeps its GUID"));
+        }
+
+        [Test]
+        public void R3_MovedFile_KeepsItsReference_AndTheRebuiltCatalogGivesTheNewName()
+        {
+            BuildAt(k_TempRoot, m_TempCatalog);
+            var from = $"{k_TempRoot}/mover.txt";
+            var asset = CreateTempAsset(from);
+            BuildAt(k_TempRoot, m_TempCatalog);
+            Assert.That(ContentLinkEditorUtility.TryGetRefForAsset(asset, out var guid, out var sub, out var reason), Is.True, reason);
+            Assert.That(ContentLinkEditorUtility.NameForRef(guid, sub), Is.EqualTo("mover"));
+
+            AssetDatabase.CreateFolder(k_TempRoot, "Moved");
+            Assert.That(AssetDatabase.MoveAsset(from, $"{k_TempRoot}/Moved/mover.txt"), Is.Empty, "the move itself failed");
+            ContentLinkEditorUtility.Invalidate();
+            Assert.That(ContentLinkEditorUtility.ResolveRefAsset(guid, sub), Is.EqualTo(asset), "the object field still finds the moved file by GUID");
+            Assert.That(ContentLinkEditorUtility.NameForRef(guid, sub), Is.EqualTo("mover"), "until the catalog is rebuilt it answers the name it recorded");
+
+            BuildAt(k_TempRoot, m_TempCatalog);
+            Assert.That(ContentLinkEditorUtility.NameForRef(guid, sub), Is.EqualTo("Moved/mover"), "the rebuilt catalog names the new path; the serialized reference did not change");
+            Assert.That(ContentLinkEditorUtility.ValidateRef(guid, sub, typeof(TextAsset), false, out var tip), Is.EqualTo(NameStatus.Ok), tip);
         }
     }
 }

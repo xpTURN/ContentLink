@@ -235,14 +235,14 @@ namespace xpTURN.ContentLink.Tests.Editor
             foreach (var a in index.Archives)
             {
                 log.Append($"{a.File}: {a.Files.Length} files, input {a.InputBytes} B → {a.Bytes} B (CRC {a.Crc})\n");
-                if (a.Crc == Crc32(File.ReadAllBytes(Path.Combine(p.OutputPath, a.File))).ToString("X8")) ++crcMatches;   // ○U-8: is the index CRC the CRC32 of the archive bytes?
+                if (a.Crc == Crc32(File.ReadAllBytes(Path.Combine(p.OutputPath, a.File))).ToString("X8")) ++crcMatches;   // is the index CRC the CRC32 of the archive bytes?
                 if (a.Files.Length == 1) { ++alone; continue; }
                 if (a.File.Contains(".manifest-")) continue;   // the manifest archive is exempt from the cap by design
                 Assert.That(a.InputBytes, Is.LessThanOrEqualTo(cap), $"{a.File} holds more than the cap although it has several files");
             }
-            Debug.Log($"[ContentLink.Tests] U-8: index Crc equals CRC32 of the archive bytes for {crcMatches} of {index.Archives.Length} archives");
+            Debug.Log($"[ContentLink.Tests] index Crc equals CRC32 of the archive bytes for {crcMatches} of {index.Archives.Length} archives");
             Assert.That(r.Loadables.Count, Is.EqualTo(r.BuiltNames.Count), "every built name has a Loadables entry");
-            foreach (var l in r.Loadables) { Assert.That(l.File, Is.Not.Null, $"'{l.Name}': the manifest's ContentHash must name its file on disk (U-5)"); Assert.That(l.File, Does.EndWith(".cf")); }
+            foreach (var l in r.Loadables) { Assert.That(l.File, Is.Not.Null, $"'{l.Name}': the manifest's ContentHash must name its file on disk"); Assert.That(l.File, Does.EndWith(".cf")); }
             Debug.Log($"[ContentLink.Tests] packed {r.Archives.Length} archives ({alone} single-file) under a {cap} B cap:\n{log}");
 
             var first = new Dictionary<string, string>();
@@ -260,7 +260,7 @@ namespace xpTURN.ContentLink.Tests.Editor
         [Test]
         public void K4_ModifyingOneAsset_ChangesItsOwnArchivesOnly()
         {
-            // A dependency chain: texture ← material ← prefab. Editing the texture must rename the texture's files only (U-2).
+            // A dependency chain: texture ← material ← prefab. Editing the texture must rename the texture's files only.
             var root = TempRoot("K4");
             var texPath = $"{root}/tex.png";
             WritePng(texPath, 128, seed: 1);
@@ -309,23 +309,23 @@ namespace xpTURN.ContentLink.Tests.Editor
             }
             Debug.Log($"[ContentLink.Tests] K4: files renamed {removed.Count} → {added.Count} ({string.Join(", ", added)}); archives changed {newArchives.Count} / {indexB.Archives.Length} ({string.Join(", ", newArchives)})");
 
-            Assert.That(texA, Is.Not.EqualTo(FileOf(b, "tex")), "U-2 (1): the modified texture's serialized file is renamed");
-            Assert.That(IdOf(b, "tex"), Is.EqualTo(IdOf(a, "tex")), "U-2 (2): the modified texture's file keeps its manifest ID although its content hash changed");
-            Assert.That(Ids(b), Is.EquivalentTo(Ids(a)), "U-2 (2): every serialized file's ID (dependency-only files included) is the same in both builds");
-            Debug.Log($"[ContentLink.Tests] K4 (U-2 (2)): tex ID {IdOf(a, "tex")} → {IdOf(b, "tex")}; {Ids(a).Count} IDs in both builds");
-            Assert.That(FileOf(b, "mat"), Is.EqualTo(matA), "U-2 (3): the material that references the texture keeps its file");
-            Assert.That(FileOf(b, "prefab"), Is.EqualTo(prefabA), "U-2 (3): the prefab that references the material keeps its file");
+            Assert.That(texA, Is.Not.EqualTo(FileOf(b, "tex")), "the modified texture's serialized file is renamed");
+            Assert.That(IdOf(b, "tex"), Is.EqualTo(IdOf(a, "tex")), "the modified texture's file keeps its manifest ID although its content hash changed");
+            Assert.That(Ids(b), Is.EquivalentTo(Ids(a)), "every serialized file's ID (dependency-only files included) is the same in both builds");
+            Debug.Log($"[ContentLink.Tests] K4: tex ID {IdOf(a, "tex")} → {IdOf(b, "tex")}; {Ids(a).Count} IDs in both builds");
+            Assert.That(FileOf(b, "mat"), Is.EqualTo(matA), "the material that references the texture keeps its file");
+            Assert.That(FileOf(b, "prefab"), Is.EqualTo(prefabA), "the prefab that references the material keeps its file");
             Assert.That(removed, Has.No.Member(matA), "the material's file is not among the renamed ones");
             Assert.That(removed, Has.No.Member(prefabA), "the prefab's file is not among the renamed ones");
             Assert.That(added.Count, Is.EqualTo(removed.Count).And.LessThanOrEqualTo(2), "one texture is at most .cf + .resS");
             Assert.That(newArchives.Count, Is.LessThanOrEqualTo(added.Count * 2 + 1), "locality: at most two archives per renamed file, plus the manifest archive");
-            Assert.That(sameNameDifferentBytes, Is.Empty, "an archive that kept its name kept its bytes (U-2 (4))");
+            Assert.That(sameNameDifferentBytes, Is.Empty, "an archive that kept its name kept its bytes");
         }
 
         [Test]
         public void K5_SyntheticFixture_ManyLeaves_ForSizeDistributionAndMountTiming()
         {
-            // 200 small textures under a 4 KB cap: enough archives to see the leaf size distribution (U-3) and to time mounting (B3, U-6).
+            // 200 small textures under a 4 KB cap: enough archives to see the leaf size distribution and to time mounting (B3).
             var root = TempRoot("K5");
             try
             {
@@ -353,7 +353,7 @@ namespace xpTURN.ContentLink.Tests.Editor
                 if (a.Files.Length == 1) ++single; else multi.Add(a.InputBytes);
             }
             multi.Sort();
-            Debug.Log($"[ContentLink.Tests] K5 (U-3): {index.Archives.Length} archives from {AllFiles(index).Count} files under a {cap} B cap — {multi.Count} multi-file leaves"
+            Debug.Log($"[ContentLink.Tests] K5: {index.Archives.Length} archives from {AllFiles(index).Count} files under a {cap} B cap — {multi.Count} multi-file leaves"
                       + (multi.Count > 0 ? $" (input bytes min {multi[0]}, median {multi[multi.Count / 2]}, max {multi[multi.Count - 1]}, median/cap {(double)multi[multi.Count / 2] / cap:F2})" : "")
                       + $", {single} single-file leaves, {big} oversized");
             Assert.That(index.Archives.Length, Is.GreaterThanOrEqualTo(50), "the fixture must yield at least 50 archives for the mount timing (B3)");
@@ -388,7 +388,7 @@ namespace xpTURN.ContentLink.Tests.Editor
         [Test]
         public void K7_SameInputInAnotherOutputFolder_PacksTheSameBytes()
         {
-            // U-7: ArchiveAndCompress is given absolute paths; the archives must not depend on them.
+            // ArchiveAndCompress is given absolute paths; the archives must not depend on them.
             var p = Profile("Packed2b", "Icons", "Prefabs");
             p.Archive = ContentBuildSettings.ArchiveMode.Packed;
             p.Compression = ContentBuildSettings.CompressionKind.LZ4;
@@ -407,7 +407,7 @@ namespace xpTURN.ContentLink.Tests.Editor
                 if (Sha256(Path.Combine(reference, name)) == Sha256(Path.Combine(p.OutputPath, x.File))) ++same; else ++differ;
             }
             // The manifest (BuildName) and the catalogs (asset names) differ between the two profiles, so their archives have other names and are skipped; every archive that shares its name must share its bytes.
-            Debug.Log($"[ContentLink.Tests] K7 (U-7): {same} archives byte-identical across output folders, {differ} differ, {b.Archives.Length - same - differ} not comparable (of {b.Archives.Length}; reference {a.Archives.Length})");
+            Debug.Log($"[ContentLink.Tests] K7: {same} archives byte-identical across output folders, {differ} differ, {b.Archives.Length - same - differ} not comparable (of {b.Archives.Length}; reference {a.Archives.Length})");
             Assert.That(differ, Is.EqualTo(0), "an archive with the same file list must be byte-identical wherever it was built");
             Assert.That(same, Is.GreaterThan(0), "at least the archives without catalogs must match");
             Directory.Delete(p.OutputPath, true);

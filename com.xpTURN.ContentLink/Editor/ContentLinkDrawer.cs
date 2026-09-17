@@ -9,9 +9,9 @@ namespace xpTURN.ContentLink.Editor
     /// Two lines for a serialized link: an object field that converts the picked asset to its catalog name,
     /// and the name itself, coloured by what the catalogs say about it.
     ///
-    /// The drawer holds no state. Only <c>m_Name</c> is written, and only through the SerializedProperty, so undo,
-    /// prefab override display and multi-object editing come from the inspector rather than from here.
-    /// A rejected pick leaves the name alone and says why in the console.
+    /// The drawer holds no state. Only <c>m_Name</c> (and <c>m_SubObjectName</c>, for a link that has one) is written, and
+    /// only through the SerializedProperty, so undo, prefab override display and multi-object editing come from the
+    /// inspector rather than from here. A rejected pick leaves the value alone and says why in the console.
     /// </summary>
     public abstract class LinkDrawerBase : PropertyDrawer
     {
@@ -44,6 +44,7 @@ namespace xpTURN.ContentLink.Editor
             try
             {
                 var nameProp = property.FindPropertyRelative("m_Name");
+                var subProp = property.FindPropertyRelative("m_SubObjectName");   // null for a scene link
                 if (nameProp == null)
                 {
                     EditorGUI.LabelField(position, label, new GUIContent("unsupported link"));
@@ -63,9 +64,15 @@ namespace xpTURN.ContentLink.Editor
                 var nameRect = new Rect(body.x, body.y + line + EditorGUIUtility.standardVerticalSpacing, body.width, line);
 
                 var assetType = AssetTypeOf(property);
-                DrawObjectField(fieldRect, nameProp, assetType);
-                if (GUI.Button(resetRect, "Reset")) nameProp.stringValue = string.Empty;
-                DrawNameField(nameRect, nameProp, assetType);
+                // A link with a sprite name is mixed when either child is; a scene link keeps its name-only check.
+                bool mixed = subProp != null ? property.hasMultipleDifferentValues : nameProp.hasMultipleDifferentValues;
+                DrawObjectField(fieldRect, nameProp, subProp, assetType, mixed);
+                if (GUI.Button(resetRect, "Reset"))
+                {
+                    Write(nameProp, subProp, string.Empty, string.Empty);
+                    GUIUtility.keyboardControl = 0;   // a focused text field keeps drawing the text it was edited with
+                }
+                DrawNameField(nameRect, nameProp, subProp, assetType, mixed);
             }
             finally
             {
@@ -75,38 +82,72 @@ namespace xpTURN.ContentLink.Editor
             }
         }
 
-        void DrawObjectField(Rect rect, SerializedProperty nameProp, Type assetType)
+        void DrawObjectField(Rect rect, SerializedProperty nameProp, SerializedProperty subProp, Type assetType, bool mixed)
         {
-            var current = nameProp.hasMultipleDifferentValues ? null : ContentLinkEditorUtility.ResolveAsset(nameProp.stringValue);
+            var current = mixed ? null
+                : subProp != null ? ContentLinkEditorUtility.ResolveAsset(nameProp.stringValue, subProp.stringValue)
+                : ContentLinkEditorUtility.ResolveAsset(nameProp.stringValue);
 
             EditorGUI.BeginChangeCheck();
             // allowSceneObjects must be false: the overload without it lets scene objects through.
             var picked = EditorGUI.ObjectField(rect, current, ObjectFieldType(assetType), false);
             if (!EditorGUI.EndChangeCheck()) return;
 
-            if (picked == null) { nameProp.stringValue = string.Empty; return; }
-            if (ContentLinkEditorUtility.TryGetNameForAsset(picked, out var name, out var reason))
-                nameProp.stringValue = name;
-            else
-                Debug.LogWarning($"[ContentLink] {reason}");   // the name is left as it was; that is the refusal
+            if (picked == null) { Write(nameProp, subProp, string.Empty, string.Empty); return; }
+            string name, sub = null, reason;
+            bool ok = subProp != null
+                ? ContentLinkEditorUtility.TryGetLinkForAsset(picked, out name, out sub, out reason)
+                : ContentLinkEditorUtility.TryGetNameForAsset(picked, out name, out reason);
+            if (!ok)
+            {
+                Debug.LogWarning($"[ContentLink] {reason}");   // the value is left as it was; that is the refusal
+                return;
+            }
+            Write(nameProp, subProp, name, sub);
+            GUIUtility.keyboardControl = 0;
         }
 
-        void DrawNameField(Rect rect, SerializedProperty nameProp, Type assetType)
+        /// <summary>Writes only the children whose value changes, so a pick that keeps the sprite name leaves no override on it.</summary>
+        static void Write(SerializedProperty nameProp, SerializedProperty subProp, string name, string sub)
         {
-            var status = nameProp.hasMultipleDifferentValues
-                ? NameStatus.Ok
+            if (nameProp.hasMultipleDifferentValues || nameProp.stringValue != name) nameProp.stringValue = name;
+            if (subProp != null && (subProp.hasMultipleDifferentValues || subProp.stringValue != sub)) subProp.stringValue = sub;
+        }
+
+        void DrawNameField(Rect rect, SerializedProperty nameProp, SerializedProperty subProp, Type assetType, bool mixed)
+        {
+            var status = mixed ? NameStatus.Ok
+                : subProp != null ? ContentLinkEditorUtility.Validate(nameProp.stringValue, subProp.stringValue, assetType)
                 : ContentLinkEditorUtility.Validate(nameProp.stringValue, assetType, IsScene);
 
             var background = GUI.backgroundColor;
             if (status == NameStatus.TypeMismatch) GUI.backgroundColor = k_Bad;
             else if (status == NameStatus.NoCatalog || status == NameStatus.NotInCatalog) GUI.backgroundColor = k_Warn;
 
-            // This overload does BeginProperty, the change check and the write itself — do not write the name again.
-            EditorGUI.DelayedTextField(rect, nameProp, GUIContent.none);
+            string shown;
+            if (subProp == null)
+            {
+                // This overload does BeginProperty, the change check and the write itself — do not write the name again.
+                EditorGUI.DelayedTextField(rect, nameProp, GUIContent.none);
+                shown = nameProp.stringValue;
+            }
+            else
+            {
+                // One field in the catalog's own form, "Icons/sheet[s0]"; a typed name is split against the catalogs, not parsed.
+                // Mixed values show as mixed on their own: BeginProperty set showMixedValue from the property.
+                shown = mixed ? string.Empty : ContentLinkEditorUtility.LinkName(nameProp.stringValue, subProp.stringValue);
+                EditorGUI.BeginChangeCheck();
+                var typed = EditorGUI.DelayedTextField(rect, shown);
+                if (EditorGUI.EndChangeCheck() && (mixed || typed != shown))
+                {
+                    ContentLinkEditorUtility.SplitLinkName(typed, out var name, out var sub);
+                    Write(nameProp, subProp, name, sub);
+                }
+            }
             GUI.backgroundColor = background;
 
             if (status != NameStatus.Ok && status != NameStatus.Empty)
-                GUI.Label(rect, new GUIContent(string.Empty, ContentLinkEditorUtility.Describe(status, nameProp.stringValue)));
+                GUI.Label(rect, new GUIContent(string.Empty, ContentLinkEditorUtility.Describe(status, shown)));
         }
     }
 

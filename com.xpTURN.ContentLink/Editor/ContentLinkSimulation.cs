@@ -36,6 +36,19 @@ namespace xpTURN.ContentLink.Editor
 
         static Dictionary<string, Entry> s_Overlay;                                  // null = not built yet
         static Dictionary<string, Entry> s_SceneOverlay;                             // scenes, same shape
+
+        // A file's names by its GUID, for ContentRef: filled by the same scan, so a reference costs a dictionary lookup.
+        struct GuidNames
+        {
+            public string Path;
+            public string Name;                                   // under the deepest root that holds the file; null = not under any root
+            public string Root;
+            public List<KeyValuePair<string, string>> Others;     // (name, root) under shallower roots — null unless roots nest
+        }
+
+        static readonly Dictionary<string, GuidNames> s_NamesByGuid = new(StringComparer.Ordinal);
+        static readonly Dictionary<string, GuidNames> s_SceneNamesByGuid = new(StringComparer.Ordinal);
+        static readonly Dictionary<(string, string), string> s_SubNames = new();          // (main name, sprite name) → "main[sprite]"
         static readonly HashSet<string> s_ScannedRoots = new(StringComparer.Ordinal);        // roots asked for by registrations
         static readonly HashSet<string> s_Resolved = new(StringComparer.Ordinal);            // names answered under a real directory's root — no catalog has them
         static readonly HashSet<string> s_ResolvedSimulated = new(StringComparer.Ordinal);   // names served from the project for a profile's directory
@@ -81,8 +94,11 @@ namespace xpTURN.ContentLink.Editor
             ContentService.SceneContainsFallback = SceneKnown;
             ContentService.SceneFallback = StartScene;
             ContentService.SceneResultFallback = SceneResult;
+            ContentService.RefFallback = OverlayNameFor;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            EditorApplication.projectChanged -= ForgetGuids;
+            EditorApplication.projectChanged += ForgetGuids;
         }
 
         static void OnPlayModeStateChanged(PlayModeStateChange change)
@@ -154,6 +170,7 @@ namespace xpTURN.ContentLink.Editor
             var scenes = new Dictionary<string, Entry>(StringComparer.Ordinal);
             var roots = new HashSet<string>(StringComparer.Ordinal);
             int rootless = 0;
+            ForgetGuids();   // the scan below fills them again
 
             foreach (var catalog in ContentLinkEditorUtility.LoadCatalogs())
             {
@@ -196,6 +213,7 @@ namespace xpTURN.ContentLink.Editor
 
                 bool isScene = path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase);
                 var name = ContentLinkEditorUtility.ToName(root, path);
+                AddGuidName(isScene ? s_SceneNamesByGuid : s_NamesByGuid, guid, name, root, path);
 
                 // Assets and scenes share one name space, exactly as the builder's duplicate check does, so a
                 // "Foo.txt" next to a "Foo.unity" is refused here too instead of working only in the editor.
@@ -231,6 +249,7 @@ namespace xpTURN.ContentLink.Editor
             s_SimulatedProfiles.Clear();
             s_ScenePathInFlight.Clear();
             s_SceneResult.Clear();
+            ForgetGuids();
         }
 
         /// <summary>The raw overlay lookup, before the registration gates. For tests and diagnostics.</summary>
@@ -299,8 +318,98 @@ namespace xpTURN.ContentLink.Editor
             if (asset == null) return default;
 
             var path = AssetDatabase.GetAssetPath(asset);
-            var root = ContentLinkEditorUtility.RootFor(path);
+            var root = RootOfName(name, path);
             return string.IsNullOrEmpty(root) ? default : new Entry { Path = path, Root = root };
+        }
+
+        /// <summary>
+        /// The content root <paramref name="name"/> was made under. RootFor answers the deepest root holding the file, which
+        /// under nested roots is not the root of a name made under a shallower one — and the gates select on the root.
+        /// </summary>
+        static string RootOfName(string name, string path)
+        {
+            foreach (var root in ContentLinkEditorUtility.SourceRoots())   // longest first
+            {
+                if (!ContentLinkEditorUtility.IsUnder(root, path)) continue;
+                var main = ContentLinkEditorUtility.ToName(root, path);
+                if (name == main || (name.Length > main.Length && name[main.Length] == '[' && name.StartsWith(main, StringComparison.Ordinal))) return root;
+            }
+            return null;
+        }
+
+        // ───────────── the reference seam ─────────────
+
+        /// <summary>
+        /// What ContentService calls for a GUID no registered catalog carries (<see cref="ContentService.RefFallback"/>): the
+        /// name the overlay scan made for that file, "name[sprite]" for a sub-asset, or null. It answers the name only — the
+        /// name seam that follows applies the gates, and checks that the sprite exists. With no catalog behind a directory
+        /// served from the project every reference lookup lands here, so after the first answer it is a dictionary lookup.
+        /// A file the scan did not see (created or moved during Play) is looked up once and named under every root holding it.
+        /// A file under nested roots has a name per root: the first one a gate accepts, else the deepest root's.
+        /// </summary>
+        public static string OverlayNameFor(string guid, string sub, bool isScene)
+        {
+            if (string.IsNullOrEmpty(guid)) return null;
+            if (!ContentService.HasSimulatedDirectories && !Enabled) return null;   // this order: the toggle is an EditorPrefs read, and every lookup lands here
+            if (s_Overlay == null) Rebuild();
+
+            var byGuid = isScene ? s_SceneNamesByGuid : s_NamesByGuid;
+            if (!byGuid.TryGetValue(guid, out var names))
+            {
+                names = default;   // remembered when it is not ours either, so a missing reference does not ask the AssetDatabase again
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(path) && path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase) == isScene)
+                    foreach (var root in ContentLinkEditorUtility.SourceRoots())
+                        if (ContentLinkEditorUtility.IsUnder(root, path)) AddName(ref names, ContentLinkEditorUtility.ToName(root, path), root, path);
+                byGuid[guid] = names;
+            }
+            if (names.Name == null) return null;
+
+            var main = names.Others == null ? names.Name : ChooseServed(names);
+            if (isScene || string.IsNullOrEmpty(sub)) return main;
+            if (!s_SubNames.TryGetValue((main, sub), out var composed)) s_SubNames[(main, sub)] = composed = $"{main}[{sub}]";
+            return composed;
+        }
+
+        static void AddGuidName(Dictionary<string, GuidNames> byGuid, string guid, string name, string root, string path)
+        {
+            byGuid.TryGetValue(guid, out var names);
+            if (AddName(ref names, name, root, path)) byGuid[guid] = names;
+        }
+
+        /// <summary>The deepest root's name stays first. False when nothing changed (the same root scanned again).</summary>
+        static bool AddName(ref GuidNames names, string name, string root, string path)
+        {
+            if (names.Name == null) { names = new GuidNames { Path = path, Name = name, Root = root }; return true; }
+            if (names.Name == name) return false;
+            names.Others ??= new List<KeyValuePair<string, string>>();
+            if (root.Length > names.Root.Length)
+            {
+                names.Others.Add(new KeyValuePair<string, string>(names.Name, names.Root));
+                names.Name = name;
+                names.Root = root;
+            }
+            else names.Others.Add(new KeyValuePair<string, string>(name, root));
+            return true;
+        }
+
+        /// <summary>Nested roots: the first name (deepest root first) whose root the gates of <see cref="Resolve"/> / <see cref="TryGetScenePath"/> accept, else the deepest.</summary>
+        static string ChooseServed(GuidNames names)
+        {
+            if (Served(names.Root, names.Path)) return names.Name;
+            foreach (var other in names.Others) if (Served(other.Value, names.Path)) return other.Key;
+            return names.Name;
+        }
+
+        static bool Served(string root, string path)
+            => ContentService.TryGetSimulatedDir(root, path, out _) || (Enabled && ContentService.IsSourceRootRegistered(root));
+
+        /// <summary>Drops the GUID → name answers. A moved or renamed file changes them, so a project change drops them too.</summary>
+        static void ForgetGuids()
+        {
+            s_NamesByGuid.Clear();
+            s_SceneNamesByGuid.Clear();
+            s_SubNames.Clear();
         }
 
         // ───────────── scenes ─────────────
@@ -388,7 +497,7 @@ namespace xpTURN.ContentLink.Editor
             if (scene == null) return default;
 
             var path = AssetDatabase.GetAssetPath(scene);
-            var root = ContentLinkEditorUtility.RootFor(path);
+            var root = RootOfName(name, path);
             return string.IsNullOrEmpty(root) ? default : new Entry { Path = path, Root = root };
         }
 

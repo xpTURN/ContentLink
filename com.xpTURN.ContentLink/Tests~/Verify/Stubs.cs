@@ -286,6 +286,14 @@ namespace UnityEngine
 
 namespace UnityEngine.PlayerLoop { public struct PostLateUpdate { } }
 
+namespace UnityEngine.U2D { public class SpriteAtlas : UnityEngine.Object { } }
+
+namespace UnityEngine.Serialization
+{
+    [AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
+    public class FormerlySerializedAsAttribute : Attribute { public FormerlySerializedAsAttribute(string oldName) { this.oldName = oldName; } public string oldName { get; } }
+}
+
 namespace UnityEngine.LowLevel
 {
     public struct PlayerLoopSystem { public Type type; public PlayerLoopSystem[] subSystemList; public UpdateFunction updateDelegate; public delegate void UpdateFunction(); }
@@ -361,6 +369,20 @@ namespace Unity.Loading
         public static readonly Dictionary<int, Object> ObjectById = new();
         public static readonly Dictionary<string, int> SceneIdOfPath = new();
         public static readonly Dictionary<int, Object> SceneAssetById = new();
+        // GUID table: a path listed here has its own GUID that survives MoveProjectAsset; any other path is its own GUID (the stub convention)
+        public static readonly Dictionary<string, string> GuidOfPath = new();
+        public static readonly Dictionary<string, string> PathOfGuid = new();
+        public static void SetGuid(string path, string guid) { GuidOfPath[path] = guid; PathOfGuid[guid] = path; }
+        /// <summary>Moves a project asset to another path the way the editor does: same objects, same GUID, new path.</summary>
+        public static void MoveProjectAsset(string from, string to)
+        {
+            var main = MainAssetAt[from]; MainAssetAt.Remove(from); MainAssetAt[to] = main; PathOf[main] = to;
+            if (SubAssetsAt.TryGetValue(from, out var subs)) { SubAssetsAt.Remove(from); SubAssetsAt[to] = subs; foreach (var s in subs) PathOf[s] = to; }
+            if (SceneIdOfPath.TryGetValue(from, out var sceneId)) { SceneIdOfPath.Remove(from); SceneIdOfPath[to] = sceneId; }
+            if (GuidOfPath.TryGetValue(from, out var guid)) { GuidOfPath.Remove(from); SetGuid(to, guid); }
+            int slash = to.LastIndexOf('/');
+            while (slash > 0) { Folders.Add(to.Substring(0, slash)); slash = to.LastIndexOf('/', slash - 1); }
+        }
         static int s_NextEditorId = 9000;
         /// <summary>Registers one main asset and its sub-assets in the fake project.</summary>
         public static void AddProjectAsset(string path, Object main, params Object[] subs)
@@ -382,6 +404,7 @@ namespace Unity.Loading
         {
             MainAssetAt.Clear(); SubAssetsAt.Clear(); PathOf.Clear(); IsSub.Clear(); Folders.Clear();
             ObjectIdOf.Clear(); ObjectById.Clear(); SceneIdOfPath.Clear(); SceneAssetById.Clear();
+            GuidOfPath.Clear(); PathOfGuid.Clear();
         }
         public static int RefOf(int id) => Refs.TryGetValue(id, out var r) ? r : 0;
         public static void CompleteLoads() { var p = new List<Action>(PendingLoads); PendingLoads.Clear(); foreach (var a in p) a(); }
@@ -522,14 +545,14 @@ namespace UnityEditor
                     foreach (var folder in folders) if (kv.Key.StartsWith(folder.TrimEnd('/') + "/", StringComparison.Ordinal)) { inFolder = true; break; }   // a trailing separator finds the same assets (measured on 6000.6)
                     if (!inFolder) continue;
                 }
-                if (byType) { if (Matches(kv.Value.GetType(), term)) hits.Add(kv.Key); }
-                else if (string.IsNullOrEmpty(term) || kv.Key.Contains(term)) hits.Add(kv.Key);
+                if (byType) { if (Matches(kv.Value.GetType(), term)) hits.Add(AssetPathToGUID(kv.Key)); }
+                else if (string.IsNullOrEmpty(term) || kv.Key.Contains(term)) hits.Add(AssetPathToGUID(kv.Key));
             }
             return hits.ToArray();
         }
         static bool Matches(Type t, string name) { for (var x = t; x != null; x = x.BaseType) if (x.Name == name) return true; return false; }
-        public static string GUIDToAssetPath(string g) => g;
-        public static string AssetPathToGUID(string p) => p;
+        public static string GUIDToAssetPath(string g) => g != null && FakeEngine.PathOfGuid.TryGetValue(g, out var p) ? p : g;
+        public static string AssetPathToGUID(string p) => p != null && FakeEngine.GuidOfPath.TryGetValue(p, out var g) ? g : p;
         public static bool IsValidFolder(string p) { if (p == null) return false; p = p.TrimEnd('/'); return p == "Assets" || FakeEngine.Folders.Contains(p); }   // Assets always exists; a trailing separator is accepted (measured on 6000.6)
         public static string GetAssetPath(Object o) => o != null && FakeEngine.PathOf.TryGetValue(o, out var p) ? p : "";
         public static bool IsSubAsset(Object o) => o != null && FakeEngine.IsSub.Contains(o);

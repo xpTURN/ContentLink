@@ -45,6 +45,12 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: xpTURN.ContentLink.Tests::xpTURN.ContentLink.Tests.LinkHolder
   icon:
-    m_Name: Icons/single[single]
+    m_Name: Icons/single
+    m_SubObjectName: single
   level:
     m_Name: Scenes/One
+  iconRef:
+    m_AssetGUID: 2db49f3267d3454694e93fa3d8354b29
+    m_SubObjectName: single
+  levelRef:
+    m_AssetGUID: 28afaf2c2aba44a3b9c07adebc1fa2a3

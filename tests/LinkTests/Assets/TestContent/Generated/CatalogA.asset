@@ -15,21 +15,39 @@ MonoBehaviour:
   m_Entries:
   - name: Audio/tone
     id: {fileID: 8300000, loadable: 1, guid: 2b7fbedbe9dd435fa15cf6242e20519e, type: 3}
+    guid: 2b7fbedbe9dd435fa15cf6242e20519e
+    sub: 
   - name: Icons/sheet
     id: {fileID: 2800000, loadable: 1, guid: a36e9cb345c645a8b51669d22a848969, type: 3}
+    guid: a36e9cb345c645a8b51669d22a848969
+    sub: 
   - name: 'Icons/sheet[s0]'
     id: {fileID: 813992796, loadable: 1, guid: a36e9cb345c645a8b51669d22a848969, type: 3}
+    guid: a36e9cb345c645a8b51669d22a848969
+    sub: s0
   - name: 'Icons/sheet[s1]'
     id: {fileID: 383394739, loadable: 1, guid: a36e9cb345c645a8b51669d22a848969, type: 3}
+    guid: a36e9cb345c645a8b51669d22a848969
+    sub: s1
   - name: Icons/single
     id: {fileID: 2800000, loadable: 1, guid: 2db49f3267d3454694e93fa3d8354b29, type: 3}
+    guid: 2db49f3267d3454694e93fa3d8354b29
+    sub: 
   - name: 'Icons/single[single]'
     id: {fileID: 21300000, loadable: 1, guid: 2db49f3267d3454694e93fa3d8354b29, type: 3}
+    guid: 2db49f3267d3454694e93fa3d8354b29
+    sub: single
   - name: Materials/Plain
     id: {fileID: 2100000, loadable: 1, guid: cd0c9fb0fb98430ba050e1accb446184, type: 2}
+    guid: cd0c9fb0fb98430ba050e1accb446184
+    sub: 
   - name: Prefabs/Linked
     id: {fileID: 786335503158890074, loadable: 1, guid: 1e76f4b359ba4d7db16566251143817e, type: 3}
+    guid: 1e76f4b359ba4d7db16566251143817e
+    sub: 
   - name: Prefabs/Plain
     id: {fileID: 487914082173767759, loadable: 1, guid: 70a91ae0892144de9c6dc0703026c5ae, type: 3}
+    guid: 70a91ae0892144de9c6dc0703026c5ae
+    sub: 
   m_Scenes: []
   m_SourceRoot: Assets/TestContent/A

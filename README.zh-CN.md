@@ -50,7 +50,7 @@ ContentLink 从 Unity 6.6 内置的 **内容目录** 中 **按名称** 加载游
 |---|---|
 | 加载 | `scope.LoadAsync<T>("Icons/sword")` —— 资源属于作用域；没有什么需要释放 |
 | 作用域 | 自动结束的 Root / Scene / GameObject / Explicit 作用域；按作用域去重；带路径的泄漏警告 |
-| 序列化引用 | `ContentLink<T>` 与 `ContentSceneLink` 字段，Inspector 绘制器负责填入并校验名称 |
+| 序列化引用 | `ContentLink<T>` / `ContentSceneLink`（按名称）与 `ContentRef<T>` / `ContentSceneRef`（按 GUID —— 移动或重命名文件后依然有效）字段，Inspector 绘制器负责填入并校验 |
 | 实例 | `scope.InstantiateAsync("Prefabs/Cat")` —— 预制体引用随实例及其克隆体一起存在 |
 | 场景 | 由作用域或链接拥有的内容场景；任意模式的非拥有加载；跟踪已打开的场景 |
 | 确定性释放 | 向引擎的释放在每帧的一个点（`Collect()`）发生，绝不在你的代码中途 |
@@ -149,7 +149,7 @@ public class ItemView : MonoBehaviour
 **5. 或者使用序列化链接**，在 Inspector 里选资源：
 
 ```csharp
-public ContentLinkSprite icon;                       // 把 Assets/Content/Icons/sword.png 拖上去 → "Icons/sword[sword]"
+public ContentLinkSprite icon;                       // 把 Assets/Content/Icons/sword.png 拖上去 → "Icons/sword" + 精灵 "sword"
 async void Start() => image.sprite = await icon.LoadAsync(this);   // this = 这个 GameObject 的作用域（与第 4 步相同）；也可以传任何别的作用域
 ```
 
@@ -162,11 +162,14 @@ Play Mode 会由工程来提供该目录 —— 新增、修改、删除的资�
   类别不会改变名称 —— 不管 `Icons/sword` 在哪个目录表里，它都是 `Icons/sword`。
 - **子资源** 是 `<主资源>[<子资源>]`：`sword.png` 里的精灵 `sword` 是 `Icons/sword[sword]`；精灵表 `sheet.png`
   给出 `Icons/sheet[run_01]`、`Icons/sheet[run_02]`、…
+- **链接** 把精灵名称分开保存：`("Icons/sheet", "run_01")` 加载 `Icons/sheet[run_01]`。不写精灵名称而写完整名称也能加载，
+  是同一个键。
 - **场景** 的命名和资源一样：`Scenes/Arena`。资源和场景共用一个名称空间。
 - 名称 **在配置档内唯一**。会得到同一名称的两个资源（两个类别重叠，或两个文件夹里同名）会让构建失败，并在
   控制台里打印两条路径。
 - Inspector 绘制器显示名称的状态：为空时无色，还没有任何目录表认识的名称显示 **琥珀色**（构建，或运行
-  *Update Content Catalog*），名称解析到字段装不下的东西时显示 **红色**。
+  *Update Content Catalog*），名称解析到字段装不下的东西时显示 **红色**。链接的名称行把精灵显示为
+  `Icons/sheet[run_01]`；在那里输入的名称若在目录表中存在，会拆成两个字段保存。
 
 ## 构建内容
 
@@ -393,8 +396,38 @@ icon.Release();
 icon.SetName(table[itemId].IconName);
 image.sprite = await icon.LoadAsync(this);
 
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.RuntimeKeyIsValid();
+icon.SetName("Icons/sheet", "run_01");                       // 精灵：主名称与精灵名称分开
+other.SetName(icon.Name, icon.SubObjectName);                // 复制链接：Name 只是主名称
+
+icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
+
+### 按 GUID 的序列化引用
+
+```csharp
+public ContentRef<Sprite> icon;                          // ContentRef<GameObject>、ContentRef<Enemy>（预制体上的组件）……
+public ContentSceneRef level;
+
+image.sprite = await this.Scope().LoadAsync(icon);       // 与名称一样由作用域持有
+this.Scope().Release(icon);                              // 提前归还（可选）
+var enemy = await stage.InstantiateAsync(enemyRef);      // 返回 GameObject
+var scene = await this.Scope().LoadSceneAsync(level);
+
+icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
+```
+
+- 引用保存的是资源的 **GUID**（以及精灵名称），而不是路径：移动或重命名文件后，更新目录即可继续使用。字段与
+  Addressables 的 `AssetReference` 相同（`m_AssetGUID`、`m_SubObjectName`）。
+- 构建为每个目录条目记录 GUID；运行时把引用解析为该 **目录名称**，再按名称加载。因此同一资源的引用加载与名称加载是
+  **一个槽位、一个作用域键**：`Release(icon)` 也会归还 `LoadAsync<Sprite>("Icons/sword")`，反之亦然。
+- 引用只保存键，不保存加载 —— 复制无妨，加载要经过作用域。若需要每个字段各自释放，先取得名称再使用链接：
+  `ContentService.TryGetName(icon, out var name)` → `new ContentLink<Sprite>(name)`。
+- 子资源是 **精灵，按名称**（与 Addressables 相同）。重命名切片会使引用失效。
+- `RuntimeKeyIsValid()` 与 `ContentLink` 一样，表示“已注册的目录（或编辑器模拟）能够加载它” —— Addressables 的
+  “已设置 GUID”对应 `IsSet`。
+- **在 Inspector 中。** 选择资源即保存其 GUID；第二行以只读方式显示它解析到的名称。红色：没有该 GUID 的资源、精灵名称
+  已不存在（切片被重命名）、或类型与字段不符。黄色：尚未进入目录、位于所有内容根目录之外（移到根目录下 GUID 不变）、
+  或是精灵图集。构建无法携带的选择会像链接一样被拒绝；字段中已有的值不会被拒绝，只做显示。
 
 ### 实例
 
@@ -449,7 +482,7 @@ if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // 引�
     h = await ContentService.AcquireAsync<Texture2D>(id);
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` 告诉你某个已注册的目录是否携带该名称。
+`ContentService.Contains(name)` / `ContainsScene(name)` 告诉你某个已注册的目录是否携带该名称；同样的调用也接受 `ContentRef<T>` / `ContentSceneRef`，`Acquire` / `AcquireAsync` 也接受 `ContentRef<T>`。
 
 ## 何时调用 Release
 
@@ -571,9 +604,21 @@ Window > ContentLink > Editor Simulation     开关（默认开启，按工程�
 | `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
 | `AddressablesTracker.ReportUnreferencedHandles()`（基于 GC） | 场景卸载 / 退出时的作用域警告（确定性） |
 | Auto Regist Folder Pattern | 构建配置档与类别 |
-| `AssetRef`（GUID） | `ContentService.TryGetLoadableObjectId(name, out id)` → `AcquireAsync<T>(id)` + `scope.Attach(handle)` |
+| `AssetRef`（GUID） | `ContentRef<T>` / `ContentSceneRef` |
+| `AssetReference` / `AssetReferenceSprite` 字段 | `ContentRef<T>` 字段 —— 只改类型，数据保留（见下） |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)`；`this.Scope().Release(ref)` 可选 |
+| `ref.RuntimeKeyIsValid()`（“是否已设置”） | `ref.IsSet` |
 | *Use Asset Database* 播放模式 | 编辑器模拟 |
 | Addressables 的组 / 包 | 配置档 / 类别，`Packed` 归档 |
+
+**从 `AssetReference` 字段迁移。** 把字段类型改为 `ContentRef<T>`，序列化的 GUID 与精灵名称会保留。资源必须位于内容根目录下
+（移动过去 GUID 不变）。Addressables 会写出三种形态，其中只有一种可以直接解析：
+
+| 在 Addressables 中选择的 | 保存的值 | 在 ContentLink 中 |
+|---|---|---|
+| 精灵 | 纹理 GUID + 精灵名称 | 可以解析 |
+| 拖到 `AssetReferenceSprite` 上的纹理 | 纹理 GUID，没有精灵名称 | 是纹理而不是精灵：字段显示红色 —— 请重新选择精灵 |
+| Addressable 精灵图集中的精灵 | 图集 GUID + 精灵名称 | 不支持（经由图集的精灵不在目录中）：黄色 —— 请从纹理中选择精灵 |
 
 ## 注意事项与限制
 
@@ -588,6 +633,12 @@ Window > ContentLink > Editor Simulation     开关（默认开启，按工程�
 - `Packed` 的归档大小是对输入字节的上限，不是对压缩后文件的。哈希前缀 trie 产生的归档数约为普通填充的 1.5 倍；
   徘徊在上限附近的归档可能在不同构建之间分裂与合并；修改 `MaxArchiveMB` 或分割器会重新分割输出。
 - 构建需要工程锁：命令行构建之前，请在其他编辑器实例中关闭该工程。
+- 引用与名称共享资源的作用域键：无论从哪一方释放，两者都会被释放。若两个字段需要各自释放，请使用 `ContentLink` 或子作用域。
+- 链接的 `Name` 是主名称，精灵链接的精灵名称是 `SubObjectName`。`SetName(name)` 会清空精灵名称，所以请用
+  `SetName(a.Name, a.SubObjectName)` 复制链接 —— 丢失了它的 `ContentLink<Object>` 会不报错地加载纹理。
+- 子资源只能按名称引用精灵。其他子资源（模型文件中的网格）以及经由精灵图集的精灵无法引用。
+- 同一文件以两个名称被构建时 —— 在基础目录与之后的补丁之间移动过 —— 引用解析为最近注册的目录中的名称，而保留旧名称的链接
+  会加载另一份副本：内存中有两份副本。
 
 ## 仓库结构与测试
 

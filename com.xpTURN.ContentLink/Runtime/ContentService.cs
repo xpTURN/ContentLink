@@ -226,6 +226,13 @@ namespace xpTURN.ContentLink
         public static Func<string, SimulatedAsset> NameFallback;
 
         /// <summary>
+        /// Set by the editor to turn a GUID no registered catalog carries into a name: (guid, sub-asset name, is scene) → the
+        /// name, or null for "not mine". It answers the name only — whether the simulation may serve that name is decided by
+        /// the name path's own fallbacks that follow. Null in a player. Not cleared by <see cref="ResetStatics"/>, like <see cref="NameFallback"/>.
+        /// </summary>
+        public static Func<string, string, bool, string> RefFallback;
+
+        /// <summary>
         /// The editor's answer for a name no registered catalog carries: the id to load, and the simulated directory
         /// it belongs to — <see cref="NoDirectory"/> when it was resolved under a real directory's root.
         /// A default value means "not mine".
@@ -384,6 +391,166 @@ namespace xpTURN.ContentLink
                     }
                 }
             }
+            s_RefIndexDirty = true;   // the reference index follows on its next lookup (EnsureRefIndex)
+            s_LinkMisses.Clear();     // a new directory may carry a pair that missed
+        }
+
+        // ───────────── references (ContentRef / ContentSceneRef) ─────────────
+        //
+        // A reference is turned into the catalog name the build recorded for its GUID, and everything after that is the name
+        // path: one slot and one scope key per asset, whichever way it was asked for. The index is built on the first
+        // reference lookup after the registrations changed, so a project that never uses references never pays for it.
+
+        static readonly Dictionary<RefKey, string> s_NameByRef = new();
+        static readonly Dictionary<string, string> s_SceneNameByGuid = new(StringComparer.Ordinal);
+        static bool s_RefIndexDirty;
+
+        /// <summary>
+        /// The catalog name a reference resolves to — a registered catalog first, then the editor simulation. A lookup only:
+        /// a miss logs nothing and allocates nothing (loads through a reference report their misses themselves).
+        /// </summary>
+        public static bool TryGetName<T>(ContentRef<T> reference, out string name) where T : Object
+            => TryResolveName(reference.AssetGUID, reference.SubObjectName, false, out name);
+
+        /// <summary>The catalog scene name a scene reference resolves to. A lookup only, like <see cref="TryGetName{T}"/>.</summary>
+        public static bool TryGetSceneName(ContentSceneRef reference, out string name)
+            => TryResolveName(reference.AssetGUID, "", true, out name);
+
+        /// <summary>True when the reference can be loaded: it resolves to a name <see cref="Contains(string)"/> accepts.</summary>
+        public static bool Contains<T>(ContentRef<T> reference) where T : Object
+            => TryGetName(reference, out var name) && Contains(name);
+
+        /// <summary>True when the scene reference can be loaded: it resolves to a name <see cref="ContainsScene(string)"/> accepts.</summary>
+        public static bool ContainsScene(ContentSceneRef reference)
+            => TryGetSceneName(reference, out var name) && ContainsScene(name);
+
+        static bool TryResolveName(string guid, string sub, bool scene, out string name)
+        {
+            name = null;
+            if (string.IsNullOrEmpty(guid)) return false;
+            EnsureRefIndex();
+            if (scene ? s_SceneNameByGuid.TryGetValue(guid, out name) : s_NameByRef.TryGetValue(new RefKey(guid, sub), out name)) return true;
+            var fallback = RefFallback;
+            name = fallback?.Invoke(guid, sub ?? "", scene);
+            if (!string.IsNullOrEmpty(name)) return true;
+            name = null;
+            return false;
+        }
+
+        static void EnsureRefIndex()
+        {
+            if (!s_RefIndexDirty) return;
+            s_RefIndexDirty = false;
+            s_NameByRef.Clear();
+            s_SceneNameByGuid.Clear();
+            for (int d = 0; d < s_Dirs.Count; ++d)   // registration order: the most recently registered directory wins, as for names
+            {
+                var rec = s_Dirs[d];
+                if (!rec.Alive) continue;
+                foreach (var cat in rec.Catalogs)
+                {
+                    if (cat == null) continue;
+                    foreach (var e in cat.Entries)
+                        if (!string.IsNullOrEmpty(e.guid) && !string.IsNullOrEmpty(e.name))
+                            s_NameByRef[new RefKey(e.guid, e.sub)] = e.name;
+                    foreach (var e in cat.Scenes)
+                        if (!string.IsNullOrEmpty(e.guid) && !string.IsNullOrEmpty(e.name))
+                            s_SceneNameByGuid[e.guid] = e.name;
+                }
+            }
+        }
+
+        /// <summary>The resolution a load through a reference uses: a miss is logged with the reference.</summary>
+        internal static bool ResolveForLoad<T>(ContentRef<T> reference, out string name) where T : Object
+        {
+            if (TryGetName(reference, out name)) return true;
+            LogRefMiss(reference.ToString(), reference.AssetGUID, reference.SubObjectName, false);
+            return false;
+        }
+
+        internal static bool ResolveSceneForLoad(ContentSceneRef reference, out string name)
+        {
+            if (TryGetSceneName(reference, out name)) return true;
+            LogRefMiss(reference.ToString(), reference.AssetGUID, "", true);
+            return false;
+        }
+
+        static void LogRefMiss(string reference, string guid, string sub, bool scene)
+        {
+            if (string.IsNullOrEmpty(guid)) { Debug.LogError($"[ContentLink] {reference} is not set."); return; }
+            if (!scene && s_SceneNameByGuid.TryGetValue(guid, out var sceneName))
+                Debug.LogError($"[ContentLink] {reference} is the scene '{sceneName}' — use ContentSceneRef.");
+            else if (scene && s_NameByRef.TryGetValue(new RefKey(guid, ""), out var assetName))
+                Debug.LogError($"[ContentLink] {reference} is the asset '{assetName}', not a scene — use ContentRef<T>.");
+            else if (!scene && sub.Length > 0 && s_NameByRef.TryGetValue(new RefKey(guid, ""), out var mainName))
+                Debug.LogError($"[ContentLink] {reference}: '{mainName}' is catalogued, but it has no sprite named '{sub}' (a renamed slice, or a sub-asset that is not a sprite).");
+            else
+            {
+                var roots = SimulatedRootsDescription();
+                Debug.LogError(roots != null
+                    ? $"[ContentLink] {reference} is not under {roots} in the project."
+                    : $"[ContentLink] {reference} is not in any registered ContentCatalog.");
+            }
+        }
+
+        // ───────────── links with a sub-object name (ContentLink) ─────────────
+        //
+        // ("Icons/sheet", "s0") is the catalog name "Icons/sheet[s0]": the pair is composed once and the string is kept, so a
+        // link takes the name path — one slot and one scope key — without allocating after its first lookup. The cache keeps
+        // strings, never answers. Misses are remembered only while no editor fallback can discover a file without a
+        // registration change, and are forgotten on every registration change.
+
+        static readonly Dictionary<RefKey, string> s_LinkKeys = new();   // (main name, sub) → "main[sub]" for pairs that resolved
+        static readonly HashSet<RefKey> s_LinkMisses = new();             // pairs that did not, while NameFallback is null
+
+        /// <summary>
+        /// The catalog name of a (main name, sprite name) pair when it can be loaded: <paramref name="name"/> itself for an empty
+        /// <paramref name="sub"/>, else "name[sub]". Unlike <see cref="TryGetName{T}(ContentRef{T}, out string)"/>, which only
+        /// resolves, this answers the same as <see cref="Contains(string, string)"/>. After the first lookup of a pair it
+        /// allocates nothing, hit or miss (in the editor a miss composes each time).
+        /// </summary>
+        public static bool TryGetName(string name, string sub, out string catalogName)
+        {
+            if (string.IsNullOrEmpty(sub))
+            {
+                catalogName = Contains(name) ? name : null;
+                return catalogName != null;
+            }
+            if (TryLinkName(name, sub, out catalogName)) return true;
+            catalogName = null;
+            return false;
+        }
+
+        /// <summary>True when a (main name, sprite name) pair can be loaded. See <see cref="TryGetName(string, string, out string)"/>.</summary>
+        public static bool Contains(string name, string sub) => TryGetName(name, sub, out _);
+
+        static bool TryLinkName(string name, string sub, out string composed)
+        {
+            composed = null;
+            if (string.IsNullOrEmpty(name)) return false;
+            var key = new RefKey(name, sub);
+            if (s_LinkKeys.TryGetValue(key, out composed)) return Contains(composed);   // its directory may be gone
+            if (NameFallback == null && s_LinkMisses.Contains(key)) return false;
+            composed = string.Concat(name, "[", sub, "]");
+            if (Contains(composed)) { s_LinkKeys[key] = composed; return true; }
+            if (NameFallback == null) s_LinkMisses.Add(key);   // a fallback can find a file made during Play without a registration change
+            return false;
+        }
+
+        /// <summary>The key a ContentLink loads by. A miss still gets a composed name, so the name path reports it.</summary>
+        internal static string LinkKey(string name, string sub)
+        {
+            if (string.IsNullOrEmpty(sub)) return name;
+            if (s_LinkKeys.TryGetValue(new RefKey(name, sub), out var cached)) return cached;   // no check: the name path looks at the slot first
+            return TryLinkName(name, sub, out var composed) ? composed : string.Concat(name, "[", sub, "]");
+        }
+
+        /// <summary>An Awaitable that has already completed with <paramref name="value"/> — what a load answers after a logged miss.</summary>
+        internal static Awaitable<T> Completed<T>(T value)
+        {
+            var acs = new AwaitableCompletionSource<T>();
+            acs.TrySetResult(value);
+            return acs.Awaitable;
         }
 
         // ───────────── slots ─────────────
@@ -560,6 +727,17 @@ namespace xpTURN.ContentLink
 
         public static Awaitable<AssetHandle<T>> AcquireAsync<T>(LoadableObjectId id, CancellationToken ct = default) where T : Object
             => AcquireAsyncCore<T>(null, id, true, ct);
+
+        /// <summary>Advanced. <see cref="Acquire{T}(string)"/> through a reference: the same slot a name load of the asset uses.</summary>
+        public static AssetHandle<T> Acquire<T>(ContentRef<T> reference) where T : Object
+            => ResolveForLoad(reference, out var name) ? Acquire<T>(name) : default;
+
+        /// <summary>Advanced. <see cref="AcquireAsync{T}(string, CancellationToken)"/> through a reference: the same slot a name load of the asset uses.</summary>
+        public static Awaitable<AssetHandle<T>> AcquireAsync<T>(ContentRef<T> reference, CancellationToken ct = default) where T : Object
+        {
+            if (ct.IsCancellationRequested) return AcquireAsync<T>((string)null, ct);   // a cancelled token wins over a miss, as on the name path
+            return ResolveForLoad(reference, out var name) ? AcquireAsync<T>(name, ct) : Completed<AssetHandle<T>>(default);
+        }
 
         static AssetHandle<T> AcquireSync<T>(int si) where T : Object
         {
@@ -841,6 +1019,13 @@ namespace xpTURN.ContentLink
         public static Awaitable<Scene> LoadSceneAsync(LoadableSceneId id, LoadSceneParameters parameters, CancellationToken ct = default)
             => LoadSceneCore(SceneKey(id), id, parameters, ct);
 
+        /// <summary><see cref="LoadSceneAsync(string, LoadSceneMode, CancellationToken)"/> through a scene reference.</summary>
+        public static Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, LoadSceneMode mode = LoadSceneMode.Additive, CancellationToken ct = default)
+            => LoadSceneAsync(reference, new LoadSceneParameters(mode), ct);
+
+        public static Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, LoadSceneParameters parameters, CancellationToken ct = default)
+            => ResolveSceneForLoad(reference, out var name) ? LoadSceneAsync(name, parameters, ct) : InvalidScene();
+
         static Awaitable<Scene> InvalidScene()
         {
             var acs = new AwaitableCompletionSource<Scene>();
@@ -1109,6 +1294,8 @@ namespace xpTURN.ContentLink
             s_Slots.Clear(); s_FreeSlots.Clear(); s_SlotByKey.Clear(); s_Pending.Clear();
             s_Leases = new Lease[256]; s_LeaseHigh = 0; s_FreeLeases.Clear();
             s_SceneNames.Clear(); s_DirsBySceneId.Clear(); s_SceneKeyById.Clear(); s_LoadedScenes.Clear(); s_Flights.Clear();
+            s_NameByRef.Clear(); s_SceneNameByGuid.Clear(); s_RefIndexDirty = false;
+            s_LinkKeys.Clear(); s_LinkMisses.Clear();
             SceneManager.sceneLoaded -= OnSceneLoaded;
             SceneManager.sceneLoaded += OnSceneLoaded;
             SceneManager.sceneUnloaded -= OnSceneUnloaded;

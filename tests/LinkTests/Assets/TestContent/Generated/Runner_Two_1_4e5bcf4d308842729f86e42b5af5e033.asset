@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08cd40f84d530471689a91006e6d88f8, type: 3}
+  m_Name: Runner_Two_1_4e5bcf4d308842729f86e42b5af5e033
+  m_EditorClassIdentifier: xpTURN.ContentLink::xpTURN.ContentLink.ContentCatalog
+  m_Entries:
+  - name: Prefabs/Linked
+    id: {fileID: 786335503158890074, loadable: 1, guid: 1e76f4b359ba4d7db16566251143817e, type: 3}
+    guid: 1e76f4b359ba4d7db16566251143817e
+    sub: 
+  - name: Prefabs/Plain
+    id: {fileID: 487914082173767759, loadable: 1, guid: 70a91ae0892144de9c6dc0703026c5ae, type: 3}
+    guid: 70a91ae0892144de9c6dc0703026c5ae
+    sub: 
+  m_Scenes: []
+  m_SourceRoot: Assets/TestContent/A

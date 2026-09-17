@@ -125,7 +125,7 @@ namespace xpTURN.ContentLink.Tests
             await Unload(b);
         }
 
-        // ───────────── which instance a scope's load claims (IMP008 F-7) ─────────────
+        // ───────────── which instance a scope's load claims ─────────────
 
         [Test, Timeout(10000)]
         public async Task S6_AScopeLoad_ClaimsTheInstanceItProduced_NotOneTheUserOpened()

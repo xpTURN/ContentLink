@@ -46,6 +46,7 @@ namespace xpTURN.ContentLink.Tests
         static Func<string, bool> s_SceneContains;
         static Func<string, LoadSceneParameters, AsyncOperation> s_SceneStart;
         static Func<string, Scene> s_SceneResult;
+        static Func<string, string, bool, string> s_Ref;                      // ContentRef: GUID → name
 
         /// <summary>
         /// Turns the editor simulation off or on for a test. Runtime-only on purpose: this assembly has no
@@ -59,8 +60,10 @@ namespace xpTURN.ContentLink.Tests
             if (ContentService.SceneContainsFallback != null) s_SceneContains = ContentService.SceneContainsFallback;
             if (ContentService.SceneFallback != null) s_SceneStart = ContentService.SceneFallback;
             if (ContentService.SceneResultFallback != null) s_SceneResult = ContentService.SceneResultFallback;
+            if (ContentService.RefFallback != null) s_Ref = ContentService.RefFallback;
 
             ContentService.NameFallback = on ? s_Name : null;
+            ContentService.RefFallback = on ? s_Ref : null;
             ContentService.DirectoryFallback = on ? s_Directory : null;
             ContentService.SceneContainsFallback = on ? s_SceneContains : null;
             ContentService.SceneFallback = on ? s_SceneStart : null;

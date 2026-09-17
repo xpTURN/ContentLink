@@ -9,7 +9,7 @@ using xpTURN.ContentLink.Editor;
 namespace xpTURN.ContentLink.Tests.Editor
 {
     /// <summary>
-    /// Builds the test content directories (TestContent/A, B, C) into StreamingAssets.
+    /// Builds the test content directories (TestContent/A, B, C, D) into StreamingAssets.
     ///
     /// The build is an EditMode step (menu or <see cref="TestContentBuildTests"/>) rather than part of every PlayMode run:
     /// it takes seconds, triggers a player script compilation, and the output can stay in place between runs.
@@ -22,7 +22,7 @@ namespace xpTURN.ContentLink.Tests.Editor
         public const string GeneratedFolder = "Assets/TestContent/Generated";
         public const string OutputFolder = "Assets/StreamingAssets/ContentLinkTests";
         public const string BuildMenu = "Window/ContentLink/Tests/Build Test Content";
-        public static readonly string[] Directories = { "A", "B", "C" };   // C = scenes
+        public static readonly string[] Directories = { "A", "B", "C", "D" };   // C = scenes · D = prefabs with dependencies outside the source root
 
         public static string OutputPath(string dir) => $"{OutputFolder}/{dir}";
         public static bool IsBuilt(string dir) => Directory.Exists(OutputPath(dir));

@@ -18,6 +18,8 @@ namespace xpTURN.ContentLink
         {
             public string name;           // e.g. "Prefabs/Cat", "Sprites/icons[sword]"
             public LoadableObjectId id;
+            public string guid;           // the asset's GUID (32 hex chars), what a ContentRef resolves against
+            public string sub;            // the sub-asset name of a "name[sub]" entry; "" for a main asset
         }
 
         [Serializable]
@@ -25,6 +27,7 @@ namespace xpTURN.ContentLink
         {
             public string name;           // e.g. "Scenes/Arena"
             public LoadableSceneId id;
+            public string guid;           // the scene asset's GUID, what a ContentSceneRef resolves against
         }
 
         [SerializeField] Entry[] m_Entries = Array.Empty<Entry>();

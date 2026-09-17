@@ -139,17 +139,36 @@ image.sprite = await icon.LoadAsync(this);                // owner is required (
 icon.Release();
 icon.SetName(table[itemId].IconName);
 image.sprite = await icon.LoadAsync(this);
+
+icon.SetName("Icons/sheet", "run_01");                   // a sprite: the main name and the sprite name apart
+other.SetName(icon.Name, icon.SubObjectName);            // copy a link: Name is the main name only
 ```
 
 `ContentLinkGameObject`, `ContentLinkSprite`, `ContentLinkTexture2D` are provided; derive from `ContentLink<T>` for others.
 `ContentSceneLink` is the same thing for a scene (see [Scenes](#scenes)).
 
 **In the inspector.** A link is drawn as an object field over its catalog name. Dropping an asset in writes the name
-the build would give it, and the name line stays editable for data-driven values. The colour says what the catalogs
+the build would give it, and the name line stays editable for data-driven values; a sprite shows as `Icons/sheet[run_01]` and is saved as the two fields. The colour says what the catalogs
 know: plain for an empty link, amber for a name no catalog has yet (run *Update Content Catalog*), red when the name
 resolves to something the field cannot hold. An asset that no catalog knows and that lives outside `SourceRoot` is
 refused, with the reason in the console; the name is left as it was. Links you derive yourself are drawn too — no
 extra attribute is needed.
+
+**By GUID.** `ContentRef<T>` and `ContentSceneRef` store the asset's GUID (and a sprite's name) instead of its path,
+so moving or renaming the file keeps them. They load through a scope, and resolve to the same catalog name — the
+same slot and scope key — as a name load of that asset:
+
+```csharp
+public ContentRef<Sprite> icon;                           // field names of Addressables' AssetReference: its data carries over
+public ContentSceneRef level;
+
+image.sprite = await this.Scope().LoadAsync(icon);        // this.Scope().Release(icon) returns it early
+var scene = await this.Scope().LoadSceneAsync(level);
+```
+
+`IsSet` says whether a value is set; `RuntimeKeyIsValid()` whether a registered catalog can load it. In the inspector
+the second line shows the name a reference resolves to, red when the GUID has no asset, the sprite name is gone or the
+type is wrong, amber when it is not built yet, lies outside the content roots, or is a sprite atlas.
 
 ## Instances
 
@@ -257,7 +276,8 @@ Root [Root] 0 (peak 0)
 | `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
 | `AddressablesTracker.ReportUnreferencedHandles()` (GC based) | scope warnings at scene unload / quit (deterministic) |
 | Auto Regist Folder Pattern | `ContentDirectoryBuilder` |
-| `AssetRef` (GUID) | `ContentService.TryGetLoadableObjectId(name, out id)` → `AcquireAsync<T>(id)` + `scope.Attach(handle)` |
+| `AssetRef` (GUID) | `ContentRef<T>` / `ContentSceneRef` |
+| Addressables `AssetReference` field | `ContentRef<T>` field — change the type; a texture GUID without a sprite name, or an atlas GUID, has to be re-picked |
 
 ## Notes and limitations
 
@@ -271,6 +291,9 @@ Root [Root] 0 (peak 0)
 - Clones created inactive take their references on first activation.
 - Scenes are not reference counted. Loading the same scene twice additively gives two instances; each is tracked and
   unloaded separately. There is no `ShareTo` / `Adopt` for scenes.
+- A `ContentRef` and a name load of the same asset share one scope key: releasing either releases both.
+- A link's `Name` is its main name and `SetName(name)` clears the sprite name: copy a link with `SetName(a.Name, a.SubObjectName)`.
+- Only sprites are sub-assets, by name; sprites reached through a sprite atlas cannot be referenced.
 
 ## Verified against
 

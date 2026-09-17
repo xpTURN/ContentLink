@@ -156,17 +156,17 @@ namespace xpTURN.ContentLink.Tests
         {
             var go = NewObject("R3");
             var holder = go.AddComponent<LinkHolder>();
-            holder.icon.SetName("Icons/single[single]");
+            holder.icon.SetName("Icons/single", "single");
             var first = holder.icon.LoadAsync(go);
             bool window = holder.icon.IsLoading;
             holder.icon.Release();
-            holder.icon.SetName("Icons/sheet[s0]");
+            holder.icon.SetName("Icons/sheet", "s0");
             var second = holder.icon.LoadAsync(go);
             var oldResult = await first;
             var newResult = await second;
             if (!window) Assert.Ignore("the first load completed synchronously — no in-flight window to test");
 
-            Assert.That(holder.icon.Name, Is.EqualTo("Icons/sheet[s0]"));
+            Assert.That((holder.icon.Name, holder.icon.SubObjectName), Is.EqualTo(("Icons/sheet", "s0")));
             Assert.That(oldResult, Is.Null, "the released in-flight load returns null");
             Assert.That(newResult, Is.Not.Null, "the new load returns the new sprite");
             Assert.That(newResult.name, Is.EqualTo("s0"));
@@ -248,7 +248,7 @@ namespace xpTURN.ContentLink.Tests
             {
                 var holder = await scope.LoadAsync<LinkHolder>("Prefabs/Linked");
                 Assert.That(holder, Is.Not.Null, "GetAsset<Component> path returns the component on the prefab asset");
-                Assert.That(holder.icon.Name, Is.EqualTo("Icons/single[single]"), "inspector-assigned name survived the content build");
+                Assert.That((holder.icon.Name, holder.icon.SubObjectName), Is.EqualTo(("Icons/single", "single")), "inspector-assigned name and sprite name survived the content build");
                 Assert.That(holder.icon.RuntimeKeyIsValid(), Is.True);
 
                 var inst = await scope.InstantiateAsync("Prefabs/Linked");

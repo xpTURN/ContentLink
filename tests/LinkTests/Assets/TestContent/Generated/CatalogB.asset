@@ -15,7 +15,11 @@ MonoBehaviour:
   m_Entries:
   - name: Icons/other
     id: {fileID: 2800000, loadable: 1, guid: a9d69d8c2a5b4d359e4fae0116f61357, type: 3}
+    guid: a9d69d8c2a5b4d359e4fae0116f61357
+    sub: 
   - name: 'Icons/other[other]'
     id: {fileID: 21300000, loadable: 1, guid: a9d69d8c2a5b4d359e4fae0116f61357, type: 3}
+    guid: a9d69d8c2a5b4d359e4fae0116f61357
+    sub: other
   m_Scenes: []
   m_SourceRoot: Assets/TestContent/B
