@@ -74,9 +74,8 @@ namespace xpTURN.ContentLink
             int version = m_LoadVersion;
 
             AssetHandle<T> h;
-            var linked = ct.CanBeCanceled ? CancellationTokenSource.CreateLinkedTokenSource(ct, scope.DisposedToken) : null;   // a default token needs no link: the scope's own token cancels the load
-            try { h = await ContentService.AcquireAsync<T>(ContentService.LinkKey(m_Name, m_SubObjectName), linked != null ? linked.Token : scope.DisposedToken); }
-            finally { linked?.Dispose(); if (version == m_LoadVersion) m_Loading = false; }
+            try { h = await ContentService.AcquireAsync<T>(ContentService.LinkKey(m_Name, m_SubObjectName), ct, scope.DisposedToken); }   // the caller's token and the scope's, each registered directly: no linked source per load
+            finally { if (version == m_LoadVersion) m_Loading = false; }
 
             if (version != m_LoadVersion) { h.Dispose(); return null; }
             return Commit(scope, h);

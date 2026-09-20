@@ -309,10 +309,15 @@ namespace UnityEngine.LowLevel
 namespace Unity.Loading
 {
     using UnityEngine;
-    [Serializable] public struct LoadableObjectId
+    [Serializable] public struct LoadableObjectId : IEquatable<LoadableObjectId>
     {
         public int value;
         public bool IsValid => value != 0;
+        public bool Equals(LoadableObjectId o) => value == o.value;
+        public override bool Equals(object o) => o is LoadableObjectId x && x.value == value;
+        public override int GetHashCode() => value;
+        public static bool operator ==(LoadableObjectId a, LoadableObjectId b) => a.value == b.value;
+        public static bool operator !=(LoadableObjectId a, LoadableObjectId b) => a.value != b.value;
         public static string OidHex(int v) => v.ToString("x32");
         // Real-engine format: { oid-10631ae2bdc563cb89b073d5a49ccfdc, guid: 12445bf6…, fileID: 2800000, type: 3 }
         public override string ToString() => "{ oid-" + OidHex(value) + ", guid: " + OidHex(value) + ", fileID: " + value + ", type: 3 }";

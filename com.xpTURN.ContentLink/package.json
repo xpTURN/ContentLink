@@ -1,7 +1,7 @@
 {
   "name": "com.xpturn.contentlink",
   "displayName": "xpTURN.ContentLink",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "unity": "6000.6",
   "description": "Scope-owned asset loading for Unity 6.6 content directories. Assets are loaded by name and owned by a GameObject, scene or explicit scope, so a forgotten release cannot leak forever. Includes serialized links, owned instances, content scenes, a build pipeline (profiles, window, split archives, CLI) and a no-build editor simulation.",
   "license": "Apache-2.0",

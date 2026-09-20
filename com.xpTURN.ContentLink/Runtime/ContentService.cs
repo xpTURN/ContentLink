@@ -58,8 +58,8 @@ namespace xpTURN.ContentLink
 
         static readonly List<DirectoryRecord> s_Dirs = new();
         static readonly Dictionary<string, NameEntry> s_Names = new(StringComparer.Ordinal);
-        static readonly Dictionary<string, int> s_DirById = new(StringComparer.Ordinal);
-        static readonly Dictionary<string, int> s_SimDirById = new(StringComparer.Ordinal);   // ids the simulation answered → their simulated directory
+        static readonly Dictionary<LoadableObjectId, int> s_DirById = new();
+        static readonly Dictionary<LoadableObjectId, int> s_SimDirById = new();   // ids the simulation answered → their simulated directory
 
         /// <summary>
         /// Registers a content directory and indexes its ContentCatalog root assets.
@@ -207,7 +207,7 @@ namespace xpTURN.ContentLink
             rec.Alive = false;
             rec.Catalogs = Array.Empty<ContentCatalog>();
             if (rec.Archives != null) { ContentArchives.Unmount(rec.Archives); rec.Archives = null; }
-            var stale = new List<string>();
+            var stale = new List<LoadableObjectId>();
             foreach (var kv in s_SimDirById) if (kv.Value == dir) stale.Add(kv.Key);
             foreach (var key in stale) s_SimDirById.Remove(key);
             RebuildNameIndex();
@@ -352,7 +352,7 @@ namespace xpTURN.ContentLink
                 if (simulated.Id.IsValid)
                 {
                     id = simulated.Id;
-                    s_SimDirById[IdKey(id)] = simulated.Dir;   // an id-based load later still knows it is simulated, and its directory (NoDirectory included)
+                    s_SimDirById[id] = simulated.Dir;   // an id-based load later still knows it is simulated, and its directory (NoDirectory included)
                     return true;
                 }
             }
@@ -376,7 +376,7 @@ namespace xpTURN.ContentLink
                     if (cat == null) continue;
                     foreach (var e in cat.Entries)
                     {
-                        s_DirById[IdKey(e.id)] = d;
+                        s_DirById[e.id] = d;
                         if (!string.IsNullOrEmpty(e.name))
                             s_Names[e.name] = new NameEntry { Id = e.id, Dir = d };
                     }
@@ -567,12 +567,14 @@ namespace xpTURN.ContentLink
             public uint Serial;
             public bool Alive;
             public bool Simulated;   // resolved by the editor simulation, not by a catalog
+            public bool ById;        // opened by GetSlotById: listed in s_SlotById under its Loadable's id
             public List<AwaitableCompletionSource<bool>> Waiters;
         }
 
         static readonly List<Slot> s_Slots = new();
         static readonly Stack<int> s_FreeSlots = new();
         static readonly Dictionary<string, int> s_SlotByKey = new(StringComparer.Ordinal);
+        static readonly Dictionary<LoadableObjectId, int> s_SlotById = new();   // the slots opened by id, so a hit costs no string
         static readonly List<int> s_Pending = new();
 
         public static int LiveAssetCount => s_SlotByKey.Count;
@@ -592,6 +594,7 @@ namespace xpTURN.ContentLink
             s.Pending = false;
             s.Alive = true;
             s.Simulated = false;
+            s.ById = false;
             s_SlotByKey[key] = si;
             return si;
         }
@@ -615,7 +618,7 @@ namespace xpTURN.ContentLink
                 {
                     si = AllocSlot(name, simulated.Dir, new Loadable<Object>(simulated.Id));
                     s_Slots[si].Simulated = true;
-                    s_SimDirById[IdKey(simulated.Id)] = simulated.Dir;
+                    s_SimDirById[simulated.Id] = simulated.Dir;
                     return true;
                 }
             }
@@ -630,18 +633,20 @@ namespace xpTURN.ContentLink
             return false;
         }
 
+        /// <summary>The key of a slot opened by id — diagnostics, TryFindKey, Snapshot. Made once per slot; lookups go through s_SlotById.</summary>
         static string IdKey(LoadableObjectId id) => "#" + id.ToString();
 
         static int GetSlotById(LoadableObjectId id)
         {
-            var key = IdKey(id);
-            if (s_SlotByKey.TryGetValue(key, out var si)) return si;
+            if (s_SlotById.TryGetValue(id, out var si)) return si;
             // A catalog's id belongs to its directory. An id the simulation answered is served from the project: it
             // belongs to no engine directory (NoDirectory entries stay until ResetStatics) and never blocks one.
-            bool simulated = !s_DirById.TryGetValue(key, out var d) && s_SimDirById.TryGetValue(key, out d);
-            if (!simulated && !s_DirById.ContainsKey(key)) d = kDirUnknown;
-            si = AllocSlot(key, d, new Loadable<Object>(id));
+            bool simulated = !s_DirById.TryGetValue(id, out var d) && s_SimDirById.TryGetValue(id, out d);
+            if (!simulated && !s_DirById.ContainsKey(id)) d = kDirUnknown;
+            si = AllocSlot(IdKey(id), d, new Loadable<Object>(id));
             s_Slots[si].Simulated = simulated;
+            s_Slots[si].ById = true;
+            s_SlotById[id] = si;
             return si;
         }
 
@@ -661,6 +666,7 @@ namespace xpTURN.ContentLink
             catch (Exception e) { Debug.LogException(e); }
 
             s_SlotByKey.Remove(s.Key);
+            if (s.ById) { s_SlotById.Remove(s.Loadable.LoadableObjectId); s.ById = false; }
             s.Alive = false;
             s.Serial++;
             s.Key = null;
@@ -723,10 +729,14 @@ namespace xpTURN.ContentLink
         /// at the next Collect(). Returns an invalid handle on failure.
         /// </summary>
         public static Awaitable<AssetHandle<T>> AcquireAsync<T>(string name, CancellationToken ct = default) where T : Object
-            => AcquireAsyncCore<T>(name, default, false, ct);
+            => AcquireAsyncCore<T>(name, default, false, ct, default);
 
         public static Awaitable<AssetHandle<T>> AcquireAsync<T>(LoadableObjectId id, CancellationToken ct = default) where T : Object
-            => AcquireAsyncCore<T>(null, id, true, ct);
+            => AcquireAsyncCore<T>(null, id, true, ct, default);
+
+        /// <summary>A scope's load: the caller's token and the scope's own, each registered directly — no linked source per load.</summary>
+        internal static Awaitable<AssetHandle<T>> AcquireAsync<T>(string name, CancellationToken ct, CancellationToken scopeCt) where T : Object
+            => AcquireAsyncCore<T>(name, default, false, ct, scopeCt);
 
         /// <summary>Advanced. <see cref="Acquire{T}(string)"/> through a reference: the same slot a name load of the asset uses.</summary>
         public static AssetHandle<T> Acquire<T>(ContentRef<T> reference) where T : Object
@@ -754,9 +764,12 @@ namespace xpTURN.ContentLink
             return h;
         }
 
-        static async Awaitable<AssetHandle<T>> AcquireAsyncCore<T>(string name, LoadableObjectId id, bool byId, CancellationToken ct) where T : Object
+        static readonly Action<object> s_CancelWaiter = static state => ((AwaitableCompletionSource<bool>)state).TrySetCanceled();
+
+        static async Awaitable<AssetHandle<T>> AcquireAsyncCore<T>(string name, LoadableObjectId id, bool byId, CancellationToken ct, CancellationToken scopeCt) where T : Object
         {
             ct.ThrowIfCancellationRequested();
+            scopeCt.ThrowIfCancellationRequested();
 
             int si;
             if (byId) si = GetSlotById(id);
@@ -772,7 +785,8 @@ namespace xpTURN.ContentLink
                 // Awaitable can be awaited only once, so every waiter gets its own completion source.
                 var acs = new AwaitableCompletionSource<bool>();
                 (s.Waiters ??= new List<AwaitableCompletionSource<bool>>()).Add(acs);
-                using (ct.CanBeCanceled ? ct.Register(() => acs.TrySetCanceled()) : default)
+                using (ct.CanBeCanceled ? ct.Register(s_CancelWaiter, acs) : default)   // a static delegate with state: no closure per waiter
+                using (scopeCt.CanBeCanceled ? scopeCt.Register(s_CancelWaiter, acs) : default)
                 {
                     try { await acs.Awaitable; }
                     catch (OperationCanceledException) { h.Dispose(); throw; }
@@ -780,7 +794,7 @@ namespace xpTURN.ContentLink
             }
 
             if (!h.IsValid) return default;
-            if (ct.IsCancellationRequested) { h.Dispose(); ct.ThrowIfCancellationRequested(); }
+            if (ct.IsCancellationRequested || scopeCt.IsCancellationRequested) { h.Dispose(); ct.ThrowIfCancellationRequested(); scopeCt.ThrowIfCancellationRequested(); }
             if (h.Status != ContentStatus.Loaded) { h.Dispose(); return default; }
             return h;
         }
@@ -1009,15 +1023,19 @@ namespace xpTURN.ContentLink
             => LoadSceneAsync(name, new LoadSceneParameters(mode), ct);
 
         public static Awaitable<Scene> LoadSceneAsync(string name, LoadSceneParameters parameters, CancellationToken ct = default)
+            => LoadSceneAsync(name, parameters, ct, default);
+
+        /// <summary>A scope's scene load: the caller's token and the scope's own, each registered directly — no linked source per load.</summary>
+        internal static Awaitable<Scene> LoadSceneAsync(string name, LoadSceneParameters parameters, CancellationToken ct, CancellationToken scopeCt)
         {
-            if (name != null && s_SceneNames.TryGetValue(name, out var e)) return LoadSceneCore(name, e.Id, parameters, ct);
-            if (name != null && SceneFallback != null) return LoadSimulatedSceneCore(name, parameters, ct);   // a catalog name wins over the simulation
+            if (name != null && s_SceneNames.TryGetValue(name, out var e)) return LoadSceneCore(name, e.Id, parameters, ct, scopeCt);
+            if (name != null && SceneFallback != null) return LoadSimulatedSceneCore(name, parameters, ct, scopeCt);   // a catalog name wins over the simulation
             Debug.LogError($"[ContentLink] scene '{name}' is not in any registered ContentCatalog.");
             return InvalidScene();
         }
 
         public static Awaitable<Scene> LoadSceneAsync(LoadableSceneId id, LoadSceneParameters parameters, CancellationToken ct = default)
-            => LoadSceneCore(SceneKey(id), id, parameters, ct);
+            => LoadSceneCore(SceneKey(id), id, parameters, ct, default);
 
         /// <summary><see cref="LoadSceneAsync(string, LoadSceneMode, CancellationToken)"/> through a scene reference.</summary>
         public static Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, LoadSceneMode mode = LoadSceneMode.Additive, CancellationToken ct = default)
@@ -1038,9 +1056,10 @@ namespace xpTURN.ContentLink
         /// names the resulting Scene; everything else — the cancellation shape, the error wording — matches, so a
         /// caller cannot tell the two apart except that the scene is not part of any directory.
         /// </summary>
-        static async Awaitable<Scene> LoadSimulatedSceneCore(string key, LoadSceneParameters parameters, CancellationToken ct)
+        static async Awaitable<Scene> LoadSimulatedSceneCore(string key, LoadSceneParameters parameters, CancellationToken ct, CancellationToken scopeCt)
         {
             ct.ThrowIfCancellationRequested();
+            scopeCt.ThrowIfCancellationRequested();
 
             AsyncOperation op = null;
             try { op = SceneFallback?.Invoke(key, parameters); }
@@ -1055,7 +1074,8 @@ namespace xpTURN.ContentLink
             op.completed += _ => acs.TrySetResult(true);
             try
             {
-                using (ct.CanBeCanceled ? ct.Register(() => acs.TrySetCanceled()) : default)
+                using (ct.CanBeCanceled ? ct.Register(s_CancelWaiter, acs) : default)
+                using (scopeCt.CanBeCanceled ? scopeCt.Register(s_CancelWaiter, acs) : default)
                     await acs.Awaitable;
             }
             catch (OperationCanceledException)
@@ -1081,9 +1101,10 @@ namespace xpTURN.ContentLink
             return scene;
         }
 
-        static async Awaitable<Scene> LoadSceneCore(string key, LoadableSceneId id, LoadSceneParameters parameters, CancellationToken ct)
+        static async Awaitable<Scene> LoadSceneCore(string key, LoadableSceneId id, LoadSceneParameters parameters, CancellationToken ct, CancellationToken scopeCt)
         {
             ct.ThrowIfCancellationRequested();
+            scopeCt.ThrowIfCancellationRequested();
             if (!id.IsValid || !s_DirsBySceneId.ContainsKey(id))
             {
                 Debug.LogError($"[ContentLink] scene '{key}' is not in any registered content directory.");
@@ -1107,7 +1128,8 @@ namespace xpTURN.ContentLink
             op.completed += _ => acs.TrySetResult(true);
             try
             {
-                using (ct.CanBeCanceled ? ct.Register(() => acs.TrySetCanceled()) : default)
+                using (ct.CanBeCanceled ? ct.Register(s_CancelWaiter, acs) : default)
+                using (scopeCt.CanBeCanceled ? scopeCt.Register(s_CancelWaiter, acs) : default)
                     await acs.Awaitable;
             }
             catch (OperationCanceledException)
@@ -1291,7 +1313,7 @@ namespace xpTURN.ContentLink
         {
             ReleaseLeftoverDirectories();
             s_Dirs.Clear(); s_Names.Clear(); s_DirById.Clear(); s_SimDirById.Clear();
-            s_Slots.Clear(); s_FreeSlots.Clear(); s_SlotByKey.Clear(); s_Pending.Clear();
+            s_Slots.Clear(); s_FreeSlots.Clear(); s_SlotByKey.Clear(); s_SlotById.Clear(); s_Pending.Clear();
             s_Leases = new Lease[256]; s_LeaseHigh = 0; s_FreeLeases.Clear();
             s_SceneNames.Clear(); s_DirsBySceneId.Clear(); s_SceneKeyById.Clear(); s_LoadedScenes.Clear(); s_Flights.Clear();
             s_NameByRef.Clear(); s_SceneNameByGuid.Clear(); s_RefIndexDirty = false;

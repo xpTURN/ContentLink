@@ -43,14 +43,17 @@ namespace xpTURN.ContentLink
         void Awake()
         {
             // Runs on clones: take our own references to what the original held.
-            if (m_Scope != null || m_InheritKeys == null || m_InheritKeys.Length == 0) return;
+            if (m_Scope != null || m_InheritKeys == null || m_InheritKeys.Length == 0 || string.IsNullOrEmpty(m_InheritKeys[0])) return;   // the keys sit at the front of a never-shrinking array: an empty first slot means it holds none
             var keys = m_InheritKeys;
-            var scope = Scope;
+            var scope = m_Scope = ContentScope.CreateForGameObject(gameObject);   // bound after the loop: the keys sync once, not once per key, and never into the array being walked
             foreach (var key in keys)
             {
+                if (string.IsNullOrEmpty(key)) continue;   // the tail of a never-shrinking array (serialised as empty strings)
                 if (ContentService.TryShareLive(key, out var h)) scope.KeepHandle(key, h);   // normal case: no I/O
                 else scope.Load<UnityEngine.Object>(key);                                   // original already gone
             }
+            scope.BindOwnerComponent(this);
+            scope.ResyncKeys();
         }
 
         void OnDestroy()
@@ -60,7 +63,14 @@ namespace xpTURN.ContentLink
             s?.DisposeCore(s);
         }
 
-        internal void SyncKeys(IEnumerable<string> keys) => m_InheritKeys = new List<string>(keys).ToArray();
+        /// <summary>Mirrors the scope's keys into the serialized array in place. The array never shrinks (its tail is null, or empty strings on a clone), so a release followed by a load allocates nothing; clearing stops at the first empty slot, so a key change costs the keys it removed, not the array's length.</summary>
+        internal void SyncKeys(Dictionary<string, AssetHandle<UnityEngine.Object>>.KeyCollection keys)
+        {
+            int n = keys.Count;
+            if (m_InheritKeys.Length < n) m_InheritKeys = new string[Math.Max(n, m_InheritKeys.Length * 2)];
+            keys.CopyTo(m_InheritKeys, 0);
+            for (int i = n; i < m_InheritKeys.Length && !string.IsNullOrEmpty(m_InheritKeys[i]); ++i) m_InheritKeys[i] = null;   // the keys sit at the front: past the first empty slot there is nothing to clear
+        }
 
         internal void OnScopeDisposed(ContentScope scope)
         {

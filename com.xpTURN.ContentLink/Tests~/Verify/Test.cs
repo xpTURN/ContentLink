@@ -444,6 +444,114 @@ static class Test
         Object.Destroy(clone); Tick();
         Check(Ref(CAT) == 0, "released when the clone is destroyed");
 
+        Console.WriteLine("10a) SyncKeys keeps m_InheritKeys equal to the live keyed set");
+        {
+            var fldF1 = typeof(ContentScopeOwner).GetField("m_InheritKeys", BindingFlags.Instance | BindingFlags.NonPublic);
+            string[] KeysF1(GameObject g) { var raw = (string[])fldF1.GetValue(g.GetComponent<ContentScopeOwner>()); var l = new System.Collections.Generic.List<string>(); foreach (var k in raw) if (!string.IsNullOrEmpty(k)) l.Add(k); return l.ToArray(); }
+            bool SameF1(GameObject g, params string[] expect) { var k = KeysF1(g); if (k.Length != expect.Length) return false; foreach (var e in expect) if (Array.IndexOf(k, e) < 0) return false; return true; }
+            var goF1 = NewGO("F1", sceneA);
+            var scF1 = goF1.Scope();
+            scF1.Load<Sprite>("Icons/sword");
+            Check(SameF1(goF1, "Icons/sword"), "① one key after Load");
+            scF1.Load<Sprite>("Icons/shield");
+            Check(SameF1(goF1, "Icons/sword", "Icons/shield"), "② two keys after a second Load");
+            scF1.Release("Icons/sword");
+            Check(SameF1(goF1, "Icons/shield"), "③ Release removes the key");
+            scF1.Load<Sprite>("Icons/sword");
+            Check(SameF1(goF1, "Icons/shield", "Icons/sword"), "④ Release then Load again (same length: the in-place path)");
+            scF1.Release("Icons/shield"); scF1.Release("Icons/sword");
+            Check(KeysF1(goF1).Length == 0, "⑤ releasing the last key leaves no key");
+            scF1.Load<Sprite>("Icons/sword"); scF1.Load<Sprite>("Icons/shield");
+            var c1F1 = Object.Instantiate(goF1);
+            Check(SameF1(c1F1, "Icons/sword", "Icons/shield") && c1F1.Scope().Contains("Icons/sword") && c1F1.Scope().Contains("Icons/shield"), "⑥ a clone inherits both keys and its own array lists both");
+            goF1.SetActive(false);
+            var c2F1 = Object.Instantiate(goF1);
+            fldF1.SetValue(c2F1.GetComponent<ContentScopeOwner>(), new[] { "Icons/sword", "Zzz/nope", "Icons/shield" });
+            int e0F1 = Debug.Errors;
+            c2F1.SetActive(true);
+            Check(Debug.Errors > e0F1 && SameF1(c2F1, "Icons/sword", "Icons/shield") && c2F1.Scope().Count == 2, $"⑦ a key the clone cannot take is dropped from its array (errors=+{Debug.Errors - e0F1} count={c2F1.Scope().Count})");
+            goF1.SetActive(true);
+            scF1.Release("Icons/sword");
+            Check(SameF1(c1F1, "Icons/sword", "Icons/shield") && SameF1(goF1, "Icons/shield"), "⑧ the clone's array is its own (the original's Release does not reach it)");
+            Object.Destroy(goF1); Object.Destroy(c1F1); Object.Destroy(c2F1); Tick();
+            Check(Ref(SWORD) == 0 && Ref(SHIELD) == 0, "⑨ everything released after the three objects are destroyed");
+        }
+
+        Console.WriteLine("10i) a clone of an owner that released every key inherits nothing and gets no scope");
+        {
+            var fldK = typeof(ContentScopeOwner).GetField("m_InheritKeys", BindingFlags.Instance | BindingFlags.NonPublic);
+            var fldS = typeof(ContentScopeOwner).GetField("m_Scope", BindingFlags.Instance | BindingFlags.NonPublic);
+            string[] RawI(GameObject g) => (string[])fldK.GetValue(g.GetComponent<ContentScopeOwner>());
+            int LiveI(GameObject g) { int n = 0; foreach (var k in RawI(g)) if (!string.IsNullOrEmpty(k)) n++; return n; }
+            bool HasScope(GameObject g) => fldS.GetValue(g.GetComponent<ContentScopeOwner>()) != null;
+            int Kids() => ContentScope.ForScene(SceneManager.Active).Children.Count;
+            var oI = NewGO("F1i", SceneManager.Active);
+            var sI = oI.Scope();
+            sI.Load<Sprite>("Icons/sword"); sI.Load<Sprite>("Icons/shield"); sI.Load<Sprite>("Items/0");
+            sI.Release("Icons/sword"); sI.Release("Icons/shield"); sI.Release("Items/0");
+            var rawI = RawI(oI);
+            Check(rawI.Length >= 3 && LiveI(oI) == 0 && sI.Count == 0, $"① after releasing every key the raw array keeps its length and holds no key (len={rawI.Length} live={LiveI(oI)})");
+            int kids1 = Kids();
+            var c1I = Object.Instantiate(oI);
+            Check(!HasScope(c1I) && Kids() == kids1, $"② the clone of the emptied owner gets no scope and the scene scope gains no child (scope={HasScope(c1I)} children {kids1}→{Kids()})");
+            oI.SetActive(false);
+            var c2I = Object.Instantiate(oI);
+            var ser = RawI(c2I); for (int i = 0; i < ser.Length; ++i) ser[i] ??= "";   // what Unity's serializer hands a clone: empty strings, never null
+            int e0I = Debug.Errors, kids2 = Kids();
+            c2I.SetActive(true);
+            Check(!HasScope(c2I) && Kids() == kids2 && Debug.Errors == e0I, $"③ the same with the serialized shape (empty strings): no scope, no child, no error (scope={HasScope(c2I)} children {kids2}→{Kids()} errors=+{Debug.Errors - e0I})");
+            oI.SetActive(true);
+            var late = c1I.Scope().Load<Sprite>("Icons/sword");
+            Check(late != null && c1I.Scope().Contains("Icons/sword") && LiveI(c1I) == 1 && LiveI(oI) == 0, "④ the empty clone can still open its scope later and load (lazy creation is intact; the original's array is untouched)");
+            sI.Load<Sprite>("Icons/sword"); sI.Load<Sprite>("Icons/shield"); sI.Load<Sprite>("Items/0");
+            sI.Release("Items/0");
+            var c3I = Object.Instantiate(oI);
+            Check(c3I.Scope().Count == 2 && c3I.Scope().Contains("Icons/sword") && c3I.Scope().Contains("Icons/shield") && !c3I.Scope().Contains("Items/0"), $"⑤ a partially released owner (tail null) clones its two live keys only (count={c3I.Scope().Count})");
+            sI.Release("Icons/sword"); sI.Release("Icons/shield");
+            sI.Load<Sprite>("Items/0");
+            Check(!string.IsNullOrEmpty(RawI(oI)[0]) && RawI(oI)[0] == "Items/0" && LiveI(oI) == 1, $"⑥ after emptying and loading one key it sits at index 0 (packed front) (raw[0]={RawI(oI)[0] ?? "null"})");
+            var c4I = Object.Instantiate(oI);
+            Check(c4I.Scope().Count == 1 && c4I.Scope().Contains("Items/0"), "⑦ its clone inherits that one key");
+            Object.Destroy(oI); Object.Destroy(c1I); Object.Destroy(c2I); Object.Destroy(c3I); Object.Destroy(c4I); Tick();
+            Check(Ref(SWORD) == 0 && Ref(SHIELD) == 0 && Ref(ICON0) == 0, "⑧ everything released after the five objects are destroyed");
+        }
+
+        Console.WriteLine("10j) SyncKeys leaves nothing but null or empty beyond the live keys, whatever the array held before");
+        {
+            var fldK = typeof(ContentScopeOwner).GetField("m_InheritKeys", BindingFlags.Instance | BindingFlags.NonPublic);
+            var fldS = typeof(ContentScopeOwner).GetField("m_Scope", BindingFlags.Instance | BindingFlags.NonPublic);
+            string[] RawJ(GameObject g) => (string[])fldK.GetValue(g.GetComponent<ContentScopeOwner>());
+            bool CleanBeyond(string[] raw, int n) { for (int i = n; i < raw.Length; ++i) if (!string.IsNullOrEmpty(raw[i])) return false; return true; }
+            bool Front(string[] raw, int n, params string[] keys) { if (keys.Length != n) return false; foreach (var k in keys) if (Array.IndexOf(raw, k, 0, n) < 0) return false; return true; }
+            string[] Items(int from, int to) { var l = new string[to - from]; for (int i = from; i < to; ++i) l[i - from] = "Items/" + i; return l; }
+            var oJ = NewGO("F2j", SceneManager.Active); var sJ = oJ.Scope(); var ownJ = oJ.GetComponent<ContentScopeOwner>();
+            for (int i = 0; i < 20; ++i) sJ.Load<Sprite>("Items/" + i);
+            var rawJ = RawJ(oJ);
+            Check(rawJ.Length >= 20 && Front(rawJ, 20, Items(0, 20)) && CleanBeyond(rawJ, 20), $"① 20 keys loaded one by one: the front holds all 20, nothing beyond (len={rawJ.Length})");
+            for (int i = 1; i < 20; ++i) sJ.Release("Items/" + i);
+            rawJ = RawJ(oJ);
+            Check(rawJ.Length >= 20 && rawJ[0] == "Items/0" && CleanBeyond(rawJ, 1), $"② 19 released: the survivor sits at 0, nothing beyond, the array keeps its length (len={rawJ.Length})");
+            sJ.Load<Sprite>("Items/1");
+            rawJ = RawJ(oJ);
+            Check(Front(rawJ, 2, "Items/0", "Items/1") && CleanBeyond(rawJ, 2), "③ one loaded again: two at the front, nothing beyond");
+            var shaped = new[] { "Items/0", "Items/1", "Items/2", "Items/3", "", "", "", "" };   // what a clone carries after it dropped keys: stale keys after the live ones, then the serialized empty strings
+            fldK.SetValue(ownJ, shaped);
+            sJ.ResyncKeys();
+            rawJ = RawJ(oJ);
+            Check(ReferenceEquals(rawJ, shaped) && Front(rawJ, 2, "Items/0", "Items/1") && CleanBeyond(rawJ, 2), $"④ a clone-shaped array (stale keys, then empty strings) after one sync: the two live keys, then nothing (raw={string.Join(",", Array.ConvertAll(rawJ, k => k ?? "null"))})");
+            for (int i = 2; i < 9; ++i) sJ.Load<Sprite>("Items/" + i);
+            rawJ = RawJ(oJ);
+            Check(rawJ.Length == 16 && Front(rawJ, 9, Items(0, 9)) && CleanBeyond(rawJ, 9), $"⑤ growing past the length (8 → 9 keys) doubles the array and keeps the shape (len={rawJ.Length})");
+            for (int i = 0; i < 9; ++i) sJ.Release("Items/" + i);
+            rawJ = RawJ(oJ);
+            Check(rawJ.Length == 16 && CleanBeyond(rawJ, 0), "⑥ everything released: nothing anywhere (the first slot is what a clone's Awake looks at)");
+            var cJ = Object.Instantiate(oJ);
+            Check(fldS.GetValue(cJ.GetComponent<ContentScopeOwner>()) == null, "⑦ a clone of that owner makes no scope");
+            Object.Destroy(oJ); Object.Destroy(cJ); Tick();
+            bool allZero = true; for (int i = 0; i < 20; ++i) if (Ref(ICON0 + i) != 0) allZero = false;
+            Check(allZero, "⑧ everything released after both are destroyed");
+        }
+
         Console.WriteLine("10b) loading by id and directory unregistration");
         {
             const int OTHER = 50;
@@ -470,6 +578,121 @@ static class Test
             Debug.Verbose = true;
             byId.Dispose(); Tick();
             Check(Ref(SWORD) == 0 && !FakeEngine.Registered.Contains("Other"), "id asset released when the scope ends; Other stays unregistered");
+        }
+
+        Console.WriteLine("10e) loading by id: one slot per id, and the id index follows the slot");
+        {
+            var idE = new LoadableObjectId { value = SWORD };
+            int live0E = ContentService.LiveAssetCount;
+            var hE1 = ContentService.Acquire<Sprite>(idE);
+            var hE2 = ContentService.Acquire<Sprite>(idE);
+            Check(hE1.IsValid && hE2.IsValid && ContentService.LiveAssetCount == live0E + 1 && hE1.Key == hE2.Key && Ref(SWORD) == 1, $"① two acquires by id share one slot (live=+{ContentService.LiveAssetCount - live0E} ref={Ref(SWORD)})");
+            Check(hE1.Key == "#" + idE.ToString(), $"② the slot's key is the id's text, as before (key={hE1.Key})");
+            var scE = ContentScope.ForScene(sceneA).CreateChild("E");
+            scE.Load<Sprite>("Icons/sword");
+            Check(ContentService.LiveAssetCount == live0E + 2 && Ref(SWORD) == 2, $"③ a name load of the same asset is a slot of its own (live=+{ContentService.LiveAssetCount - live0E} ref={Ref(SWORD)})");
+            scE.Dispose(); Tick();
+            var hE3 = ContentService.Acquire<Sprite>(idE);
+            Check(hE1.IsValid && hE3.IsValid && hE3.Key == hE1.Key && ContentService.LiveAssetCount == live0E + 1 && Ref(SWORD) == 1, $"④ freeing the name slot leaves the id slot reachable by id — no orphan (live=+{ContentService.LiveAssetCount - live0E} ref={Ref(SWORD)})");
+            hE1.Dispose(); hE2.Dispose(); hE3.Dispose(); Tick();
+            Check(ContentService.LiveAssetCount == live0E && Ref(SWORD) == 0, $"⑤ the last release frees the slot (live=+{ContentService.LiveAssetCount - live0E} ref={Ref(SWORD)})");
+            var hE4 = ContentService.Acquire<Sprite>(idE);
+            Check(hE4.IsValid && hE4.Asset != null && ContentService.LiveAssetCount == live0E + 1 && Ref(SWORD) == 1, $"⑥ acquiring by id after the free opens a fresh slot (live=+{ContentService.LiveAssetCount - live0E} ref={Ref(SWORD)})");
+            hE4.Dispose(); Tick();
+            const int OTHER_E = 50;
+            int dirE = ContentService.RegisterDirectory("Other");
+            var idO = new LoadableObjectId { value = OTHER_E };
+            var hE5 = ContentService.Acquire<Sprite>(idO);
+            Debug.Verbose = false;
+            bool forcedE = ContentService.UnregisterDirectory(dirE, force: true);
+            Debug.Verbose = true;
+            dirE = ContentService.RegisterDirectory("Other");
+            var hE6 = ContentService.Acquire<Sprite>(idO);
+            Check(forcedE && !hE5.IsValid && hE6.IsValid && hE6.Asset != null && Ref(OTHER_E) == 1, $"⑦ after a forced unregistration the id slot is gone and the re-registered directory serves the id again (forced={forcedE} old={hE5.IsValid} new={hE6.IsValid} ref={Ref(OTHER_E)})");
+            hE6.Dispose(); Tick();
+            Check(ContentService.UnregisterDirectory(dirE) && Ref(OTHER_E) == 0 && ContentService.LiveAssetCount == live0E, $"⑧ released; Other unregisters; nothing left (live=+{ContentService.LiveAssetCount - live0E})");
+        }
+
+        Console.WriteLine("10f) two waiters on a loading slot: cancelling one leaves the other");
+        {
+            int live0F = ContentService.LiveAssetCount;
+            var ctsF = new System.Threading.CancellationTokenSource();
+            var w1F = ContentService.AcquireAsync<Sprite>("Icons/sword", ctsF.Token);
+            var w2F = ContentService.AcquireAsync<Sprite>("Icons/sword");
+            ctsF.Cancel();
+            bool canc1F = false; try { Run(w1F); } catch (OperationCanceledException) { canc1F = true; }
+            var h2F = Run(w2F);
+            Check(canc1F && h2F.IsValid && h2F.Asset != null && Ref(SWORD) == 1 && ContentService.LiveAssetCount == live0F + 1, $"① the cancelled waiter throws; the other gets the asset; one slot (cancelled={canc1F} valid={h2F.IsValid} ref={Ref(SWORD)} live=+{ContentService.LiveAssetCount - live0F})");
+            h2F.Dispose(); Tick();
+            Check(Ref(SWORD) == 0 && ContentService.LiveAssetCount == live0F, $"② the cancelled waiter's lease was returned: the survivor's release frees the slot (ref={Ref(SWORD)} live=+{ContentService.LiveAssetCount - live0F})");
+            var ctsF2 = new System.Threading.CancellationTokenSource();
+            var w3F = ContentService.AcquireAsync<Sprite>("Icons/sword", ctsF2.Token);
+            var w4F = ContentService.AcquireAsync<Sprite>("Icons/sword", ctsF2.Token);
+            var h3F = Run(w3F); var h4F = Run(w4F);
+            int wF = Debug.Warnings;
+            ctsF2.Cancel();
+            Check(h3F.IsValid && h4F.IsValid && Debug.Warnings == wF && Ref(SWORD) == 1, $"③ cancelling after both completed is a no-op: registrations were disposed, no double release (warnings=+{Debug.Warnings - wF} ref={Ref(SWORD)})");
+            h3F.Dispose(); h4F.Dispose(); Tick();
+            Check(Ref(SWORD) == 0 && ContentService.LiveAssetCount == live0F, "④ released; nothing left");
+        }
+
+        Console.WriteLine("10g) PeakCount and the threshold count the scope's entries; Count stays exact");
+        {
+            const int OA = 71, OB = 72, OC = 73;
+            FakeEngine.Assets[OA] = new Sprite { name = "oa" }; FakeEngine.Assets[OB] = new Sprite { name = "ob" }; FakeEngine.Assets[OC] = new Sprite { name = "oc" };
+            FakeEngine.IdDir[OA] = FakeEngine.IdDir[OB] = FakeEngine.IdDir[OC] = "Other";
+            var catG = ScriptableObject.CreateInstance<ContentCatalog>();
+            catG.EditorSetEntries(new ContentCatalog.Entry[] {
+                new() { name = "Other/a", id = new LoadableObjectId { value = OA } }, new() { name = "Other/b", id = new LoadableObjectId { value = OB } }, new() { name = "Other/c", id = new LoadableObjectId { value = OC } } });
+            FakeEngine.Dirs["Other"] = new ScriptableObject[] { catG };
+            int dirG = ContentService.RegisterDirectory("Other");
+            var scG = ContentScope.ForScene(sceneA).CreateChild("G");
+            scG.WarnThreshold = 8;
+            for (int i = 0; i < 5; ++i) scG.Load<Sprite>("Items/" + i);
+            scG.Load<Sprite>("Other/a"); scG.Load<Sprite>("Other/b"); scG.Load<Sprite>("Other/c");
+            Check(scG.Count == 8 && scG.PeakCount == 8, $"① peak follows the count while nothing is dead (count={scG.Count} peak={scG.PeakCount})");
+            Debug.Verbose = false;
+            bool forcedG = ContentService.UnregisterDirectory(dirG, force: true);
+            Debug.Verbose = true;
+            Check(forcedG && scG.Count == 5 && scG.PeakCount == 8, $"② after a forced unregistration Count is the live five; the peak stays (count={scG.Count} peak={scG.PeakCount})");
+            int wG = Warn(() => scG.Load<Sprite>("Items/5"));
+            Check(wG == 1 && scG.Count == 6, $"③ the ninth entry crosses the threshold of 8 although only six are live — dead entries count until they are dropped (warnings={wG} count={scG.Count})");
+            scG.Release("Other/a"); scG.Release("Other/b"); scG.Release("Other/c");
+            int wG2 = Warn(() => { scG.Load<Sprite>("Items/6"); scG.Load<Sprite>("Items/7"); });
+            Check(wG2 == 0 && scG.Count == 8, $"④ once the dead entries are dropped the threshold counts the live ones again; the once-only warning does not repeat (warnings={wG2} count={scG.Count})");
+            scG.Dispose(); Tick();
+            Check(Ref(OA) == 0 && !FakeEngine.Registered.Contains("Other"), "⑤ released; Other stays unregistered");
+        }
+
+        Console.WriteLine("10h) a scope load with a caller token: either token cancels, neither leaves anything held (scene loads: 12 ⑥ and 14)");
+        {
+            int live0H = ContentService.LiveAssetCount;
+            var scH = ContentScope.ForScene(sceneA).CreateChild("H");
+            var ctsH = new System.Threading.CancellationTokenSource();
+            var opH1 = scH.LoadAsync<Sprite>("Icons/shield", ctsH.Token);
+            ctsH.Cancel();
+            bool cancH1 = false; try { Run(opH1); } catch (OperationCanceledException) { cancH1 = true; }
+            Tick();
+            Check(cancH1 && !scH.Contains("Icons/shield") && Ref(SHIELD) == 0 && ContentService.LiveAssetCount == live0H, $"① the caller's token cancels a scope load mid-flight: nothing held, slot gone (cancelled={cancH1} ref={Ref(SHIELD)} live=+{ContentService.LiveAssetCount - live0H})");
+            var ctsH2 = new System.Threading.CancellationTokenSource();
+            var opH2 = scH.LoadAsync<Sprite>("Icons/shield", ctsH2.Token);
+            scH.Dispose();
+            bool cancH2 = false; try { Run(opH2); } catch (OperationCanceledException) { cancH2 = true; }
+            Tick();
+            Check(cancH2 && Ref(SHIELD) == 0, $"② the scope ending cancels the same load although the caller's token is still live (cancelled={cancH2} ref={Ref(SHIELD)})");
+            var scH3 = ContentScope.ForScene(sceneA).CreateChild("H3");
+            var ctsH3 = new System.Threading.CancellationTokenSource();
+            var opH3 = scH3.InstantiateAsync("Prefabs/Cat", null, false, ctsH3.Token);
+            ctsH3.Cancel();
+            bool cancH3 = false; GameObject goH3 = null; try { goH3 = Run(opH3); } catch (OperationCanceledException) { cancH3 = true; }
+            Tick();
+            Check(cancH3 && goH3 == null && Ref(CAT) == 0, $"③ InstantiateAsync with a cancelled caller token: no instance, nothing held (cancelled={cancH3} ref={Ref(CAT)})");
+            var ctsH4 = new System.Threading.CancellationTokenSource();
+            var okH4 = Run(scH3.LoadAsync<Sprite>("Icons/shield", ctsH4.Token));
+            ctsH4.Cancel();
+            Check(okH4 != null && scH3.Contains("Icons/shield") && Ref(SHIELD) == 1, $"④ a token cancelled after the load completed changes nothing (held={scH3.Contains("Icons/shield")} ref={Ref(SHIELD)})");
+            scH3.Dispose(); Tick();
+            Check(Ref(SHIELD) == 0 && ContentService.LiveAssetCount == live0H, "⑤ released; nothing left");
         }
 
         Console.WriteLine("10c) builder-rule catalog: path name = main texture, [sub] = sprite");

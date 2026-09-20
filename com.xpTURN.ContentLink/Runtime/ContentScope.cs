@@ -27,7 +27,7 @@ namespace xpTURN.ContentLink
     /// </summary>
     public sealed class ContentScope : IDisposable
     {
-        /// <summary>Warn once when a scope holds more than this many assets (0 = off). Over-retention detector.</summary>
+        /// <summary>Warn once when a scope holds more than this many entries (0 = off). Over-retention detector. Counts entries, so one whose lease a forced unregistration killed counts until it is dropped.</summary>
         public static int DefaultWarnThreshold = 0;
 
         // ───────────── tree ─────────────
@@ -44,7 +44,8 @@ namespace xpTURN.ContentLink
             ulong key = scene.handle.GetRawData();
             if (!s_Scenes.TryGetValue(key, out var s) || s.IsDisposed)
             {
-                s = new ContentScope(string.IsNullOrEmpty(scene.name) ? $"Scene#{scene.handle}" : scene.name, ContentScopeKind.Scene, Root);
+                var name = scene.name;   // a native getter: every read is a new string, so read it once
+                s = new ContentScope(string.IsNullOrEmpty(name) ? $"Scene#{scene.handle}" : name, ContentScopeKind.Scene, Root);
                 s.m_SceneHandle = key;
                 s_Scenes[key] = s;
             }
@@ -90,6 +91,7 @@ namespace xpTURN.ContentLink
             }
         }
         public int SceneCount => m_Scenes?.Count ?? 0;
+        /// <summary>The most entries the scope has held at once — live or not, unlike <see cref="Count"/>.</summary>
         public int PeakCount { get; private set; }
         /// <summary>The children in the order the scope holds them — not creation order: removing a child moves the last sibling into its slot.</summary>
         public IReadOnlyList<ContentScope> Children => m_Children;
@@ -144,11 +146,7 @@ namespace xpTURN.ContentLink
             ThrowIfDisposed();
             if (TryGetKeyed<T>(key, out var cached)) return cached;
 
-            AssetHandle<Object> h;
-            var linked = Link(ct, out var token);
-            try { h = await ContentService.AcquireAsync<Object>(key, token); }
-            finally { linked?.Dispose(); }
-
+            var h = await ContentService.AcquireAsync<Object>(key, ct, DisposedToken);
             return Keep<T>(key, h);
         }
 
@@ -169,10 +167,7 @@ namespace xpTURN.ContentLink
         public async Awaitable<GameObject> InstantiateAsync(string key, Transform parent = null, bool worldPositionStays = false, CancellationToken ct = default)
         {
             ThrowIfDisposed();
-            AssetHandle<GameObject> h;
-            var linked = Link(ct, out var token);
-            try { h = await ContentService.AcquireAsync<GameObject>(key, token); }
-            finally { linked?.Dispose(); }
+            var h = await ContentService.AcquireAsync<GameObject>(key, ct, DisposedToken);
             if (!h.IsValid) return null;
 
             GameObject go;
@@ -207,10 +202,7 @@ namespace xpTURN.ContentLink
         public async Awaitable<Scene> LoadSceneAsync(string name, CancellationToken ct = default)
         {
             ThrowIfDisposed();
-            Scene scene;
-            var linked = Link(ct, out var token);
-            try { scene = await ContentService.LoadSceneAsync(name, new LoadSceneParameters(LoadSceneMode.Additive), token); }
-            finally { linked?.Dispose(); }
+            var scene = await ContentService.LoadSceneAsync(name, new LoadSceneParameters(LoadSceneMode.Additive), ct, DisposedToken);
             if (!scene.IsValid()) return scene;
             if (IsDisposed) { _ = ContentService.TryUnloadScene(scene); return default; }
             (m_Scenes ??= new List<Scene>()).Add(scene);
@@ -367,7 +359,9 @@ namespace xpTURN.ContentLink
             }
             m_Children.Clear();   // whatever is still listed is disposed (a duplicate, or a child whose disposal threw), and so is this scope
 
-            int released = Count;
+            bool orphaned = Kind == ContentScopeKind.Explicit && initiator != this &&
+                            (initiator.Kind == ContentScopeKind.Scene || initiator.Kind == ContentScopeKind.Root);
+            int released = orphaned ? Count : 0;   // the walk only when the leak warning below will print it
             foreach (var h in m_Keyed.Values) if (h.IsValid) h.Dispose();
             foreach (var packed in m_Attached)
             {
@@ -386,8 +380,7 @@ namespace xpTURN.ContentLink
 
             // Leak signal: an explicit scope reclaimed by the safety net (scene unload / quit).
             // Ending with an explicitly disposed parent or a destroyed owner GameObject is a normal lifetime.
-            if (Kind == ContentScopeKind.Explicit && initiator != this &&
-                (initiator.Kind == ContentScopeKind.Scene || initiator.Kind == ContentScopeKind.Root))
+            if (orphaned)
                 Debug.LogWarning($"[ContentLink] scope '{Path}' was not disposed; released {released} asset(s) when '{initiator.Name}' ended.\n{m_CreatedAt}");
 
             Parent?.RemoveChild(this);
@@ -436,12 +429,12 @@ namespace xpTURN.ContentLink
         void OnKeysChanged()
         {
             OnCountChanged();
-            if (m_OwnerComponent != null) m_OwnerComponent.SyncKeys(m_Keyed.Keys);
+            ResyncKeys();
         }
 
         void OnCountChanged()
         {
-            int c = Count;
+            int c = m_Keyed.Count + m_Attached.Count;   // O(1): the entries, live or not — an upper bound on Count that a forced unregistration inflates until its dead entries are dropped
             if (c > PeakCount) PeakCount = c;
             if (WarnThreshold > 0 && c > WarnThreshold && !m_Warned)
             {
@@ -452,14 +445,7 @@ namespace xpTURN.ContentLink
         }
 
         internal void BindOwnerComponent(ContentScopeOwner owner) => m_OwnerComponent = owner;
-
-        CancellationTokenSource Link(CancellationToken ct, out CancellationToken token)
-        {
-            if (!ct.CanBeCanceled) { token = DisposedToken; return null; }
-            var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, DisposedToken);
-            token = cts.Token;
-            return cts;
-        }
+        internal void ResyncKeys() { if (m_OwnerComponent != null) m_OwnerComponent.SyncKeys(m_Keyed.Keys); }
 
         void ThrowIfDisposed()
         {

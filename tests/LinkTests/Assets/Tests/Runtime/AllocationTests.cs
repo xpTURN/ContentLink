@@ -25,6 +25,10 @@ namespace xpTURN.ContentLink.Tests
         readonly string m_Missing = "Icons/nope";
         readonly ContentRef<Texture2D> m_TextureRef = new ContentRef<Texture2D>("2db49f3267d3454694e93fa3d8354b29");   // TestContent/A/Icons/single.png
         readonly ContentRef<Texture2D> m_MissingRef = new ContentRef<Texture2D>("00000000000000000000000000000000");
+        readonly string[] m_ThreeKeys = { "Icons/single", "Audio/tone", "Materials/Plain" };   // TestContent/A
+        readonly string m_FreshA = "Audio/tone";        // not loaded by Warm: a first AcquireAsync opens the slot and starts the engine load
+        readonly string m_FreshB = "Materials/Plain";
+        readonly System.Threading.CancellationTokenSource m_Cts = new System.Threading.CancellationTokenSource();
 
         int m_DirA = -1;
         ContentScope m_Scope;
@@ -163,6 +167,132 @@ namespace xpTURN.ContentLink.Tests
             int withToken = AllocBlocks(viaToken);
             Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per ContentLink.LoadAsync on a live slot — default token={withDefault} cancellable token={withToken}");
             Assert.That(holder.icon.IsValid, Is.True);
+        }
+
+        [Test, Timeout(10000)]
+        public void G3_GameObjectScopeReleaseThenLoad_DoesNotAllocate()
+        {
+            // A GameObject scope mirrors its keys into the owner's serialized array (what clones inherit). The array is
+            // written in place and never shrinks, so a Release followed by a Load again — a pooled cell swapping its
+            // sprite — allocates nothing. m_Scope holds the same key, so the slot stays live in between.
+            var scope = m_Owner.Scope();
+            Assert.That(scope.Load<Texture2D>(m_Texture), Is.Not.Null);
+            AssertNoAlloc(() => { scope.Release(m_Texture); scope.Load<Texture2D>(m_Texture); });
+            Assert.That(scope.Contains(m_Texture), Is.True);
+        }
+
+        [Test, Timeout(10000)]
+        public void G3b_CloneOfAKeyedOwner_TakesEveryKey_Recorded()
+        {
+            // Instantiate copies the owner's key array and the clone's Awake takes its own leases, syncing the array once
+            // after the loop — never into the array it is walking. Asserts the clone holds every key; records the
+            // GC.Alloc blocks of the Instantiate (the engine's clone included), never fails on the count.
+            var original = new GameObject("G3b");
+            var scope = original.Scope();
+            foreach (var key in m_ThreeKeys) Assert.That(scope.Load<Object>(key), Is.Not.Null);
+            var first = Object.Instantiate(original);   // JIT and literals first
+            GameObject clone = null;
+            int blocks = AllocBlocks(() => clone = Object.Instantiate(original));
+            Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per Instantiate of an owner with {m_ThreeKeys.Length} keys — {blocks} (engine clone included)");
+            foreach (var key in m_ThreeKeys) Assert.That(clone.Scope().Contains(key), Is.True, key);
+            Assert.That(clone.Scope().Count, Is.EqualTo(m_ThreeKeys.Length));
+            Object.Destroy(clone); Object.Destroy(first); Object.Destroy(original);
+        }
+
+        static bool HasScope(GameObject go)   // the owner's scope, without creating one (the Scope getter would)
+            => typeof(ContentScopeOwner).GetField("m_Scope", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(go.GetComponent<ContentScopeOwner>()) != null;
+
+        [Test, Timeout(10000)]
+        public void G3c_CloneOfAnEmptiedOwner_MakesNoScope_AndDoesNotAllocate()
+        {
+            // The owner's key array never shrinks, so an owner that released every key still carries an array, which a
+            // clone receives as empty strings. The clone's Awake sees no key at the front and returns before making a
+            // scope: no scope, no child in the scene scope, no allocation (it was a scope and its collections — six
+            // blocks — per clone). Clones of an inactive original come out inactive, so the activation measured is the
+            // clone's own first Awake; AssertNoAlloc cannot be used here because Awake runs only once per object.
+            var original = new GameObject("G3c");
+            var scope = original.Scope();
+            foreach (var key in m_ThreeKeys) Assert.That(scope.Load<Object>(key), Is.Not.Null);
+            original.SetActive(false);
+            var keyed = Object.Instantiate(original);
+            keyed.SetActive(true);
+            Assert.That(keyed.Scope().Count, Is.EqualTo(m_ThreeKeys.Length), "control: a clone activated this way takes the keys in Awake");
+            foreach (var key in m_ThreeKeys) Assert.That(scope.Release(key), Is.True);
+            var sceneScope = ContentScope.ForScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+            int children = sceneScope.Children.Count;
+            var first = Object.Instantiate(original);
+            first.SetActive(true);   // JIT first
+            var clone = Object.Instantiate(original);
+            Assert.That(() => clone.SetActive(true), Is.Not.AllocatingGCMemory());
+            Assert.That(clone.activeSelf, Is.True);
+            Assert.That(HasScope(first) || HasScope(clone), Is.False, "the clone of an emptied owner makes no scope in Awake");
+            Assert.That(sceneScope.Children.Count, Is.EqualTo(children), "the scene scope gains no child");
+            Object.Destroy(clone); Object.Destroy(first); Object.Destroy(keyed); Object.Destroy(original);
+        }
+
+        [Test, Timeout(10000)]
+        public void G4_AcquireById_OnALiveSlot_DoesNotAllocate()
+        {
+            // The id path looks its slot up by the id itself; the "#…" key text is made once when the slot opens.
+            Assert.That(ContentService.TryGetLoadableObjectId(m_Texture, out var id), Is.True);
+            var keep = ContentService.Acquire<Texture2D>(id);   // opens the id slot and keeps it live
+            Assert.That(keep.IsValid, Is.True);
+            try { AssertNoAlloc(() => { var h = ContentService.Acquire<Texture2D>(id); h.Dispose(); }); }
+            finally { keep.Dispose(); }
+        }
+
+        [Test, Timeout(10000)]
+        public void G4b_AcquireById_OnALiveSlot_Recorded()
+        {
+            Assert.That(ContentService.TryGetLoadableObjectId(m_Texture, out var id), Is.True);
+            var keep = ContentService.Acquire<Texture2D>(id);
+            System.Action acquire = () => { var h = ContentService.Acquire<Texture2D>(id); h.Dispose(); };
+            acquire();
+            int blocks = AllocBlocks(acquire);
+            keep.Dispose();
+            Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per Acquire by id on a live slot — {blocks}");
+        }
+
+        [Test, Timeout(10000)]
+        public async System.Threading.Tasks.Task G5_SecondWaiterOnALoadingSlot_Recorded()
+        {
+            // The first AcquireAsync opens the slot and starts the engine load; a second one in the same frame joins as a
+            // waiter while the slot is still Loading. Records that waiter's GC.Alloc blocks with a default token and with a
+            // cancellable one (what a scope passes); never fails on the count.
+            var firstA = ContentService.AcquireAsync<Object>(m_FreshA);
+            bool loadingA = !firstA.GetAwaiter().IsCompleted;
+            Awaitable<AssetHandle<Object>> secondA = null;
+            int blocksA = AllocBlocks(() => secondA = ContentService.AcquireAsync<Object>(m_FreshA));
+            var token = m_Cts.Token;
+            var firstB = ContentService.AcquireAsync<Object>(m_FreshB, token);
+            bool loadingB = !firstB.GetAwaiter().IsCompleted;
+            Awaitable<AssetHandle<Object>> secondB = null;
+            int blocksB = AllocBlocks(() => secondB = ContentService.AcquireAsync<Object>(m_FreshB, token));
+            var a1 = await firstA; var a2 = await secondA; var b1 = await firstB; var b2 = await secondB;
+            Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per AcquireAsync joining a Loading slot — default token={blocksA} (was loading={loadingA}) cancellable token={blocksB} (was loading={loadingB})");
+            Assert.That(a1.IsValid && a2.IsValid && b1.IsValid && b2.IsValid, Is.True);
+            a1.Dispose(); a2.Dispose(); b1.Dispose(); b2.Dispose();
+        }
+
+        [Test, Timeout(10000)]
+        public async System.Threading.Tasks.Task G6_FirstScopeOfANewScene_AndOfAGameObject_Recorded()
+        {
+            // The first ForScene of a scene creates its scope (name read from the engine); the first go.Scope() adds the
+            // owner component and creates the GameObject scope. Records both (engine work included); never fails on the count.
+            var warmScene = UnityEngine.SceneManagement.SceneManager.CreateScene("G6w");   // JIT and literals first
+            ContentScope.ForScene(warmScene); var warm = new GameObject("G6w"); warm.Scope();
+            var scene = UnityEngine.SceneManagement.SceneManager.CreateScene("G6");
+            ContentScope sceneScope = null;
+            int sceneBlocks = AllocBlocks(() => sceneScope = ContentScope.ForScene(scene));
+            var go = new GameObject("G6");
+            ContentScope goScope = null;
+            int goBlocks = AllocBlocks(() => goScope = go.Scope());
+            Debug.Log($"[ContentLink.Tests] GC.Alloc blocks — first ForScene of a new scene={sceneBlocks} · first go.Scope()={goBlocks} (engine AddComponent included)");
+            Assert.That(sceneScope.Kind == ContentScopeKind.Scene && goScope.Kind == ContentScopeKind.GameObject, Is.True);
+            Object.Destroy(go); Object.Destroy(warm);   // the warm-up object lives in the active scene, not in warmScene: nothing else would remove it
+            await UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(scene);
+            await UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(warmScene);
+            Assert.That(ContentScope.DumpTree(), Does.Not.Contain("G6w"), "the warm-up scene and object leave no scope behind");
         }
     }
 }

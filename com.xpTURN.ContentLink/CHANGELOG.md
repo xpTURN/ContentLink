@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.1] - 2026-09-20
+
+Allocation-free hot paths in scopes — key changes on a GameObject scope, loads by id, waits on a load in flight,
+loads with a caller's token, scene-scope creation — and linear scope filling. No API changes; `PeakCount` and the
+`WarnThreshold` warning count entries (below).
+
+### Loading and scopes
+- Changed: a GameObject scope mirrors its keys into the owner's serialized array (what clones inherit) in place, and the
+  array never shrinks, so a `Release(key)` followed by a `Load` — a pooled cell swapping its sprite — allocates nothing
+  (it was three allocations per key change). A clone's `Awake` takes its leases first and syncs the array once
+  afterwards, never into the array it is walking.
+- Changed: a load by `LoadableObjectId` (`Acquire`, `AcquireAsync`) finds its slot by the id itself; the `#…` key
+  text is made once when the slot opens. A hit allocated nine blocks per call before (the id's `ToString`), now none.
+- Changed: a load that waits for an engine load already in flight registers its cancellation with a static delegate
+  instead of a closure (two allocations fewer per waiter), and a scene scope reads the scene's name once instead of
+  twice when it is created (one string fewer).
+- Changed: adding to a scope no longer walks every entry it holds, so filling a scope with n assets is linear instead
+  of quadratic (5000 assets: 88 ms → 4 ms on the test engine). `PeakCount` and the `WarnThreshold` warning now count
+  the scope's entries — the same as its live count except after a forced unregistration, whose dead entries count
+  until they are dropped. `Count` is unchanged and still counts live references only.
+- Changed: a scope load given a caller's cancellation token no longer links it to the scope's own token through a
+  `CancellationTokenSource` per load; both tokens are registered directly. Such a load allocates the same as one with
+  no token (it was three allocations more). The `OperationCanceledException` now carries the token that cancelled —
+  the caller's or the scope's — instead of a linked one.
+
 ## [0.2.0] - 2026-09-18
 
 GUID references that survive moves and renames (`ContentRef<T>`, `ContentSceneRef`), and links that keep a sprite's
