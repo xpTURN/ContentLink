@@ -5722,6 +5722,11 @@ static class Test
                 Fresh45();
                 var b = Build45(); var folder = System.IO.Path.Combine(root45, "n4" + label[2]); Write45(folder, b);
                 var spelled = spell(folder);
+                if (!System.IO.Directory.Exists(spelled))   // a file system that tells case apart (Linux) holds no folder by the other spelling: nothing to check
+                {
+                    Check(true, $"F-3 {label}: not run — the file system tells case apart");
+                    continue;
+                }
                 MountPath48(folder); MountPath48(spelled);
                 FakeEngine.MountFrames = 3;
                 var file0 = System.IO.Path.Combine(folder, b.index.Archives[0].File);
