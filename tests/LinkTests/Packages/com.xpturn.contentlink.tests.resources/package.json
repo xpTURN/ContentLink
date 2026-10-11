@@ -1,0 +1,7 @@
+{
+  "name": "com.xpturn.contentlink.tests.resources",
+  "version": "0.0.1",
+  "displayName": "ContentLink Tests Resources",
+  "description": "A Resources folder in a package, for the ContentLink tests (IMP014 T20).",
+  "unity": "6000.6"
+}

@@ -9,7 +9,7 @@ using xpTURN.ContentLink.Editor;
 namespace xpTURN.ContentLink.Tests.Editor
 {
     /// <summary>
-    /// Builds the test content directories (TestContent/A, B, C, D) into StreamingAssets.
+    /// Builds the test content directories (TestContent/A, B, C, D, E, F, G, G.ko) into StreamingAssets.
     ///
     /// The build is an EditMode step (menu or <see cref="TestContentBuildTests"/>) rather than part of every PlayMode run:
     /// it takes seconds, triggers a player script compilation, and the output can stay in place between runs.
@@ -22,7 +22,13 @@ namespace xpTURN.ContentLink.Tests.Editor
         public const string GeneratedFolder = "Assets/TestContent/Generated";
         public const string OutputFolder = "Assets/StreamingAssets/ContentLinkTests";
         public const string BuildMenu = "Window/ContentLink/Tests/Build Test Content";
-        public static readonly string[] Directories = { "A", "B", "C", "D" };   // C = scenes · D = prefabs with dependencies outside the source root
+        public static readonly string[] Directories = { "A", "B", "C", "D", "E", "F", "G", "G.ko", "H", "I", "I.Sub" };   // C = scenes · D = prefabs with dependencies outside the source root · E = names with the extension · F = a sprite atlas (one texture outside the root) · G.ko = a locale overlay of G (sibling root, the same names) · H = Hangul folders and files, composed on disk as git checks them out · I.Sub = I's folder Sub as a root of its own: I and I.Sub carry its file under two names
+
+        /// <summary>The source root a directory is built from: TestContent/&lt;dir&gt;, but I.Sub's lies inside I's.</summary>
+        public static string SourceRootOf(string dir) => dir == "I.Sub" ? $"{SourceRootBase}/I/Sub" : $"{SourceRootBase}/{dir}";
+
+        /// <summary>The name style a directory is built with: E keeps the extension, the others do not.</summary>
+        public static ContentNameStyle NameStyleOf(string dir) => dir == "E" ? ContentNameStyle.PathWithExtension : ContentNameStyle.PathWithoutExtension;
 
         public static string OutputPath(string dir) => $"{OutputFolder}/{dir}";
         public static bool IsBuilt(string dir) => Directory.Exists(OutputPath(dir));
@@ -46,20 +52,18 @@ namespace xpTURN.ContentLink.Tests.Editor
             EnsureFolder("Assets", "StreamingAssets");
             EnsureFolder("Assets/StreamingAssets", "ContentLinkTests");
 
-            string sourceRoot = ContentDirectoryBuilder.SourceRoot;
-            string catalogPath = ContentDirectoryBuilder.CatalogPath;
-            string outputPath = ContentDirectoryBuilder.OutputPath;
             try
             {
                 foreach (var dir in Directories)
                 {
-                    ContentDirectoryBuilder.SourceRoot = $"{SourceRootBase}/{dir}";
+                    ContentDirectoryBuilder.SourceRoot = SourceRootOf(dir);
                     ContentDirectoryBuilder.CatalogPath = $"{GeneratedFolder}/Catalog{dir}.asset";
                     ContentDirectoryBuilder.OutputPath = OutputPath(dir);
+                    ContentDirectoryBuilder.NameStyle = NameStyleOf(dir);   // every directory says its style: none inherits the one before it
 
                     var report = ContentDirectoryBuilder.Build();
                     if (report == null)
-                        throw new InvalidOperationException($"[ContentLink.Tests] catalog update failed for '{dir}' (see the errors above).");
+                        throw new InvalidOperationException($"[ContentLink.Tests] the build of '{dir}' was refused (see the errors above).");   // before the engine, or after it for what it carries
                     if (report.summary.result != BuildResult.Succeeded)
                         throw new InvalidOperationException($"[ContentLink.Tests] content build failed for '{dir}': {report.summary.result}, {report.summary.totalErrors} error(s).");
                     Debug.Log($"[ContentLink.Tests] built '{dir}' -> {ContentDirectoryBuilder.OutputPath} ({report.summary.result}, target {target})");
@@ -67,9 +71,7 @@ namespace xpTURN.ContentLink.Tests.Editor
             }
             finally
             {
-                ContentDirectoryBuilder.SourceRoot = sourceRoot;
-                ContentDirectoryBuilder.CatalogPath = catalogPath;
-                ContentDirectoryBuilder.OutputPath = outputPath;
+                ContentDirectoryBuilder.ClearOverrides();   // back to the active profile: writing back the values read before would leave them set as overrides
             }
             AssetDatabase.Refresh();
         }

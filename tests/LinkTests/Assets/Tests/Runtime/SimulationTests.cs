@@ -321,10 +321,100 @@ namespace xpTURN.ContentLink.Tests
             }
         }
 
+        static int Instances(string path)
+        {
+            int n = 0;
+            for (int i = 0; i < SceneManager.sceneCount; ++i) { var s = SceneManager.GetSceneAt(i); if (s.path == path && s.isLoaded) ++n; }
+            return n;
+        }
+
+        /// <summary>Tracked scenes of this file — a global count moves with other suites' scenes that are still unloading.</summary>
+        static int Tracked(string path)
+        {
+            var snap = new System.Collections.Generic.List<ContentService.SceneInfo>();
+            ContentService.SnapshotScenes(snap);
+            int n = 0;
+            foreach (var info in snap) if (info.Scene.path == path) ++n;
+            return n;
+        }
+
+        static async Task UnloadInstances(string path)
+        {
+            var ops = new System.Collections.Generic.List<AsyncOperation>();
+            for (int i = 0; i < SceneManager.sceneCount; ++i) { var s = SceneManager.GetSceneAt(i); if (s.path == path && s.isLoaded) { var op = SceneManager.UnloadSceneAsync(s); if (op != null) ops.Add(op); } }
+            foreach (var op in ops) while (!op.isDone) await TestUtil.NextFrame();
+        }
+
+        /// <summary>T50: loads of one simulated scene name at once each get their own instance, as built scenes do — directly and through scopes.</summary>
+        [Test, Timeout(30000)]
+        public async Task S12_LoadsOfOneSceneNameAtOnce_EachGetItsOwnInstance()
+        {
+            try
+            {
+                var first = ContentService.LoadSceneAsync(k_SceneName, LoadSceneMode.Additive);
+                var second = ContentService.LoadSceneAsync(k_SceneName, LoadSceneMode.Additive);
+                var a = await first; var b = await second;
+                Assert.That(a.IsValid() && b.IsValid() && a.handle != b.handle, Is.True, "two loads at once must give two instances");
+                Assert.That(Tracked(k_ScenePath), Is.EqualTo(2), "both instances are tracked");
+                Assert.That(Instances(k_ScenePath), Is.EqualTo(2));
+                await UnloadInstances(k_ScenePath);
+
+                var loads = new[] { ContentService.LoadSceneAsync(k_SceneName), ContentService.LoadSceneAsync(k_SceneName), ContentService.LoadSceneAsync(k_SceneName) };
+                var seen = new System.Collections.Generic.HashSet<int>();
+                foreach (var l in loads) { var r = await l; Assert.That(r.IsValid(), Is.True, "one of three loads failed"); seen.Add(r.handle.GetHashCode()); }
+                Assert.That(seen.Count, Is.EqualTo(3));
+                await UnloadInstances(k_ScenePath);
+
+                var scopeA = ContentScope.Root.CreateChild("S12A"); var scopeB = ContentScope.Root.CreateChild("S12B");
+                var la = scopeA.LoadSceneAsync(k_SceneName); var lb = scopeB.LoadSceneAsync(k_SceneName);
+                await la; await lb;
+                Assert.That(scopeA.SceneCount + scopeB.SceneCount, Is.EqualTo(2), "each scope owns its instance");
+                scopeA.Dispose(); scopeB.Dispose();
+                Assert.That(await TestUtil.WaitUntil(() => Instances(k_ScenePath) == 0, 30), Is.True, "disposing both scopes must leave no instance");
+            }
+            finally { await UnloadInstances(k_ScenePath); }
+        }
+
+        /// <summary>T51: a cancelled load and a retry — the retry gets its instance, the cancelled one is unloaded; the same frame and the next.</summary>
+        [Test, Timeout(30000)]
+        public async Task S13_ACancelledLoadAndARetry_TheRetryGetsItsInstance()
+        {
+            try
+            {
+                foreach (bool nextFrame in new[] { false, true })
+                {
+                    var cts = new System.Threading.CancellationTokenSource();
+                    var cancelled = ContentService.LoadSceneAsync(k_SceneName, LoadSceneMode.Additive, cts.Token);
+                    cts.Cancel();
+                    bool oce = false;
+                    try { await cancelled; } catch (System.OperationCanceledException) { oce = true; }
+                    Assert.That(oce, Is.True, "the cancelled load must throw OperationCanceledException");
+                    if (nextFrame) await TestUtil.NextFrame();
+                    var retry = await ContentService.LoadSceneAsync(k_SceneName, LoadSceneMode.Additive);
+                    Assert.That(retry.IsValid() && retry.isLoaded, Is.True, $"the retry failed (next frame={nextFrame})");
+                    Assert.That(await TestUtil.WaitUntil(() => Instances(k_ScenePath) == 1 && Tracked(k_ScenePath) == 1, 30), Is.True,
+                        $"the cancelled instance must be unloaded — tracked until its unload ends, as a built one — and the retry's kept (open={Instances(k_ScenePath)} tracked={Tracked(k_ScenePath)})");
+                    await UnloadInstances(k_ScenePath);
+                }
+            }
+            finally { await UnloadInstances(k_ScenePath); }
+        }
+
+        /// <summary>T52: a scene's name asked through the asset API is refused with the player's hint.</summary>
+        [Test, Timeout(30000)]
+        public async Task S14_ASceneNameThroughTheAssetApi_IsRefusedAsInAPlayer()
+        {
+            Assert.That(ContentService.ContainsScene(k_SceneName), Is.True, "the scene itself is known");
+            Assert.That(ContentService.Contains(k_SceneName), Is.False, "a scene's name is no asset's");
+            LogAssert.Expect(LogType.Error, $"[ContentLink] '{k_SceneName}' is a scene — use LoadSceneAsync.");
+            var handle = await ContentService.AcquireAsync<Object>(k_SceneName);
+            Assert.That(handle.IsValid, Is.False, "the asset API loaded the scene's SceneAsset");
+        }
+
         [Test, Timeout(30000)]
         public async Task S6_SimulationOff_SceneKeepsTheShippingBehaviour()
         {
-            TestUtil.SetSimulation(false);   // parks every seam, scenes included
+            TestUtil.SetSimulation(false);   // parks every simulation seam, scenes included
             try
             {
                 Assert.That(ContentService.ContainsScene(k_SceneName), Is.False);

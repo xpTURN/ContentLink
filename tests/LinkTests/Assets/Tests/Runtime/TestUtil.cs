@@ -47,6 +47,7 @@ namespace xpTURN.ContentLink.Tests
         static Func<string, LoadSceneParameters, AsyncOperation> s_SceneStart;
         static Func<string, Scene> s_SceneResult;
         static Func<string, string, bool, string> s_Ref;                      // ContentRef: GUID → name
+        static Action<System.Collections.Generic.List<string>> s_SceneLoads;   // the simulated scene loads in flight (UnregisterDirectory)
 
         /// <summary>
         /// Turns the editor simulation off or on for a test. Runtime-only on purpose: this assembly has no
@@ -61,6 +62,7 @@ namespace xpTURN.ContentLink.Tests
             if (ContentService.SceneFallback != null) s_SceneStart = ContentService.SceneFallback;
             if (ContentService.SceneResultFallback != null) s_SceneResult = ContentService.SceneResultFallback;
             if (ContentService.RefFallback != null) s_Ref = ContentService.RefFallback;
+            if (ContentService.SceneLoadsInFlightFallback != null) s_SceneLoads = ContentService.SceneLoadsInFlightFallback;
 
             ContentService.NameFallback = on ? s_Name : null;
             ContentService.RefFallback = on ? s_Ref : null;
@@ -68,6 +70,7 @@ namespace xpTURN.ContentLink.Tests
             ContentService.SceneContainsFallback = on ? s_SceneContains : null;
             ContentService.SceneFallback = on ? s_SceneStart : null;
             ContentService.SceneResultFallback = on ? s_SceneResult : null;
+            ContentService.SceneLoadsInFlightFallback = on ? s_SceneLoads : null;
         }
 
         /// <summary>Puts every static ContentLink setting back to its default.</summary>
@@ -76,6 +79,7 @@ namespace xpTURN.ContentLink.Tests
             ContentService.AutoCollect = true;
             ContentService.ReleaseDelayFrames = 0;
             ContentService.CaptureStackTrace = false;
+            ContentService.UnloadResourcesOnRelease = true;
             ContentScope.DefaultWarnThreshold = 0;
             SetSimulation(false);
         }

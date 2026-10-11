@@ -174,5 +174,22 @@ namespace xpTURN.ContentLink.Tests.Editor
             foreach (var e in scenes)
                 Assert.That(e.guid, Is.EqualTo(AssetDatabase.AssetPathToGUID($"Assets/TestContent/C/{e.name}.unity")), $"scene '{e.name}' guid");
         }
+
+        // ───────────── name style ─────────────
+
+        /// <summary>T27: the folder B3 refuses — two files of one stem — gives two names with the extension, and the catalog records the style.</summary>
+        [Test]
+        public void B8_WithTheExtension_TwoFilesOfOneStemAreTwoNames_AndTheCatalogRecordsTheStyle()
+        {
+            ContentDirectoryBuilder.NameStyle = ContentNameStyle.PathWithExtension;
+            try
+            {
+                var catalog = Update("Assets/TestContent/Dup");
+                Assert.That(Resolve(Find(catalog, "x.png")), Is.InstanceOf<Texture2D>());
+                Assert.That(Resolve(Find(catalog, "x.mat")), Is.InstanceOf<Material>());
+                Assert.That(catalog.NameStyle, Is.EqualTo(ContentNameStyle.PathWithExtension));
+            }
+            finally { ContentDirectoryBuilder.ClearOverrides(); }   // the style too; the tear-down puts the paths back
+        }
     }
 }

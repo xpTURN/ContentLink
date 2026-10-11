@@ -12,13 +12,17 @@ namespace xpTURN.ContentLink.Samples
     public sealed class ShowcaseBootstrap : MonoBehaviour
     {
         [SerializeField] string m_Directory = "MainContent";   // the Main profile's output folder, under StreamingAssets
-        [SerializeField] string[] m_Showcases = { "Prefabs/LinkShowcase", "Prefabs/RefShowcase" };
+        [SerializeField] string[] m_Showcases = { "Prefabs/LinkShowcase.prefab", "Prefabs/RefShowcase.prefab" };
         [SerializeField] float m_Spacing = 9f;
 
         async void Start()
         {
-            int dir = await ContentService.RegisterPackedDirectoryAsync(Path.Combine(Application.streamingAssetsPath, m_Directory));
-            if (dir < 0) return;   // ContentService logged why
+            if (!ContentService.Contains(m_Showcases[0]))   // registered once: a reloaded scene, or a game that registered the folder first, finds the names served
+            {
+                int dir = await ContentService.RegisterPackedDirectoryAsync(Path.Combine(Application.streamingAssetsPath, m_Directory));
+                if (dir < 0) return;   // ContentService logged why
+                if (this == null) return;   // destroyed while the archives mounted: the registration is not tied to this object's scope, so nothing cancels it
+            }
 
             for (int i = 0; i < m_Showcases.Length; ++i)
             {

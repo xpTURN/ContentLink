@@ -4,113 +4,165 @@
 
 [English](README.md) | [한국어](README.ko-KR.md) | [日本語](README.ja-JP.md) | **简体中文**
 
-ContentLink 从 Unity 6.6 内置的 **内容目录** 中 **按名称** 加载游戏内容 —— 精灵、预制体、场景、音频 ——
-并接管了所有加载系统都留给你的那一件事：决定加载后的资源何时可以释放。
+ContentLink 是面向 Unity 6.6 的一整套内容工作流，构建在引擎的 **内容目录** 之上。内容目录是播放器在运行时注册并从中
+加载的、已构建资源的文件夹。ContentLink 把一个资源从工程文件夹一路带到屏幕上。你 **按名称** 指代它、构建它、把它随播放器
+发布或从 CDN 分发，并从脚本或 Inspector 字段加载它。当加载它的那一方消失时，它会自行释放。
 
-**问题所在。** 用 `Resources`、AssetBundle 或 Addressables，每一次加载都必须在每个脚本里手工配上一次释放。
-漏掉一次，内存就一直涨到应用退出；释放得太早，贴图就不见了。找出元凶的工具都是事后诸葛，靠在 Profiler 里猜。
+```csharp
+public class ItemView : MonoBehaviour
+{
+    public Image image;
 
-**ContentLink 做什么。** 每一次加载都属于一个 **作用域** —— 发出请求的 GameObject、它所在的场景、整个应用，
-或者你为某个关卡、某个弹窗自己创建的一个。作用域结束时（对象被销毁、场景被卸载、应用退出、你把它 Dispose 掉），
-它持有的一切都会被释放。加载完就完事了：忘掉的一次释放只多占一点峰值内存，绝不会影响正确性。同样的思路也覆盖
-序列化引用（带 Inspector 绘制器的 `ContentLinkSprite icon;`）、实例化的预制体和内容场景。
+    async void Start()
+    {
+        // Assets/Content/Icons/sword.png —— 按名称加载，在这个 GameObject 被销毁时释放
+        image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
+    }
+}
+```
 
-**盒子里还有什么。** 一条为内容目录本身服务的构建管线 —— 保存在 `ProjectSettings` 中的配置档、一个构建窗口、
-面向下载管线的确定性按大小分割的归档、后处理钩子和命令行 —— 以及一种编辑器模式：Play Mode 直接从工程加载，
-工作时什么都不用构建。唯一的依赖是 Unity 6000.6。
-
-> **加载它，然后忘掉释放。** 一个资源恰好活得和它的所有者一样久 —— GameObject、场景、应用 ——
+> **按名称指代它，从编辑器到 CDN —— 然后忘掉释放。** 一个资源恰好活得和它的所有者一样久 —— GameObject、场景、应用 ——
 > 而 `Release()` 永远只是一种优化，从不是必须。
 
 ---
 
 ## 目录
 
-1. [你得到什么](#你得到什么)
-2. [要求与安装](#要求与安装)
-3. [五个概念](#五个概念)
-4. [快速开始](#快速开始)
-5. [名称](#名称)
-6. [构建内容](#构建内容)
-7. [加载内容](#加载内容)
-8. [何时调用 Release](#何时调用-release)
-9. [释放是如何发生的](#释放是如何发生的)
-10. [编辑器模拟](#编辑器模拟)
-11. [诊断](#诊断)
-12. [从 AssetLink 或 Addressables 迁移](#从-assetlink-或-addressables-迁移)
-13. [注意事项与限制](#注意事项与限制)
-14. [仓库结构与测试](#仓库结构与测试)
+1. [你能得到什么](#你能得到什么)
+2. [安装](#安装)
+3. [整体结构](#整体结构)
+4. [教程：第一个内容目录](#教程第一个内容目录)
+5. [设置目录表](#设置目录表)
+6. [构建](#构建)
+7. [加载](#加载)
+8. [释放](#释放)
+9. [从 CDN 下载内容](#从-cdn-下载内容)
+10. [本地化内容](#本地化内容)
+11. [编辑器模拟](#编辑器模拟)
+12. [诊断](#诊断)
+13. [从 Addressables、Resources 迁移](#从-addressablesresources-迁移)
+14. [须知](#须知)
 15. [许可证](#许可证)
 
 ---
 
-## 你得到什么
+## 你能得到什么
 
-| 领域 | 功能 |
+| 环节 | ContentLink 提供什么 |
 |---|---|
-| 加载 | `scope.LoadAsync<T>("Icons/sword")` —— 资源属于作用域；没有什么需要释放 |
-| 作用域 | 自动结束的 Root / Scene / GameObject / Explicit 作用域；按作用域去重；带路径的泄漏警告 |
-| 序列化引用 | `ContentLink<T>` / `ContentSceneLink`（按名称）与 `ContentRef<T>` / `ContentSceneRef`（按 GUID —— 移动或重命名文件后依然有效）字段，Inspector 绘制器负责填入并校验 |
-| 实例 | `scope.InstantiateAsync("Prefabs/Cat")` —— 预制体引用随实例及其克隆体一起存在 |
-| 场景 | 由作用域或链接拥有的内容场景；任意模式的非拥有加载；跟踪已打开的场景 |
-| 确定性释放 | 向引擎的释放在每帧的一个点（`Collect()`）发生，绝不在你的代码中途 |
-| 构建配置档 | 源根目录、输出、每个目录多个类别（目录表）、归档模式、压缩、引擎选项 —— 保存在 `ProjectSettings` |
-| 构建窗口 | *Window > ContentLink > Build Window*：可撤销地编辑配置档、查看校验信息、构建一个或全部 |
-| 打包归档 | 构建被确定性地分割成约 `MaxArchiveMB` 大小的归档；运行时把它们重新挂载为一个目录 |
-| 后处理 | `IContentBuildPostProcess` 各步骤在构建后按你排列的顺序运行 |
-| 命令行 | 通过 `-executeMethod` 调用 `ContentBuildCLI.Build`，支持覆盖参数、`profile all`、退出码；`tools/build-content.sh` |
-| 编辑器模拟 | Play Mode 中配置档的目录由工程提供：新增、修改、删除的资源即所见，无需构建 —— 什么都不写入 |
-| 诊断 | 作用域树转储、引用快照、上次构建摘要 |
+| **命名** | 文件夹（`Assets/Content`）下的每个资源都从路径得到名称：`Icons/sword`、`Prefabs/Cat`、`Scenes/Arena` |
+| **选取** | 持有名称（`ContentLinkSprite icon;`）或 GUID（`ContentRef<Sprite>`）的 Inspector 字段 —— 支持拖放，并以颜色显示状态 |
+| **工作** | 在编辑器中，Play Mode 直接从工程加载 —— 工作时无需构建 |
+| **构建** | 管理配置档、目录表、压缩和按大小分割归档的构建窗口，以及供 CI 使用的命令行 |
+| **发布** | 放进播放器（`StreamingAssets`），或从 CDN 下载 —— 只下载变化的归档，支持断点续传和 MD5 校验 |
+| **加载** | 精灵、预制体、音频、任意资源类型、预制体实例和场景 —— 异步或同步，按名称 |
+| **释放** | 自动：每次加载都属于一个 **作用域**（GameObject、场景、应用，或你自己创建的），作用域结束时随之释放 |
+| **检查** | 作用域树转储、存活引用快照，以及点名提示忘记结束的作用域的警告 |
 
-## 要求与安装
+唯一的依赖是 Unity 6000.6。
 
-- Unity **6000.6** 或更高（`Unity.Loading` 内容目录 API）。
-- 没有其他依赖。
+## 安装
 
-**从 git 安装** —— *Window > Package Manager > + > Add package from git URL*：
+*Window > Package Manager > + > Add package from git URL*：
 
 ```
 https://github.com/xpTURN/ContentLink.git?path=/com.xpTURN.ContentLink
 ```
 
-**从本地检出安装** —— 在 `Packages/manifest.json` 中：
+或者，从本地检出添加到 `Packages/manifest.json`：
 
 ```json
 "com.xpturn.contentlink": "file:../../ContentLink/com.xpTURN.ContentLink"
 ```
 
-本仓库中的 `samples/LinkSample` 就是一个正是这样接好线的 Unity 工程。
+本仓库中的 `samples/LinkSample` 是一个按下面教程原样设置的小型 Unity 工程：`Assets/Content` 下的贴图、精灵图集、预制体、
+场景和音频，以及注册并加载它们的引导脚本。
 
-## 五个概念
+## 整体结构
 
-| 概念 | 它是什么 |
+```
+ 在编辑器中                                       运行时（播放器，或 Play Mode）
+ ─────────────────────────────────────────────   ─────────────────────────────────────────────────────
+ Assets/Content/Icons/sword.png                  1. 启动时注册一次文件夹
+        │                                            ContentService.RegisterDirectory(".../MainContent")
+        │  配置档 "Main"                          2. 按名称加载到作用域
+        ▼                                            this.Scope().LoadAsync<Sprite>("Icons/sword[sword]")
+ 目录表  "Icons/sword" → 引擎 id                  3. 作用域结束 → 资源被释放
+        │
+        │  构建
+        ▼
+ StreamingAssets/MainContent/  （内容目录：构建好的资源 + 目录表）
+```
+
+| 术语 | 是什么 |
 |---|---|
-| **内容目录** | 引擎从你的资源构建出的一个文件夹（`BuildPipeline.BuildContentDirectory`）。运行时注册它并从中加载。它是为一个构建目标构建的。 |
-| **目录表** | 构建放进目录里的 `ContentCatalog` 资源：名称及其映射到的引擎 id 的列表。一个目录可以携带多个目录表（每个 *类别* 一个）。 |
-| **名称** | 你用来加载的东西：资源相对于源根目录的路径，去掉扩展名 —— `Icons/sword`。子资源是 `Icons/sword[sword]`，场景是 `Scenes/Arena`。 |
-| **作用域** | 你加载的一切的所有者。作用域构成一棵树（Root → Scene → GameObject → Explicit）并自动结束。 |
-| **链接** | 持有一个名称的序列化字段（`ContentLinkSprite icon;`）。在 Inspector 中设置，带上所有者加载。 |
+| **源根目录** | 要构建其中资源的文件夹。默认是 `Assets/Content`。 |
+| **名称** | 用来加载的东西：资源在源根目录下的路径，去掉扩展名 —— `Icons/sword`。 |
+| **目录表** | 列出每个名称及其背后引擎 id 的 `ContentCatalog` 资源。由窗口写入，从不手工编辑。构建会把它放进内容目录。 |
+| **配置档** | 一个内容目录的构建设置：源根目录、输出文件夹、目录表、归档格式。 |
+| **内容目录** | 构建的输出文件夹。运行时注册它，然后按名称从中加载。 |
+| **作用域** | 所加载之物的所有者。作用域结束时，它加载的一切都会被释放。 |
+| **链接、引用** | 持有名称（链接）或资源 GUID（引用）的序列化字段。在 Inspector 中设置。 |
 
-## 快速开始
+## 教程：第一个内容目录
 
-**1. 把资源放到源根目录下** —— 默认是 `Assets/Content`：
+这里走一遍一个配置档、一个目录表、一次构建：随播放器一起发布的内容。
+
+### 第 1 步 —— 把资源放到源根目录下
+
+创建文件夹 `Assets/Content`，把内容放进去，子文件夹随意划分：
 
 ```
-Assets/Content/Icons/sword.png        →  "Icons/sword"            (Texture2D)
-                                         "Icons/sword[sword]"     (它的 Sprite 子资源)
-Assets/Content/Prefabs/Cat.prefab     →  "Prefabs/Cat"
-Assets/Content/Scenes/Arena.unity     →  "Scenes/Arena"
+Assets/Content/Icons/sword.png        (Texture Type: Sprite)
+Assets/Content/Prefabs/Cat.prefab
+Assets/Content/Audio/click.wav
+Assets/Content/Scenes/Arena.unity
 ```
 
-**2. 构建** —— *Window > ContentLink > Build Window*。第一次打开时窗口会显示一个 `Main` 配置档：
-源根目录 `Assets/Content`，一个覆盖整个根目录的类别，输出 `Assets/StreamingAssets/MainContent`，归档 `None`
-（平铺文件）。按下 **Build 'Main'**。（*Window > ContentLink > Build Content Directory* 不打开窗口，直接构建
-活动配置档。）
+每个文件都会得到一个名称 —— 它在 `Assets/Content` 下的路径，去掉扩展名：
 
-`StreamingAssets` 随播放器一起发布，所以下面的代码能找到这个文件夹。若用于下载管线，把 `Archive` 设为 `Packed`，
-输出到 `Assets/` 之外，并自行分发归档 —— 见 [构建内容](#构建内容)。
+| 文件 | 名称 | 加载为 |
+|---|---|---|
+| `Icons/sword.png` | `Icons/sword` | `Texture2D` |
+| —— 它的精灵 `sword` | `Icons/sword[sword]` | `Sprite` |
+| `Prefabs/Cat.prefab` | `Prefabs/Cat` | 预制体（`GameObject`） |
+| `Audio/click.wav` | `Audio/click` | `AudioClip` |
+| `Scenes/Arena.unity` | `Scenes/Arena` | 场景 —— 用 `LoadSceneAsync` 加载 |
 
-**3. 启动时注册一次目录**，在任何加载之前：
+这些文件所用的资源 —— 材质的贴图、预制体的网格 —— 会自动一起构建。只有按名称加载的东西才需要放在根目录下。
+
+### 第 2 步 —— 打开构建窗口
+
+*Window > ContentLink > Build Window*。第一次打开时，窗口里有一个配置档 `Main`：
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| Name | `Main` | 配置档的名称 |
+| Name style | `PathWithoutExtension` | 不带扩展名的名称（`Icons/sword`）—— 见 [名称风格](#名称风格) |
+| Source root | `Assets/Content` | 要构建其中资源的文件夹 |
+| Output path | `Assets/StreamingAssets/MainContent` | 构建写到哪里 —— `StreamingAssets` 会随播放器发布 |
+| Categories | 一行：*(whole root)* | 整个根目录进一个目录表，创建在 `Assets/ContentCatalog.asset` |
+| Archive | `None` | 平铺文件 —— 见 [归档格式](#归档格式) |
+| Compression | `Uncompressed` | 只对归档生效 |
+| Target | `NoTarget` | 为当前激活的平台构建 |
+
+设置保存在 `ProjectSettings/ContentLinkBuild.asset`。请提交这个文件。
+
+### 第 3 步 —— 创建目录表
+
+按窗口底部的 **Update catalogs**。它扫描 `Assets/Content` 并写入 `Assets/ContentCatalog.asset`。在 Project 窗口中选中这个
+资源：Inspector 会列出所有名称。
+
+- 请提交目录表资源。Inspector 字段读取它来显示名称是否有效。
+- 不要手工编辑它。每次 **Update catalogs** 和每次构建都会重写它。
+- 把它放在源根目录 **之外** —— 根目录下的目录表会被拒绝。
+
+不必在每次构建前都按 **Update catalogs**：构建会自己更新目录表。当你添加或移动了资源、想让 Inspector 立刻认出新名称时
+再按它。
+
+### 第 4 步 —— 注册目录并加载
+
+在应用启动时、任何加载之前，注册一次内容目录。第一个场景里的一个 `Boot` 组件就够了：
 
 ```csharp
 using System.IO;
@@ -119,20 +171,16 @@ using xpTURN.ContentLink;
 
 public class Boot : MonoBehaviour
 {
-    async void Awake()
+    void Awake()
     {
         var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
-
-        // Archive = None（平铺文件，迁移而来的 Main 配置档）或 Engine（单个 content0.archive）：
-        ContentService.RegisterDirectory(path);
-
-        // Archive = Packed（新配置档的默认值）：几个归档 + archives.json
-        // await ContentService.RegisterPackedDirectoryAsync(path);
+        ContentService.RegisterDirectory(path);   // Archive = None 或 Engine
+        // Archive = Packed：  await ContentService.RegisterPackedDirectoryAsync(path);  （在 async 方法中）
     }
 }
 ```
 
-**4. 加载到作用域里。** 没有什么需要释放：精灵随 GameObject 一起消失。
+然后按名称加载。`this.Scope()` 是这个 GameObject 的作用域：GameObject 被销毁时精灵就会释放。
 
 ```csharp
 using UnityEngine;
@@ -142,114 +190,227 @@ using xpTURN.ContentLink;
 public class ItemView : MonoBehaviour
 {
     public Image image;
+
     async void Start() => image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 }
 ```
 
-**5. 或者使用序列化链接**，在 Inspector 里选资源：
+或者让 Inspector 选取资源 —— 把 `Assets/Content/Icons/sword.png` 拖到字段上：
 
 ```csharp
-public ContentLinkSprite icon;                       // 把 Assets/Content/Icons/sword.png 拖上去 → "Icons/sword" + 精灵 "sword"
-async void Start() => image.sprite = await icon.LoadAsync(this);   // this = 这个 GameObject 的作用域（与第 4 步相同）；也可以传任何别的作用域
+public class ItemView : MonoBehaviour
+{
+    public Image image;
+    public ContentLinkSprite icon;   // Inspector 保存 "Icons/sword" + 精灵 "sword"
+
+    async void Start() => image.sprite = await icon.LoadAsync(this);
+}
 ```
 
-在编辑器里可以完全跳过第 2 步：启用 [编辑器模拟](#编辑器模拟)（默认开启）后，注册某个配置档的输出文件夹时
-Play Mode 会由工程来提供该目录 —— 新增、修改、删除的资源即所见，那个文件夹甚至不必存在。发布时再构建。
+按 Play。**无需构建** 就能运行：在编辑器中，注册配置档的输出文件夹时，该配置档由工程提供（[编辑器模拟](#编辑器模拟)）。
+新增、修改或删除资源后再按 Play —— 所见即所得。
 
-## 名称
+### 第 5 步 —— 构建
 
-- 名称是 **相对于配置档源根目录** 的资源路径，去掉扩展名：`Icons/sword`。
-  类别不会改变名称 —— 不管 `Icons/sword` 在哪个目录表里，它都是 `Icons/sword`。
-- **子资源** 是 `<主资源>[<子资源>]`：`sword.png` 里的精灵 `sword` 是 `Icons/sword[sword]`；精灵表 `sheet.png`
-  给出 `Icons/sheet[run_01]`、`Icons/sheet[run_02]`、…
-- **链接** 把精灵名称分开保存：`("Icons/sheet", "run_01")` 加载 `Icons/sheet[run_01]`。不写精灵名称而写完整名称也能加载，
-  是同一个键。
-- **场景** 的命名和资源一样：`Scenes/Arena`。资源和场景共用一个名称空间。
-- 名称 **在配置档内唯一**。会得到同一名称的两个资源（两个类别重叠，或两个文件夹里同名）会让构建失败，并在
-  控制台里打印两条路径。
-- Inspector 绘制器显示名称的状态：为空时无色，还没有任何目录表认识的名称显示 **琥珀色**（构建，或运行
-  *Update Content Catalog*），名称解析到字段装不下的东西时显示 **红色**。链接的名称行把精灵显示为
-  `Icons/sheet[run_01]`；在那里输入的名称若在目录表中存在，会拆成两个字段保存。
+按 **Build 'Main'**。窗口在 *Last build* 下显示结果，`Assets/StreamingAssets/MainContent` 中出现内容目录：引擎的文件和
+目录表。
 
-## 构建内容
+然后照常构建播放器（*File > Build Profiles*）。`StreamingAssets` 会进入播放器，`Boot` 在那里找到这个文件夹。
 
-### 配置档
+- 内容有变化时，**每次构建播放器之前都要先构建内容**。播放器携带的是最近一次内容构建写出的东西。
+- **内容目录是为一个平台构建的** —— 即编辑器中激活的平台。切换平台后，请重新构建内容。
 
-一个 **配置档** 描述一个内容目录。配置档保存在 `ProjectSettings/ContentLinkBuild.asset`（`ContentBuildSettings`）中，
-在构建窗口里编辑。有一个配置档是 **活动的**：菜单项和旧的静态 API 作用于它。
+### 第 6 步 —— 在编辑器中检查构建（可选）
 
-| 字段 | 默认值（新配置档） | 含义 |
+关闭 *Window > ContentLink > Editor Simulation* 再按 Play：编辑器会像播放器一样加载构建好的文件夹。重新打开它，就回到无需
+构建的工作方式。
+
+这就是完整的一圈：把资源放到根目录下，按名称加载，发布前构建。
+
+## 设置目录表
+
+### 名称
+
+- 名称是资源在源根目录下的路径，去掉扩展名：`Assets/Content/Icons/sword.png` → `Icons/sword`。
+- **精灵** 是 `<文件>[<精灵>]`：`Icons/sword[sword]`。精灵表 `sheet.png` 给出 `Icons/sheet[run_01]`、
+  `Icons/sheet[run_02]`、……
+- 根目录下的 **精灵图集**（Sprite Atlas V2）还会为它打包的每个精灵再起一个经由图集的名称：`Atlas/UI[icon]`。精灵自己的
+  名称和图集的名称加载的是同一个精灵。
+- **场景** 像资源一样命名（`Scenes/Arena`），用 `LoadSceneAsync` 加载。
+- 名称在 **配置档内唯一**。会得到同一名称的两个资源 —— 同一文件夹中的 `sword.png` 和 `sword.prefab` —— 会让构建失败，并
+  指出这两个文件。
+- 名称区分大小写，保持文件的拼写。韩文、假名和带重音符号的名称在每台机器上都一样可用。
+
+### 名称风格
+
+配置档的 **Name style** 决定名称是否保留扩展名：
+
+| Name style | `Icons/sword.png` | 并排放着的 `sword.png` 和 `sword.prefab` |
 |---|---|---|
-| `Name` | —— | 唯一；活动配置档和命令行按它选取 |
-| `SourceRoot` | `Assets/Content` | 名称相对于的文件夹 |
-| `OutputPath` | `Build/Content/<Name>` | 目录写到哪里。默认在 `Assets/` 之外 —— 见下文 |
-| `Catalogs` | 一个类别，整个根目录 | 每个类别 = 根目录的一个子文件夹 + 它填充的目录表资源 |
-| `Archive` | `Packed` | `None`（平铺） · `Engine`（引擎的单一归档） · `Packed`（按大小分割的归档） |
-| `MaxArchiveMB` | `20` | `Packed`：归档在多大时封口，误差约一个文件 |
-| `Compression` | `LZ4` | `Uncompressed` · `LZ4` · `LZMA` —— 只对归档生效；平铺构建总是未压缩 |
-| `CleanBuildCache` | 关 | 引擎选项：忽略构建缓存 |
-| `DisableWriteTypeTree` | 关 | 更小的输出，但 **只能在完全相同的引擎版本** 上加载（`SerializeUnityVersion` 会自动加上） |
-| `FailBuildWhenErrorsLogged` | 开 | 构建期间记录的错误会让构建失败 |
-| `Target` | `NoTarget` | `NoTarget` = 任何当前活动的构建目标；其他值在别的目标上拒绝构建 |
-| `PostProcessors` | 无 | `IContentBuildPostProcess` 实现的类型名，按运行顺序排列 |
+| `PathWithoutExtension`（默认） | `Icons/sword` | 拒绝 —— 两者都是 `Icons/sword` |
+| `PathWithExtension` | `Icons/sword.png` | 允许 —— `Icons/sword.png` 和 `Icons/sword.prefab` |
 
-**类别。** 添加一个子文件夹（`Icons`、`Prefabs`、`Levels/Forest`，或用 `""` 表示整个根目录），构建就会把该文件夹的
-资源放进它们自己的目录表；一个配置档的所有目录表进入 **同一个** 目录，所以运行时看到的是一个名称空间。重叠的类别、
-放在自己根目录下面的目录表、重复的名称，都会在写入任何东西之前被拒绝；含有路径字符（`/ \ : * ? " < > |` ——
-名称会进入归档名和默认路径）的配置档名、末尾带分隔符的源根目录、位于源根目录之内或包含源根目录的输出文件夹也一样。
-新类别的目录表资源会在第一次构建时创建在 `Assets/ContentCatalogs/<配置档>.<类别>.asset`（文件夹缺失时一并创建）；
-你也可以把字段指向一个已有的目录表。
+**尽早决定。** 更改它会在下一次目录表更新时重命名根目录下的所有名称：持有旧名称的链接、代码和数据将无法加载。
+`ContentRef` 字段持有 GUID，不受影响。在配置档和目录表不一致期间，窗口会显示提示。
 
-**输出文件夹。** 写入任何东西之前先检查该文件夹：只接受空文件夹或以前的内容构建（有 `BuildManifestHash.txt`）；
-装着别的东西的文件夹会原封不动，构建失败。清空本身发生在引擎运行之前的那一刻，所以更早失败的构建 —— 校验、
-目录表 —— 会让以前的输出仍然可用。
-位于 `Assets/` 之下的输出（例如 `StreamingAssets`）会被 Unity 导入并在构建后刷新；`Assets/` 之外的输出不会，
-这正是你单独分发的内容所需要的。
+### 类别：一个目录中的多个目录表
 
-**构建目标。** 内容目录是为编辑器的 **活动构建目标** 构建的，在别的目标上可能加载不了。窗口、日志和上次构建
-摘要总会说明一次构建是为哪个目标做的。
+默认情况下整个根目录进一个目录表。大型工程可以按子文件夹拆分根目录，每个子文件夹有自己的目录表文件 —— 文件更小，在不同
+文件夹工作的人也不会改到同一个目录表。
 
-**从静态构建器迁移。** 在脚本里设置过 `ContentDirectoryBuilder.SourceRoot` / `CatalogPath` / `OutputPath` 的工程
-可以继续工作：没有设置的工程会得到一个由那些默认值生成的 `Main` 配置档（`Assets/Content` →
-`Assets/StreamingAssets/MainContent`，平铺，未压缩），静态属性则保留为活动配置档的一个视图。给它们赋值只在本次
-编辑器会话内覆盖配置档 —— 窗口会这样提示。
+在构建窗口的 **Categories** 中：
 
-### 归档模式与注册
+1. 用 **−** 删除 *(whole root)* 行；如果一个目录表就够了，保留它即可。
+2. 在 **Add category** 中输入根目录的一个子文件夹 —— `Characters` —— 然后按 **Add**。`UI` 和 `Levels` 同样操作。
+3. **Catalog** 列留空：每个目录表会在第一次构建或目录表更新时创建在 `Assets/ContentCatalogs/<配置档>.<类别>.asset`（窗口会
+   显示路径）。也可以选一个已有的 `ContentCatalog`（*Assets > Create > xpTURN > ContentLink > Content Catalog*）。
 
-| `Archive` | 写出什么 | 用什么注册 |
-|---|---|---|
-| `None` | 引擎的平铺文件（`*.cf`、`*.resS`、清单） | `ContentService.RegisterDirectory(path)` |
-| `Engine` | 一个 `content0.archive`（引擎的 `UseArchive`） | `ContentService.RegisterDirectory(path)` |
-| `Packed` | `<配置档>.manifest-<哈希>.archive`、`<配置档>.<位串>-<哈希>.archive`、… 外加 `archives.json` | `await ContentService.RegisterPackedDirectoryAsync(path)` |
+```
+配置档 "Main"                  源根目录 Assets/Content
+  类别  Characters        →    Assets/ContentCatalogs/Main.Characters.asset
+  类别  UI                →    Assets/ContentCatalogs/Main.UI.asset
+  类别  Levels            →    Assets/ContentCatalogs/Main.Levels.asset
+```
 
-`Packed` 面向分发：单个归档是很差的下载单位，而引擎又没有大小选项，所以由包自己来打包平铺构建。默认规则是
-**哈希前缀 trie**：清单及其哈希文件得到一个自己的小归档；超过上限的文件独占一个归档；其余每个文件按其键的 MD5
-的各位分桶 —— 序列化文件的键是清单 ID（引擎由资源的身份推导，内容改变时仍保持不变），`.resS`/`.resource` 的键是
-文件名 —— 装不进上限的桶再按下一位继续分割。因此被修改的资源留在原来的归档里，新增或删除的资源只触及一个归档
-（桶分裂或合并时再加一个相邻的）—— 其他所有归档的名称和字节都保持不变，这正是补丁管线想要的。（`.resS` 以名称为键，
-所以修改一张贴图也会把它的像素数据从一个归档搬到另一个。）归档按其位路径加上文件列表的哈希命名
-（`Main.0110-a3f9c2e1.archive`），所以同一个名称绝不会指两份不同的内容。**相同的输入总是打包成逐字节相同的结果。**
-预计归档数量约为普通填充的 1.5 倍（叶子大约在上限的 0.6 倍）；想让它们更接近上限就调高 `MaxArchiveMB`。上限按
-*输入* 字节计 —— 用 LZ4 时磁盘上的归档大约是它的一半。`archives.json` 列出每个归档的大小、输入大小、CRC 和其中的文件：
-补丁器先取它，下载自己没有的名称，删除已消失的名称。CRC 是引擎对归档内容报告的值 —— 它不是磁盘文件的 CRC32
-（实测），所以请用大小或你自己的哈希来校验下载。
+- **类别不改变名称。** `Assets/Content/UI/logo.png` 无论在哪个目录表里都是 `UI/logo`。
+- 一个配置档的所有目录表都进入 **同一个** 内容目录：注册一次，所有名称都能加载。
+- 类别不能重叠：*(whole root)* 行与子文件夹行不能同时使用，`UI` 与 `UI/Icons` 也不能。
+- 不被任何类别覆盖的根目录下资源 **不会被构建** —— 构建会记录一条带有其数量的警告。
 
-**自定义分割。** 在 Editor 程序集里实现 `IContentArchivePartitioner`，并在配置档里选择它（`Partitioner`；命令行上用
-`-contentlink.partitioner <类型名>`、`trie` 或 `sequential`）。它接收带大小的文件、清单文件、解析后的清单，以及带目录表
-和磁盘文件的已构建 loadable，返回归档 —— 名称加文件。内置的 `SequentialFillPartitioner` 是朴素的排序填充，用局部性
-换取更少、更满的归档。打包器会检查任何答案（每个文件恰好一次、没有空归档、朴素且唯一的名称），并以不同的文件顺序
-再调用分割器一次，答案不同时让构建失败。像内置实现那样把内容哈希放进名称里，这样缓存的下载永远不会过期。切换
-分割器或修改 `MaxArchiveMB` 会重新分割 —— 一次性的较大下载。
+### 多个配置档：分别注册的内容目录
 
-运行时 `RegisterPackedDirectoryAsync` 把每个归档挂载到同一个命名空间下，并像平铺目录一样注册挂载路径；
-`UnregisterDirectory` 再把它们卸载。当文件夹没有 `archives.json`、索引没有列出任何归档，或某个归档在磁盘上的大小与
-索引不符时，它返回 `-1`（并记录错误），什么都不挂载；某个归档挂载不上时，它抛出异常并指明是哪一个。
+每个配置档构建一个内容目录，各自单独注册。当内容要分开发布或下载时使用多个 —— 本体和 DLC 包，或者一个
+[区域设置](#本地化内容)。
 
-通过下载到达设备的内容，在注册之前值得检查一下。`archives.json` 记录了每个归档的 `Bytes` 和 `Crc`：
-`RegisterPackedDirectoryAsync` 会在挂载任何东西之前拒绝磁盘大小与索引不符的归档，但长度相同的损坏只能通过比较 `Crc`
-发现，而这是调用方的工作 —— 引擎遇到损坏的内容文件会阻塞而不是失败，所以请先校验。
+| 配置档 | 源根目录 | 输出路径 | Archive |
+|---|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` | `Packed` |
+| `Dlc1` | `Assets/Dlc1` | `Build/Content/Dlc1` | `Packed` |
 
-### 后处理器
+要添加一个，在 **New profile** 中输入名称并按 **Add**。新配置档的初始设置是：输出路径 `Build/Content/<名称>`、LZ4 压缩的
+`Packed` 归档，以及位于 `Assets/ContentCatalogs/<名称>.asset` 的一个目录表。**Set active** 选择 *Window > ContentLink*
+菜单项要构建的配置档。
+
+- 源根目录要 **并列** 放置，不要互相嵌套。
+- 一个根目录下的资源引用另一个根目录下的资源时，会把它的 **副本** 带进自己的目录。共享的资源请按名称加载，不要跨根目录
+  引用。
+
+## 构建
+
+### 构建窗口
+
+| 字段 | 填什么 |
+|---|---|
+| **Content version** | 可选。刻进每个 Packed 构建的标签 —— 下载时用来把本体和它的区域设置配成对 |
+| **Name** | 配置档的名称。`Packed` 配置档只能用字母、数字、`.`、`-` 和 `_`（它会成为归档的名称） |
+| **Name style** | 见 [名称风格](#名称风格) |
+| **Source root** | 要构建的文件夹（用 **…** 选择） |
+| **Output path** | 构建写到哪里（用 **…** 选择）—— 见 [输出放在哪里](#输出放在哪里) |
+| **Target** | `NoTarget` 为当前激活的平台构建。其他值则在其他平台上拒绝构建 |
+| **Categories** | 子文件夹及其目录表 —— 见 [类别](#类别一个目录中的多个目录表) |
+| **Archive** | `None`、`Engine`、`Packed` —— 见 [归档格式](#归档格式) |
+| **Max archive MB** | 仅 `Packed`：一个归档大约装多少内容（默认 20） |
+| **Compression** | `Uncompressed`、`LZ4`、`LZMA` —— 仅对归档。`LZ4` 是稳妥的默认值 |
+| **Clean build cache** | 忽略引擎的构建缓存，全部重新构建 |
+| **Disable type trees** | 输出更小，但 **只能在完全相同的 Unity 版本上** 加载 |
+| **Fail when errors are logged** | 默认开启：构建期间记录了错误，构建即失败 |
+| **Partitioner** | 仅 `Packed`：文件如何分组到归档（保持默认即可） |
+| **Post-processors** | 构建之后运行的步骤 —— 见 [构建之后](#构建之后) |
+
+底部：**Update catalogs**（只写目录表）、**Build '\<配置档\>'** 和 **Build all**。问题会在构建任何东西之前列在这些按钮
+上方；类别的问题显示在它所在行的下方。
+
+### 归档格式
+
+| Archive | 输出是什么样 | 用什么注册 | 何时使用 |
+|---|---|---|---|
+| `None` | 引擎的平铺文件 | `ContentService.RegisterDirectory(path)` | 内容随播放器发布，并且想要最简单的设置 |
+| `Engine` | 一个 `content0.archive` | `ContentService.RegisterDirectory(path)` | 播放器里只放一个压缩文件 |
+| `Packed` | 若干个大约 *Max archive MB* 的归档，外加 `archives.json` 和 `archives.hash` | `await ContentService.RegisterPackedDirectoryAsync(path)` | 内容要下载，或者既要压缩又要拆分以便打补丁 |
+
+`Packed` 构建是 **确定性的**：相同的输入会打包成逐字节相同的归档，小改动只会触及少数几个归档 —— 其余的保持名称和字节
+不变，所以补丁下载量很小。*Max archive MB* 计的是压缩前的内容量；使用 LZ4 时，磁盘上的文件大约是它的一半。
+
+### 输出放在哪里
+
+| 输出路径 | 会怎样 |
+|---|---|
+| `Assets/StreamingAssets/` 之下 | 文件夹随播放器发布。注册 `Application.streamingAssetsPath/<文件夹>` |
+| `Assets/` 之外（例如 `Build/Content/Main`） | 不会被导入，也不在播放器中 —— 上传到服务器（[CDN](#从-cdn-下载内容)）或自行复制 |
+
+输出文件夹必须是空的，或者是上一次的内容构建：装有其他东西的文件夹不会被动，构建失败。在引擎运行之前失败的构建会保留
+之前的输出。
+
+### 设置示例
+
+**全部放在应用里** —— 最简单：
+
+| 字段 | 值 |
+|---|---|
+| Output path | `Assets/StreamingAssets/MainContent` |
+| Archive | `None`（想要更小的文件就用 `Packed` + `LZ4`） |
+
+```csharp
+var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
+ContentService.RegisterDirectory(path);                      // Archive = None
+// await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
+```
+
+**从 CDN 下载** —— 无需重新构建应用即可更新：
+
+| 字段 | 值 |
+|---|---|
+| Output path | `Build/Content/Main` |
+| Archive | `Packed`，Compression `LZ4`，Max archive MB `20` |
+
+每次构建后上传输出文件夹，启动时下载 —— 见 [从 CDN 下载内容](#从-cdn-下载内容)。
+
+**本体加可下载的包** —— 每个各用一个配置档，如 [多个配置档](#多个配置档分别注册的内容目录) 所示。
+
+### 常见构建错误
+
+| 消息 | 解决方法 |
+|---|---|
+| `source root '…' is not a folder` | 创建该文件夹，或修正 *Source root* |
+| `duplicate name '…': … / …` | 把两个文件之一改名，或把配置档改为 `PathWithExtension` |
+| `'…' is a ContentCatalog under the source root` | 把目录表资源移出根目录 |
+| `categories '…' and '…' overlap` | 删除 *(whole root)* 行，或内层的子文件夹行 |
+| `output folder '…' is neither empty nor a previous content build` | 把 *Output path* 指向空文件夹，或清空它 |
+| `… asset(s) under '…' belong to no category`（警告） | 为该文件夹添加类别 —— 那些资源没有被构建 |
+| `'…' is a V1 sprite atlas under the source root` | 把图集迁移到 Sprite Atlas V2 —— 见 [须知](#须知) |
+| `profile is for … but the active build target is …` | 切换平台，或把 *Target* 设为 `NoTarget` |
+
+### 从命令行构建
+
+在 CI 中，以批处理模式构建一个配置档：
+
+```
+Unity -batchmode -nographics -quit -projectPath <project> -buildTarget Android -logFile build.log \
+      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
+      -contentlink.profile Main
+```
+
+| 选项（`-contentlink.<键> <值>`） | 值 |
+|---|---|
+| `profile` | 配置档名称，或用 `all` 表示所有配置档。省略时为激活的配置档 |
+| `output`、`source` | 覆盖本次运行的路径 |
+| `archive` | `None`、`Engine`、`Packed` |
+| `compression` | `Uncompressed`、`LZ4`、`LZMA` |
+| `maxArchiveMB` | ≥ 1 的整数 |
+| `contentVersion` | 刻进本次运行的 Packed 构建的内容版本 |
+
+覆盖只对本次运行有效：设置文件不会被改动。构建失败、未知的选项或配置档会以退出码 **1** 结束。请先在其他编辑器中关闭该
+工程：批处理模式需要工程锁。
+
+`xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` 接受相同的选项，只写目录表 —— 适合 CI 在构建播放器前只需要最新
+目录表的情况。在本仓库中，`tools/build-content.sh` 封装了这两个调用。
+
+在编辑器脚本中，`ContentBuildRunner.Build(profile)` 和 `ContentBuildRunner.BuildAll()` 做同样的事，并返回
+`ContentBuildResult`。
+
+### 构建之后
+
+后处理器会在添加了它的配置档每次构建之后运行 —— 这是上传或复制输出的地方。把它放在 Editor 程序集中：
 
 ```csharp
 using xpTURN.ContentLink.Editor;
@@ -258,323 +419,270 @@ public sealed class UploadStep : IContentBuildPostProcess
 {
     public void OnBuilt(ContentBuildResult r)
     {
-        // r.ProfileName, r.Target, r.OutputPath, r.Files（已排序）, r.Archives, r.Manifest, r.BuiltNames, r.Milliseconds
+        // r.ProfileName, r.Target, r.OutputPath, r.Files, r.Archives, r.Milliseconds
+        UnityEngine.Debug.Log($"{r.ProfileName}: {r.Files.Length} files in {r.OutputPath}");
     }
 }
 ```
 
-在窗口里挑选实现（它用 `TypeCache` 找到它们）并在那里排序；顺序随配置档保存，也就是运行顺序。找不到的类型或抛出
-异常的步骤会 **让构建失败**，并保留输出以供检查。其他任何阶段抛出异常也以同样的方式报告：结果里带着原因，窗口、
-日志和命令行都会显示它。步骤在打包之后运行，所以 `r.Archives` 是最终状态。
+然后在构建窗口的 **Post-processors** 中添加它；多个后处理器按那里列出的顺序运行。抛出异常的步骤会让构建失败，并保留
+输出。
 
-### 菜单项与脚本调用
+## 加载
 
-| 在哪里 | 做什么 |
-|---|---|
-| *Window > ContentLink > Build Window* | 编辑配置档、构建一个或全部、查看信息和上次结果 |
-| *… > Build Content Directory* | 构建活动配置档 |
-| *… > Update Content Catalog* | 不构建，只重写活动配置档的目录表（链接从琥珀色变为无色） |
-| `ContentBuildRunner.Build(profile)` / `BuildAll()` | 从代码做同样的事；返回 `ContentBuildResult` |
+### 先注册
 
-### 命令行
+在启动时、**第一次加载之前**，把每个内容目录注册一次：
 
-```
-Unity -batchmode -nographics -quit -projectPath <project> -buildTarget StandaloneOSX -logFile <log> \
-      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
-      -contentlink.profile Main -contentlink.output Build/Content/Main -contentlink.compression LZ4
+```csharp
+int dir = ContentService.RegisterDirectory(path);                      // Archive = None 或 Engine
+// int dir = await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
 ```
 
-`tools/build-content.sh` 封装了这个调用（先检查工程锁，透传退出码，打印日志里的 `[ContentLink …]` 行）：
-
-```
-tools/build-content.sh -p samples/LinkSample -contentlink.profile Main
-tools/build-content.sh -p <project> -t Win64 -contentlink.profile all      # -t 透传给 -buildTarget (Win64, OSXUniversal, Linux64, Android, iOS, …)
-```
-
-| 键（`-contentlink.<key> <value>`） | 值 |
-|---|---|
-| `profile` | 配置档名，或 `all`（不区分大小写；全部配置档，在第一次失败处停止）。省略 = 活动配置档 |
-| `source`, `output` | 路径 |
-| `archive` | `None` · `Engine` · `Packed` |
-| `maxArchiveMB` | ≥ 1 的整数 |
-| `compression` | `Uncompressed` · `LZ4` · `LZMA` |
-| `cleanBuildCache`, `disableWriteTypeTree`, `failBuildWhenErrorsLogged` | `true` · `false` |
-| `postProcessors` | 逗号分隔的类型名 |
-
-覆盖参数 **只在内存中** 改变所指定的配置档 —— 命令行绝不会写设置文件（`profile all` 不接受覆盖参数）。构建失败、
-未知的键或不存在的配置档以退出码 **1** 结束。工程不能在另一个编辑器实例中打开：批处理模式需要工程锁。
-
-**只更新目录表。** `-executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` 接受同样的参数，但只重写
-配置档的目录表 —— 不构建、不碰输出文件夹 —— 它是 *Update Content Catalog* 的命令行孪生
-（`tools/build-content.sh -c -contentlink.profile Main`）。当 CI 只需要目录表资源保持最新（播放器构建之前的链接校验），
-或目录由另一条管线构建时使用它。每次构建本来就会重写目录表，所以构建那边没有额外需要打开的开关。`profile all`
-逐个更新每个配置档，在第一次失败处停止；`source` 覆盖参数决定目录表相对于哪个根目录命名。退出码同上。
-
-## 加载内容
+两者都返回目录 id（文件夹无法使用时返回 `-1` 并记录一条错误）。同一文件夹注册两次会被拒绝。
+`ContentService.UnregisterDirectory(dir)` 会把它移除 —— 只要它的资源还被持有，就会被拒绝。
 
 ### 作用域
 
-| 作用域 | 如何创建 | 何时结束 | 父级 |
-|---|---|---|---|
-| Root | 自动（`ContentScope.Root`） | `Application.quitting` | —— |
-| Scene | `ContentScope.ForScene(scene)` | `SceneManager.sceneUnloaded` | Root |
-| GameObject | `gameObject.Scope()` / `component.Scope()` | `OnDestroy` | 它所在的场景 |
-| Explicit | `parent.CreateChild("Stage")` | 你的 `Dispose()`，否则随父级 | 任意 |
+每次加载都进入一个 **作用域**。作用域结束时，它加载的东西会被释放。
 
-**GameObject 作用域** —— 最常见的情况。资源随对象一起消失：
-
-```csharp
-public class ItemView : MonoBehaviour
-{
-    public Image image;
-
-    async void Start()
-    {
-        var scope = this.Scope();                                   // 这个 GameObject 的作用域（gameObject.Scope() 也行）
-        image.sprite = await scope.LoadAsync<Sprite>("Icons/sword[sword]");
-    }                                                               // 在 OnDestroy 里释放 —— 别的什么都不用写
-}
-```
-
-**Scene 作用域** —— 应该恰好和场景活得一样久的资源：
+| 作用域 | 如何获得 | 何时结束 |
+|---|---|---|
+| GameObject | `this.Scope()` / `gameObject.Scope()` | GameObject 被销毁时 |
+| Scene | `ContentScope.ForScene(scene)` | 场景卸载时 |
+| Explicit | `parent.CreateChild("Stage3")` | 你调用 `Dispose()` 时 —— 或其父作用域结束时 |
+| Root | `ContentScope.Root` | 应用退出时 |
 
 ```csharp
-var scope  = ContentScope.ForScene(gameObject.scene);               // 每个场景一个，第一次使用时创建
-var skybox = await scope.LoadAsync<Material>("Materials/Sky");      // 场景卸载时释放
-```
+// GameObject —— 日常情况
+var sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 
-**Explicit 作用域** —— 关卡、界面、弹窗：由你决定它何时结束，最迟由父级结束它：
+// Scene —— 与场景同寿
+var sky = await ContentScope.ForScene(gameObject.scene).LoadAsync<Material>("Materials/Sky");
 
-```csharp
-var stage = ContentScope.Root.CreateChild("Stage3");                // 或 this.Scope().CreateChild("Popup")
-await stage.LoadAsync<AudioClip>("Wav/descent");
+// Explicit —— 关卡、界面、弹窗：由你决定何时结束
+var stage = ContentScope.Root.CreateChild("Stage3");
+await stage.LoadAsync<AudioClip>("Audio/boss");
 await stage.LoadAsync<GameObject>("Prefabs/Boss");
 // ... 关卡进行中 ...
-stage.Dispose();                                                    // 它持有的一切都归还
+stage.Dispose();   // 关卡加载的一切都归还
+
+// Root —— 整个应用期间
+var font = await ContentScope.Root.LoadAsync<Font>("Fonts/Main");
 ```
 
-**Root 作用域** —— 与应用同寿：
+在任何作用域上：
 
 ```csharp
-var atlas = await ContentScope.Root.LoadAsync<Texture2D>("UI/Atlas");   // 在 Application.quitting 时释放
+var mat  = scope.Load<Material>("Materials/Steel");   // 同步
+bool has = scope.Contains("Icons/sword");             // 已在这里加载：再次加载没有代价
+scope.Release("Icons/sword");                         // 可选：提前归还
 ```
 
-**每个作用域都有：**
+- 在一个作用域里把同一名称加载两次，只持有一次 —— 每帧都加载也没问题。
+- 多个作用域可以加载同一名称：资源只加载一次，在最后一个作用域放手时释放。
+- 要把资源交给另一个作用域，请用 `source.ShareTo(target, name)` 或 `target.Adopt(asset)`。
+
+### Inspector 字段：链接
+
+**链接** 持有一个名称。在 Inspector 中把源根目录下的资源拖到它上面：
 
 ```csharp
-var mat   = scope.Load<Material>("Materials/Steel");                // 同步（阻塞等待引擎加载）
-bool held = scope.Contains("Icons/sword");                          // true：再次加载它是免费的
-scope.Release("Icons/sword");                                       // 可选的提前归还
-var token = scope.DisposedToken;                                    // 作用域结束时取消 —— 传给你自己的 await
-```
+public ContentLinkSprite icon;              // 还有 ContentLinkGameObject、ContentLinkTexture2D
+public ContentLink<AudioClip> music;        // 任意资源类型
 
-- **去重。** 每个作用域最多持有同一个键一次。反复加载同一个键（哪怕每帧一次）也不会让它增长。
-- **泄漏信号。** 被场景卸载或退出回收的显式作用域会记录一条带路径的警告（`Root/Field/ForgottenPopup`）。
-  `ContentService.CaptureStackTrace = true` 会附上它在哪里创建。随着已 Dispose 的父级或已销毁的所有者 GameObject
-  结束属于正常生命周期，不会警告。
-- **过度持有警告。** 作用域持有的资源数超过 `ContentScope.DefaultWarnThreshold`（或 `scope.WarnThreshold`）时会警告 ——
-  作用域的失败模式是持有太多，而不是泄漏。
-- **从未激活的对象** 不会收到 `OnDestroy`；它们的作用域在场景卸载时被回收。
-- **被移动的对象**（`MoveGameObjectToScene`、`DontDestroyOnLoad`）保留其资源：原场景卸载时，它们的作用域被移交给
-  它们现在所在的场景。
-- **跨作用域。** `source.ShareTo(target, key)` 给 `target` 一个它自己的引用；`target.Adopt(asset)` 接收一个你已经持有的
-  资源。没有这两者之一，绝不要把裸资源交给另一个系统。
-- 作用域只释放资源；它们从不销毁 GameObject。
+image.sprite = await icon.LoadAsync(this);  // 加载到这个 GameObject 的作用域
+var clip = music.Load(this);                // 同步
 
-### 序列化链接
-
-```csharp
-public ContentLinkSprite icon;                               // 还有 ContentLinkGameObject、ContentLinkTexture2D
-public class ContentLinkAudio : ContentLink<AudioClip> { }   // 其他类型自行派生；绘制器同样适用
-
-image.sprite = await icon.LoadAsync(this);                   // 必须有所有者（null 抛出 ArgumentNullException）—— Component/GameObject 表示它的 GameObject 作用域，ContentScope 表示该作用域
-image.sprite = await icon.LoadAsync(stage);                  // 例如放进一个显式作用域
-var clip = music.Load(this);                                 // 同步
-
-// 装备切换：提前归还旧的（可选）
+// 更换物品：归还旧的，加载新的
 icon.Release();
-icon.SetName(table[itemId].IconName);
+icon.SetName("Icons/shield", "shield");
 image.sprite = await icon.LoadAsync(this);
-
-icon.SetName("Icons/sheet", "run_01");                       // 精灵：主名称与精灵名称分开
-other.SetName(icon.Name, icon.SubObjectName);                // 复制链接：Name 只是主名称
-
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
 
-### 按 GUID 的序列化引用
+字段的颜色表示状态：普通 —— 正常；**琥珀色** —— 还不在目录表中（按 **Update catalogs**）；**红色** —— 该名称加载的东西
+字段无法容纳。
+
+### Inspector 字段：按 GUID 引用
+
+**引用** 持有资源的 GUID 而不是名称：移动或重命名文件后依然有效。
 
 ```csharp
-public ContentRef<Sprite> icon;                          // ContentRef<GameObject>、ContentRef<Enemy>（预制体上的组件）……
+public ContentRef<Sprite> icon;
 public ContentSceneRef level;
 
-image.sprite = await this.Scope().LoadAsync(icon);       // 与名称一样由作用域持有
-this.Scope().Release(icon);                              // 提前归还（可选）
-var enemy = await stage.InstantiateAsync(enemyRef);      // 返回 GameObject
+image.sprite = await this.Scope().LoadAsync(icon);
 var scene = await this.Scope().LoadSceneAsync(level);
-
-icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
 ```
 
-- 引用保存的是资源的 **GUID**（以及精灵名称），而不是路径：移动或重命名文件后，更新目录即可继续使用。字段与
-  Addressables 的 `AssetReference` 相同（`m_AssetGUID`、`m_SubObjectName`）。
-- 构建为每个目录条目记录 GUID；运行时把引用解析为该 **目录名称**，再按名称加载。因此同一资源的引用加载与名称加载是
-  **一个槽位、一个作用域键**：`Release(icon)` 也会归还 `LoadAsync<Sprite>("Icons/sword")`，反之亦然。
-- 引用只保存键，不保存加载 —— 复制无妨，加载要经过作用域。若需要每个字段各自释放，先取得名称再使用链接：
-  `ContentService.TryGetName(icon, out var name)` → `new ContentLink<Sprite>(name)`。
-- 子资源是 **精灵，按名称**（与 Addressables 相同）。重命名切片会使引用失效。
-- `RuntimeKeyIsValid()` 与 `ContentLink` 一样，表示“已注册的目录（或编辑器模拟）能够加载它” —— Addressables 的
-  “已设置 GUID”对应 `IsSet`。
-- **在 Inspector 中。** 选择资源即保存其 GUID；第二行以只读方式显示它解析到的名称。红色：没有该 GUID 的资源、精灵名称
-  已不存在（切片被重命名）、或类型与字段不符。黄色：尚未进入目录、位于所有内容根目录之外（移到根目录下 GUID 不变）、
-  或是精灵图集。构建无法携带的选择会像链接一样被拒绝；字段中已有的值不会被拒绝，只做显示。
+同一资源的引用和名称加载的是同一个对象：`Release(icon)` 也会释放 `LoadAsync<Sprite>("Icons/sword")` 加载的东西。
 
-### 实例
+### 预制体实例
 
 ```csharp
-var go = await scope.InstantiateAsync("Prefabs/Cat", parent);
+var cat = await this.Scope().InstantiateAsync("Prefabs/Cat", parent);
 ```
 
-预制体引用属于 **实例**，而不属于 `scope`（后者只在自己先结束时取消请求）。销毁实例就会归还它。用
-`Object.Instantiate(instance)` 做出的克隆体在 `Awake` 里继承引用，所以即使原件先被销毁，克隆体也保留着它的贴图。
-不需要生成器类：一个引用就是表里的一个槽位，所以每个实例一个也很便宜。
+只要实例还活着，预制体就保持加载；销毁实例它就被释放。用 `Object.Instantiate(cat)` 制作的克隆也会让它保持加载，所以不需要
+生成器类。
 
 ### 场景
 
-源根目录下的场景成为场景条目（`Scenes/Arena`），连同其依赖一起构建进目录。场景不做引用计数：它的生命周期就是
-场景实例本身。ContentLink 解析名称，跟踪每一个已加载的内容场景（无论谁加载的），使得有场景打开时目录不能被注销，
-并允许作用域拥有一个场景。
-
 ```csharp
-// 拥有：作用域结束时卸载（仅 additive）
+// 由作用域拥有：作用域结束时卸载（additive）
 var arena = await this.Scope().LoadSceneAsync("Scenes/Arena");
-scope.ReleaseScene(arena);                                 // 可选的提前卸载
+this.Scope().ReleaseScene(arena);   // 可选：提前卸载
 
-// 序列化，必须有所有者 —— 规则与 ContentLink<T> 相同
+// 来自 Inspector 字段
 public ContentSceneLink level;
 var scene = await level.LoadAsync(this);
-await level.UnloadAsync();                                 // 可选；任何时候调用都安全
 
-// 非拥有，任意模式（Single 会关闭其他所有场景）。用 SceneManager.UnloadSceneAsync 卸载。
+// 无所有者，任意模式 —— 自己用 SceneManager.UnloadSceneAsync 卸载
 var menu = await ContentService.LoadSceneAsync("Scenes/Menu", LoadSceneMode.Single);
 ```
 
-- Single 模式的场景不能被拥有（它们连所有者一起关掉）。Single 模式的加载也会销毁调用方：从 MonoBehaviour 里 await
-  时请传入 `destroyCancellationToken`。
-- 拥有场景的作用域结束时，如果该场景是最后一个已加载的场景，场景会留下并记录一条警告；应用退出时什么都不卸载。
-- 取消只停止等待；additive 场景会在引擎加载完成后再被卸载。
-- 作用域只拥有自己的加载产生的那个实例：你自己通过 `SceneManager` 打开的场景仍然是你的，哪怕某个作用域加载了同一个
-  场景；失败的作用域加载也绝不会认领它。
-- `ContentService.LoadedSceneCount` / `SnapshotScenes(list)` 显示哪些是打开的。
+### Resources 文件夹
 
-### 裸句柄
-
-面向自己管理生命周期的代码（对象池、流式系统）：
+以 `res:` 开头的名称从播放器中的 `Resources` 文件夹加载 —— 经过同样的作用域和字段，所以工程可以一次一个调用地从
+`Resources.Load` 迁移过来：
 
 ```csharp
-AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");   // 或 Acquire<T>（同步）
-h.Asset; h.IsValid; h.Status; h.Key;
-var h2 = h.Share();          // 第二个引用
-h.Dispose();                 // 归还它 —— 或者交给一个作用域：
-scope.Attach(h2);            // 现在由作用域拥有
-
-if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // 引擎 id，用于基于 id 的加载
-    h = await ContentService.AcquireAsync<Texture2D>(id);
+var boot  = this.Scope().Load<TextAsset>("res:Config/boot");                 // Resources/Config/boot.txt
+var logo  = await this.Scope().LoadAsync<Sprite>("res:UI/logo[logo]");       // 精灵：[它的名称]
+var enemy = await this.Scope().InstantiateAsync("res:Prefabs/Enemy");
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` 告诉你某个已注册的目录是否携带该名称；同样的调用也接受 `ContentRef<T>` / `ContentSceneRef`，`Acquire` / `AcquireAsync` 也接受 `ContentRef<T>`。
+预制体及其所用的资源只有通过 `ContentService.SweepResources()` 才会离开内存 —— 请在可以接受卡顿的地方调用，比如加载画面。
 
-## 何时调用 Release
+### 原始句柄
 
-| 情形 | 该做什么 |
+供自己管理生命周期的代码（对象池、流式加载）使用：
+
+```csharp
+AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");
+var tex = h.Asset;
+h.Dispose();   // 归还 —— 或者交给一个作用域：scope.Attach(h)
+```
+
+## 释放
+
+大多数代码从不调用 `Release`：
+
+| 情况 | 怎么做 |
 |---|---|
-| 组件、弹窗、关卡、场景内容 | 什么都不做。加载到对应的作用域里。 |
-| 资源很多的关卡 / 界面 | 一个显式作用域，关卡结束时 `Dispose()`。 |
-| 复用单元格的滚动列表 | 每个单元格一个子作用域；单元格重新绑定时 Dispose 它。 |
-| 装备 / 皮肤切换 | 加载新的之前 `Release(key)` 或 `ContentLink.Release()`。 |
-| 把资源交给另一个系统 | `ShareTo(target, key)` 或 `target.Adopt(asset)`。绝不跨作用域传递裸资源。 |
+| 组件、弹窗、关卡或场景的内容 | 什么都不用做 —— 加载到相应的作用域 |
+| 资源很多的关卡或界面 | 一个 Explicit 作用域，关卡结束时 `Dispose()` |
+| 复用单元格的滚动列表 | 每个单元格一个子作用域，单元格被复用时 Dispose |
+| 更换装备或皮肤 | 加载新的之前先 `Release(name)` 或 `link.Release()` |
+| 把资源交给另一个系统 | `ShareTo(target, name)` 或 `target.Adopt(asset)` |
 
-## 释放是如何发生的
+**工作原理。** 作用域结束时 —— GameObject 被销毁、场景被卸载、调用了 `Dispose()`、应用退出 —— 它会放手所加载的一切。
+不再有人持有的资源会 **每帧一次、在帧末** 被释放，在你的所有代码运行之后，绝不会发生在代码中途。在同一帧内放手再加载，
+不会重新加载任何东西。
 
-一个已加载的资源分三步回到引擎：**作用域察觉自己的结束** → **它放开持有的每一个引用** → **计数归零的资源在帧末
-一次性归还。**
+**忘记结束的作用域。** 场景卸载或应用退出时仍然打开的 Explicit 作用域会被代为结束，并连同其路径记录为一条警告
+（`Root/Field/ForgottenPopup`）。设置 `ContentService.CaptureStackTrace = true` 可以看到它是在哪里创建的。
 
-### 1. 作用域如何知道自己已经结束
+## 从 CDN 下载内容
 
-| 作用域 | 信号 | 内部发生什么 |
+`Packed` 配置档的输出可以下载到缓存文件夹，并从那里注册。
+
+**1. 构建并上传。** 使用输出路径在 `Assets/` 之外的 `Packed` 配置档。每次构建后，把整个输出文件夹 —— 归档、
+`archives.json` 和 `archives.hash` —— 上传到每个平台、每个应用版本各一个 URL。归档名称带有其内容的哈希，可以永久缓存；
+请在 CDN 上给 `archives.json` 和 `archives.hash` 设置较短的缓存时间。
+
+**2. 启动时检查、下载、注册：**
+
+```csharp
+var options = new ContentRemoteOptions
+{
+    BuiltInDirectory = Path.Combine(Application.streamingAssetsPath, "MainContent"),   // 可选：应用自带的一份副本
+    RetryCount = 3,
+    Timeout = 30,
+};
+var remote = await ContentRemote.CheckAsync("Main", $"https://cdn.example.com/content/{platform}/Main", options);
+
+if (remote.BytesToDownload > 0)
+    ShowDownloadSize(remote.BytesToDownload);
+
+if (await remote.DownloadAsync())   // 轮询 remote.Status 获取进度
+{
+    await ContentService.RegisterPackedDirectoryAsync(remote.CacheDirectory);
+    remote.CleanCache();            // 删除新构建不再使用的归档
+}
+else
+    Debug.LogError(remote.Error);
+```
+
+- 只下载缓存中缺少的归档。中断的下载会续传；MD5 不匹配的文件绝不会被使用。
+- 离线时，检查会回退到缓存最近一次下载的内容，然后是 `BuiltInDirectory`。`remote.Source` 说明用了哪一个，
+  `remote.Error` 说明原因。
+- 应用已经自带的归档（`BuiltInDirectory`）会被复制而不是下载。
+- 一个配置档的缓存文件夹 **或** 内置文件夹只注册其中之一，不要两个都注册：引擎会拒绝同一构建的第二个目录。
+- 在文件夹已注册的情况下下载是安全的；更新会在下一次注册该文件夹时生效。
+- 在编辑器中开启模拟时，检查会直接由工程应答，不发出任何请求。要试真实下载，请关闭模拟。
+
+| 选项 | 默认 | 含义 |
 |---|---|---|
-| **GameObject** | 该对象的 `OnDestroy` | 第一次调用 `gameObject.Scope()` 会添加一个隐藏的 `ContentScopeOwner` 组件；它的 `OnDestroy` 把作用域 Dispose 掉。从未激活的对象不会收到 `OnDestroy`，所以它的作用域在场景卸载时由 **场景作用域** 作为子级回收。 |
-| **Scene** | `SceneManager.sceneUnloaded` | `ContentScope.ForScene(scene)` 以场景句柄为键创建作用域。`sceneUnloaded` 时该作用域被 Dispose。其对象 **已移动到另一个场景** 的子 GameObject 作用域（`MoveGameObjectToScene` · `DontDestroyOnLoad` —— 所有者的 `scene` 已不再是这一个）不会被释放，而是被重新挂到它们现在所在的场景之下。 |
-| **Root** | `Application.quitting` | `ContentService.Shutdown()` 把 Root Dispose 掉，整棵树级联。你自己对 Root 调用 `Dispose()` 只会记录一条错误。 |
-| **Explicit** | 你的 `Dispose()` | 没有它，父级的结束会级联进来 —— 而当父级是场景或 Root 时，会记录一条带路径和创建栈的 **泄漏警告**。通过显式父级或已销毁的所有者 GameObject 结束属于正常生命周期，不会警告。 |
+| `CacheRoot` | `persistentDataPath/ContentLink` | 缓存放在哪里：`<CacheRoot>/<profile>` |
+| `BuiltInDirectory` | 无 | 应用自带的 Packed 构建 |
+| `Timeout` | `0`（无） | 多少秒没有新字节就重试请求 |
+| `RetryCount` | `0` | 每个请求的重试次数 |
+| `VerifyCachedFiles` | `false` | 也校验已缓存文件的 MD5 |
+| `WebRequestOverride`、`TransformUrl` | 无 | 调整每个请求（请求头）或 URL（签名） |
 
-克隆体（`Object.Instantiate`）继承 `ContentScopeOwner` 序列化的键列表，并在 `Awake` 里取得 **它们自己的引用**
-（原件仍持有时共享，原件已消失时重新加载）。以非激活状态创建的克隆体，其 `Awake` 被推迟，在第一次激活时取得引用。
+## 本地化内容
 
-### 2. 作用域结束时做什么 —— 按顺序
+区域设置是第二个配置档，只在相同路径下放语言要替换的文件。在本体之后注册时，两者共有的名称由区域设置的文件应答，其余名称
+仍是本体的。
 
-1. `IsDisposed = true`，`DisposedToken` 被取消 —— 该作用域上仍在进行的加载被取消。
-2. 子作用域按逆序结束（适用上面的移交规则）。
-3. 每个按键持有的引用（`LoadAsync`/`Load`）和每个 `Attach` 的句柄被释放 → 各资源的计数下降。
-4. 作用域拥有的场景被卸载（应用退出时除外 —— 引擎会自己拆掉它们）。
-5. 被场景或 Root 回收的显式作用域记录那条警告。
+| 配置档 | 源根目录 | 输出路径 |
+|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` |
+| `Main.ko` | `Assets/Content.ko` | `Assets/StreamingAssets/MainContent.ko` |
 
-### 3. 计数归零之后
+`Assets/Content.ko/Icons/flag.png` 替代 `Assets/Content/Icons/flag.png` —— 两者都是 `Icons/flag`。把区域设置的根目录放在
+本体根目录 **旁边**，并让两个配置档使用相同的名称风格。
 
-每个资源有一个槽位（来自任何作用域的同一名称是同一个槽位），槽位携带计数。计数归零时槽位 **不会当场释放**：
-它连同帧号一起进入队列。真正的释放由 `ContentService.Collect()` 完成，包把它插入播放器循环中 `PostLateUpdate` 的
-末尾 —— **每帧一次**，在你的所有代码都运行之后。
+```csharp
+static string Dir(string name) => Path.Combine(Application.streamingAssetsPath, name);
 
-对队列中的每个槽位，`Collect()` 做以下之一：
+ContentService.RegisterDirectory(Dir("MainContent"));      // 先注册本体
+ContentService.RegisterDirectory(Dir("MainContent.ko"));   // 然后是区域设置，在第一次加载之前
 
-- 期间有人再次获取了它，计数不再为零 → 它只是离开队列（**同一帧内的释放再获取绝不会重新加载**）；
-- 它仍在加载中 → 放着不动，直到加载完成；
-- 自归零起还不到 `ReleaseDelayFrames` 帧 → 下一帧再看；
-- 否则 → 调用引擎的 `Loadable.Release()` 并清空槽位。槽位的代号前进，所以迟到完成的加载碰不到这个空槽位。
+var flag = await this.Scope().LoadAsync<Sprite>("Icons/flag");   // 韩语的旗帜
+```
 
-设置 `ContentService.AutoCollect = false` 后播放器循环钩子什么都不做，由你自己调用 `Collect()`。
+**运行时切换语言。** 把区域设置要替换的东西加载到一个作用域里，这样切换时可以一次全部放手：
 
-### 目录与关闭
+```csharp
+ContentScope localized = ContentScope.Root.CreateChild("Localized");
+int locale = -1;
 
-`ContentService.UnregisterDirectory(dir)` 在该目录的资源仍被持有或该目录的某个场景仍打开时拒绝执行，因为引擎要求
-先释放所有 `Loadable`、卸载所有场景；`force: true` 会使剩余的资源引用失效（打开的场景永远不会），此后曾持有它们的
-作用域只看到活着的引用 —— `Count`、`DumpTree` 和 `Release(key)` 会悄悄丢弃被杀掉的引用。打包目录在注销时卸载其归档。
-`ContentService.Shutdown()`（也在 `Application.quitting` 时运行）Dispose 作用域树，报告剩余的裸句柄，并注销一切。
+bool SwitchLocale(string code)   // "ko"、"ja"、…… —— 只用本体时为 null
+{
+    localized.Dispose();                                    // 放手旧区域设置的资源
+    if (locale >= 0 && !ContentService.UnregisterDirectory(locale))
+        return false;                                       // 仍被某处持有 —— 错误信息会说明是什么
+    locale = code == null ? -1 : ContentService.RegisterDirectory(Dir("MainContent." + code));
+    localized = ContentScope.Root.CreateChild("Localized");
+    return true;                                            // 重新加载：名称现在以新语言应答
+}
+```
+
+使用 Unity 的 Localization 包时，把字符串翻译交给它，并在 `LocalizationSettings.SelectedLocaleChanged` 中调用
+`SwitchLocale`。
 
 ## 编辑器模拟
 
-在编辑器里，由工程来充当内容目录。在 Play Mode 中以某个 **配置档的输出文件夹** 为路径调用 `RegisterDirectory`
-（或 `RegisterPackedDirectoryAsync`）时，不会向引擎注册任何东西：名称来自配置档源根目录此刻在磁盘上的样子，按配置档
-的类别过滤，每个资源从工程加载。修改一张贴图再按 Play —— 你看到修改。删除一个文件 —— 加载失败。添加一个文件 ——
-它能加载。克隆仓库直接按 Play —— 不需要构建。
+*Window > ContentLink > Editor Simulation*（默认开启）。在 Play Mode 中注册配置档的输出文件夹时，该配置档 **由工程提供**：
+新增、修改、删除的资源所见即所得，无需构建。文件夹甚至不必存在。
 
-```
-Window > ContentLink > Editor Simulation     开关（默认开启，按工程保存）
-```
-
-相当于 Addressables 的 *Use Asset Database* 播放模式：一种创作时的便利，不是构建的替代品。关掉它来检查构建是否
-表现一致 —— 此时编辑器会像播放器一样真正注册已构建的目录。
-
-- **什么都不写入。** 索引（名称 → 路径）在内存里，在注册目录或进入 Play 时建立，退出 Play 时丢弃。
-- **只有配置档的输出文件夹以这种方式提供。** 其他任何路径（下载的副本、临时的构建）都会真正注册；在这类目录的
-  根之下，还没有任何目录表携带的名称仍然从工程解析（原始的模拟），两处都有的名称由真正的目录表回答。
-- **注册仍然是必须的。** 忘掉的 `RegisterDirectory` 在编辑器里和在播放器里一样失败；同一文件夹注册两次会被拒绝，
-  源根目录不存在的配置档会抛出异常。
-- **开关在注册目录时读取。** Play 中途关掉它，已由工程提供的目录会一直工作到下一次 Play；只有真实目录之下的名称
-  停止解析。退出 Play 时的摘要和重置无论开关此刻怎样都会运行。
-- **被释放的资源不会卸载。** 引用计数不变，但编辑器会让对象活着，所以创作期间的内存读数比构建高。请在开关关闭时
-  确认卸载行为。持有由工程提供的资源永远不会阻止注销目录。
-- **Play 期间的修改就地可见**（重新导入会刷新已加载的对象）；被删除的资源，其对象会在仍持有它的任何句柄之下被销毁，
-  对它的新加载会以错误失败。
-- **归档不会被演练。** `Packed` 和 `Engine` 的输出与其他输出一样由工程提供；挂载和归档的行为需要关闭开关。
-- **模拟的场景** 通过 `EditorSceneManager.LoadSceneAsyncInPlayMode` 打开；请求它的作用域仍会卸载它，但它们不属于
-  任何目录。
-- **重复的名称会被拒绝**，就像构建器拒绝它们那样，所以不存在只在编辑器里能用的名称。
-
-每一次这样的注册都会记录一行，说明由哪个配置档和根目录提供。离开 Play Mode 时记录一行，列出模拟解析过的名称 ——
-加载过的，或只用 `RuntimeKeyIsValid` / `Contains` 检查过的 —— 之中配置档的目录表尚未携带的那些：发布前需要构建的
-链接；`ContentService.SnapshotSimulated(list)` 在播放时报告每一个由工程提供的名称。
-`ContentService.TryGetLoadableObjectId(name, out id)` 也回答由工程提供的名称。
+- 和播放器一样，仍然需要注册。
+- 不会向磁盘写入任何东西。
+- 在编辑器中，已释放的资源会留在内存里 —— 请关闭模拟来检查内存和释放行为。
+- 不使用归档。要测试真实的构建、归档和下载，请关闭模拟。
+- Play Mode 结束时，控制台会列出你加载过但还没有任何目录表收录的名称：发布前请构建。
 
 ## 诊断
 
@@ -586,81 +694,50 @@ Window > ContentLink > Editor Simulation     开关（默认开启，按工程�
       Hold [Explicit] 1 (peak 1) : Icons/sword
       Boss [GameObject] 1 (peak 1) : Icons/shield
   ```
-  子级按作用域持有它们的顺序列出，这不是创建顺序：移除一个作用域会把最后一个同级挪进它的槽位，所以无论树多大，
-  移除的开销都相同。
 
-- `ContentService.Snapshot(list)` —— 每一个活着的引用（`CaptureStackTrace` 开启时带堆栈跟踪）
-- `ContentService.SnapshotScenes(list)` / `LoadedSceneCount` —— 已打开的内容场景
-- `ContentService.SnapshotSimulated(list)` —— 编辑器模拟解析过的名称
+- `ContentService.Snapshot(list)` —— 当前持有的每个引用：它的名称、获取时的帧，以及获取的位置
+  （`ContentService.CaptureStackTrace = true` 时）
 - `ContentService.LiveAssetCount` —— 当前持有的资源数
-- 构建窗口显示本次编辑器会话的上次构建（配置档、目标、文件数、耗时、错误）；日志里每次构建有一行
-  `[ContentLink] built …`
+- `ContentScope.DefaultWarnThreshold` —— 一个作用域持有的资源超过这个数时发出警告
+- 构建窗口显示最近一次构建；控制台每次构建留一行 `[ContentLink] built …`
 
-## 从 AssetLink 或 Addressables 迁移
+## 从 Addressables、Resources 迁移
 
-| 以前 | ContentLink |
+| Addressables | ContentLink |
 |---|---|
-| `AssetLink.LoadAssetAsync()` + `ReleaseAsset()` | `ContentLink.LoadAsync(owner)`；`Release()` 可选 |
-| `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
-| `AddressablesTracker.ReportUnreferencedHandles()`（基于 GC） | 场景卸载 / 退出时的作用域警告（确定性） |
-| Auto Regist Folder Pattern | 构建配置档与类别 |
-| `AssetRef`（GUID） | `ContentRef<T>` / `ContentSceneRef` |
-| `AssetReference` / `AssetReferenceSprite` 字段 | `ContentRef<T>` 字段 —— 只改类型，数据保留（见下） |
-| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)`；`this.Scope().Release(ref)` 可选 |
-| `ref.RuntimeKeyIsValid()`（“是否已设置”） | `ref.IsSet` |
+| 组和包 | 配置档和类别；`Packed` 归档 |
+| `Addressables.LoadAssetAsync` + `Release` | `scope.LoadAsync` —— 释放是自动的 |
+| `AssetReference` / `AssetReferenceSprite` 字段 | `ContentRef<T>` —— 只需改字段类型，保存的 GUID 原样沿用 |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` |
+| `InstantiateAsync` + `ReleaseInstance` | `scope.InstantiateAsync` —— 销毁实例 |
 | *Use Asset Database* 播放模式 | 编辑器模拟 |
-| Addressables 的组 / 包 | 配置档 / 类别，`Packed` 归档 |
+| `CheckForCatalogUpdates` / `UpdateCatalogs` | `ContentRemote.CheckAsync` |
+| `GetDownloadSizeAsync` / `DownloadDependenciesAsync` | `remote.BytesToDownload` / `remote.DownloadAsync()` |
+| `ClearDependencyCacheAsync` | `ContentRemote.ClearCache(profile)` / `remote.CleanCache()` |
 
-**从 `AssetReference` 字段迁移。** 把字段类型改为 `ContentRef<T>`，序列化的 GUID 与精灵名称会保留。资源必须位于内容根目录下
-（移动过去 GUID 不变）。Addressables 会写出三种形态，其中只有一种可以直接解析：
+从 `AssetReference` 沿用过来的 `ContentRef<T>`，其资源必须位于内容根目录之下（移动过去 GUID 不变）。
 
-| 在 Addressables 中选择的 | 保存的值 | 在 ContentLink 中 |
-|---|---|---|
-| 精灵 | 纹理 GUID + 精灵名称 | 可以解析 |
-| 拖到 `AssetReferenceSprite` 上的纹理 | 纹理 GUID，没有精灵名称 | 是纹理而不是精灵：字段显示红色 —— 请重新选择精灵 |
-| Addressable 精灵图集中的精灵 | 图集 GUID + 精灵名称 | 不支持（经由图集的精灵不在目录中）：黄色 —— 请从纹理中选择精灵 |
-
-## 注意事项与限制
-
-- 仅限主线程。取消令牌也来自主线程。
-- 引擎加载不能取消。被取消的请求立即归还其引用；加载完成后在下一次 `Collect()` 时释放。
-- 引擎抛出异常的加载与其他失败一样报告 —— 无效句柄，并记录日志 —— 同步和异步路径都是如此；不会有东西被一直持有。
-- 由工程提供的 Play Mode 内容（编辑器模拟）不受 Unity 引用计数。请在模拟关闭时，针对已构建并注册的内容目录测试
-  释放行为。
-- 以非激活状态创建的克隆体在第一次激活时取得引用。
-- 场景不做引用计数。以 additive 方式加载同一场景两次得到两个实例；各自分别跟踪和卸载。场景没有 `ShareTo` / `Adopt`。
-- 内容目录是为一个构建目标构建的，在别的目标上可能加载不了。
-- `Packed` 的归档大小是对输入字节的上限，不是对压缩后文件的。哈希前缀 trie 产生的归档数约为普通填充的 1.5 倍；
-  徘徊在上限附近的归档可能在不同构建之间分裂与合并；修改 `MaxArchiveMB` 或分割器会重新分割输出。
-- 构建需要工程锁：命令行构建之前，请在其他编辑器实例中关闭该工程。
-- 引用与名称共享资源的作用域键：无论从哪一方释放，两者都会被释放。若两个字段需要各自释放，请使用 `ContentLink` 或子作用域。
-- 链接的 `Name` 是主名称，精灵链接的精灵名称是 `SubObjectName`。`SetName(name)` 会清空精灵名称，所以请用
-  `SetName(a.Name, a.SubObjectName)` 复制链接 —— 丢失了它的 `ContentLink<Object>` 会不报错地加载纹理。
-- 子资源只能按名称引用精灵。其他子资源（模型文件中的网格）以及经由精灵图集的精灵无法引用。
-- 同一文件以两个名称被构建时 —— 在基础目录与之后的补丁之间移动过 —— 引用解析为最近注册的目录中的名称，而保留旧名称的链接
-  会加载另一份副本：内存中有两份副本。
-
-## 仓库结构与测试
-
-| 路径 | 是什么 |
+| Resources | ContentLink |
 |---|---|
-| `com.xpTURN.ContentLink/` | 包（`Runtime`、`Editor`、`Tests~/Verify`、`README`、`CHANGELOG`） |
-| `samples/LinkSample/` | 通过 `file:` 使用该包的 Unity 6.6 工程 —— `Assets/Content` 下有贴图、精灵图集、预制体、场景和音频 |
-| `tests/LinkTests/` | Unity Test Runner 工程：EditMode（构建器、设置、打包器、窗口模型）和 PlayMode（生命周期、场景、打包注册、分配）套件 |
-| `tools/run-all-tests.sh` | 运行全部：dotnet 测试台，然后 EditMode，然后 PlayMode（`--player` 额外运行独立播放器） |
-| `tools/build-content.sh` | 命令行内容构建 |
-| `docs/IMP/` | 设计与实现记录（韩语） |
-| `.github/` | CI（`workflows/check.yml`）：每次 push 和 pull request 运行 dotnet 测试台、`.meta` 伴生文件检查和版本清单检查；Unity 套件需要有许可的编辑器，只在本地运行 |
+| `Resources.Load<TextAsset>("Config/boot")` | `scope.Load<TextAsset>("res:Config/boot")` |
+| `Resources.Load<Sprite>("UI/logo")` | `scope.Load<Sprite>("res:UI/logo[logo]")` |
+| `Resources.UnloadAsset(asset)` | 无需 —— 作用域负责释放 |
+| `Resources.UnloadUnusedAssets()` | `ContentService.SweepResources()` |
 
-`Tests~/Verify` 针对已文档化的 Unity 6.6 API 桩和一个强制执行 Loadable 引用规则的伪引擎来编译包，并运行生命周期、
-构建和打包场景（用 .NET 8 SDK `dotnet run`）。Unity 套件针对测试自己构建的内容目录运行，在编辑器和独立播放器中都有。
-已在 Unity 6000.6.0f1 上验证。
+## 须知
 
-```
-tools/run-all-tests.sh                 # 测试台 + EditMode + PlayMode
-tools/run-all-tests.sh --dotnet-only   # 仅测试台（几秒钟）
-tools/run-all-tests.sh --player        # 另外在 StandaloneOSX 播放器中运行 PlayMode
-```
+- **仅限主线程。** 在主线程上加载、注册和取消。
+- **一个构建对应一个平台。** 为一个平台构建的内容目录在另一个平台上可能无法加载。
+- **精灵图集** 需要把 *Project Settings > Editor > Sprite Packer > Mode* 设为 Sprite Atlas V2。旧版（V1）的
+  `.spriteatlas` 文件在内容根目录下会被拒绝 —— 请迁移到 V2。
+- 作为子资源加载的 **只有精灵**。模型文件中的网格不能单独加载。
+- **场景不共享。** 一个场景加载两次会得到两个实例，各自单独卸载。
+- **非激活的克隆。** 以非激活状态创建的克隆在第一次唤醒之前什么也不持有。如果原件可能先被销毁，请在 `Instantiate` 之后
+  立刻调用 `clone.Scope()`。
+- **引用和名称共用一个槽位。** 释放其中一个也会释放另一个；两个字段需要分别释放时，请使用链接或子作用域。
+- **让内容根目录与 `Resources` 文件夹分开。** 同时位于两者中的文件会以两个名称被构建两次。
+- **不要在内容场景加载过程中停止 Play Mode** —— 无论是否使用 ContentLink，6000.6 编辑器在这种情况下都可能崩溃。
+- **在编辑器中 `Resources.UnloadAsset` 不会卸载任何东西。** 请在播放器中确认 `res:` 资源的释放。
 
 ## 许可证
 

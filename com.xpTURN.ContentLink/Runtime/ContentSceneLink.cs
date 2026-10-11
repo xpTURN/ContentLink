@@ -47,7 +47,7 @@ namespace xpTURN.ContentLink
             m_Name = name;
         }
 
-        public Awaitable<Scene> LoadAsync(Component owner, CancellationToken ct = default) => LoadAsync(owner.Scope(), ct);
+        public Awaitable<Scene> LoadAsync(Component owner, CancellationToken ct = default) => LoadAsync(owner != null ? owner.Scope() : throw new ArgumentNullException(nameof(owner)), ct);
 
         public async Awaitable<Scene> LoadAsync(ContentScope scope, CancellationToken ct = default)
         {

@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08cd40f84d530471689a91006e6d88f8, type: 3}
+  m_Name: CatalogG.ko
+  m_EditorClassIdentifier: xpTURN.ContentLink::xpTURN.ContentLink.ContentCatalog
+  m_Entries:
+  - name: Icons/flag
+    id: {fileID: 2800000, loadable: 1, guid: c4872d3610eb45bc8e057f2f2860601d, type: 3}
+    guid: c4872d3610eb45bc8e057f2f2860601d
+    sub: 
+  - name: Icons/koonly
+    id: {fileID: 2800000, loadable: 1, guid: 1d95d6a61d984e2fb660b382b9079eed, type: 3}
+    guid: 1d95d6a61d984e2fb660b382b9079eed
+    sub: 
+  - name: Materials/Banner
+    id: {fileID: 2100000, loadable: 1, guid: c2fe8722cf5645c890da766d9e866b19, type: 2}
+    guid: c2fe8722cf5645c890da766d9e866b19
+    sub: 
+  m_Scenes:
+  - name: Scenes/Title
+    id:
+      m_SceneGUID: 2cf4d2a2855947caa9dcfa2ea6afdaea
+    guid: 2cf4d2a2855947caa9dcfa2ea6afdaea
+  m_SourceRoot: Assets/TestContent/G.ko
+  m_NameStyle: 0

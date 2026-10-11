@@ -4,115 +4,167 @@
 
 [English](README.md) | **한국어** | [日本語](README.ja-JP.md) | [简体中文](README.zh-CN.md)
 
-ContentLink 는 Unity 6.6 에 내장된 **콘텐츠 디렉터리**에서 스프라이트 · 프리팹 · 씬 · 오디오 같은 게임 콘텐츠를
-**이름으로** 로드하고, 모든 로딩 시스템이 사용자에게 떠넘기는 한 가지 일 — 로드한 에셋을 언제 놓아도 되는가 —
-를 대신 맡습니다.
+ContentLink 는 Unity 6.6 을 위한 완결된 콘텐츠 작업 흐름으로, 엔진의 **콘텐츠 디렉터리**를 기반으로 합니다.
+콘텐츠 디렉터리는 플레이어가 런타임에 등록하고 로드하는, 빌드된 에셋의 폴더입니다. ContentLink 는 에셋을 프로젝트
+폴더에서 화면까지 데려갑니다. 에셋을 **이름으로** 가리키고, 빌드하고, 플레이어에 넣거나 CDN 으로 출하하고, 스크립트나 인스펙터
+필드에서 로드합니다. 로드한 쪽이 사라지면 에셋은 저절로 해제됩니다.
 
-**문제.** `Resources`, AssetBundle, Addressables 모두 로드마다 해제를 손으로, 모든 스크립트에서 짝지어야 합니다.
-하나를 빠뜨리면 앱이 끝날 때까지 메모리가 늘고, 너무 일찍 놓으면 텍스처가 사라집니다. 범인을 찾는 도구는 일이
-벌어진 뒤에 프로파일러로 짐작할 뿐입니다.
+```csharp
+public class ItemView : MonoBehaviour
+{
+    public Image image;
 
-**ContentLink 가 하는 것.** 모든 로드는 **스코프**에 속합니다 — 요청한 GameObject, 그 씬, 앱, 또는 스테이지나
-팝업용으로 직접 만든 것. 스코프가 끝나면(오브젝트 파괴 · 씬 언로드 · 앱 종료 · 직접 Dispose) 들고 있던 것이 전부
-해제됩니다. 로드하면 끝입니다: 잊은 해제는 최대 메모리를 조금 높일 뿐, 올바름을 깨뜨리지 않습니다. 같은 원리가
-직렬화 참조(`ContentLinkSprite icon;` + 인스펙터 드로어), 인스턴스화한 프리팹, 콘텐츠 씬에도 적용됩니다.
+    async void Start()
+    {
+        // Assets/Content/Icons/sword.png — 이름으로 로드하고, 이 GameObject 가 파괴될 때 해제된다
+        image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
+    }
+}
+```
 
-**그 밖에 들어 있는 것.** 콘텐츠 디렉터리 자체를 만드는 빌드 파이프라인 — `ProjectSettings` 에 저장되는 프로파일,
-빌드 창, 다운로드 파이프라인을 위한 결정론적 크기 분할 아카이브, 후처리 훅, 명령줄 — 그리고 Play Mode 가 프로젝트에서
-바로 로드해 작업 중엔 아무것도 굽지 않아도 되는 에디터 모드. 의존성은 Unity 6000.6 뿐입니다.
-
-> **로드하고, 해제는 잊으세요.** 에셋은 소유자 — GameObject, 씬, 앱 — 가 사는 만큼만 살고, `Release()` 는
-> 언제나 최적화일 뿐 의무가 아닙니다.
+> **이름으로 가리키세요, 에디터에서 CDN 까지 — 그리고 해제는 잊으세요.** 에셋은 소유자 — GameObject, 씬, 앱 — 가
+> 사는 만큼만 살고, `Release()` 는 언제나 최적화일 뿐 의무가 아닙니다.
 
 ---
 
 ## 목차
 
 1. [무엇을 얻는가](#무엇을-얻는가)
-2. [요구사항과 설치](#요구사항과-설치)
-3. [다섯 가지 개념](#다섯-가지-개념)
-4. [빠른 시작](#빠른-시작)
-5. [이름](#이름)
-6. [콘텐츠 빌드](#콘텐츠-빌드)
-7. [콘텐츠 로딩](#콘텐츠-로딩)
-8. [Release 는 언제 부르나](#release-는-언제-부르나)
-9. [해제는 어떻게 일어나나](#해제는-어떻게-일어나나)
-10. [에디터 시뮬레이션](#에디터-시뮬레이션)
-11. [진단](#진단)
-12. [AssetLink · Addressables 에서 옮겨오기](#assetlink--addressables-에서-옮겨오기)
-13. [주의와 제한](#주의와-제한)
-14. [저장소 구조와 테스트](#저장소-구조와-테스트)
+2. [설치](#설치)
+3. [전체 그림](#전체-그림)
+4. [튜토리얼: 첫 콘텐츠 디렉터리](#튜토리얼-첫-콘텐츠-디렉터리)
+5. [카탈로그 설정](#카탈로그-설정)
+6. [빌드](#빌드)
+7. [로드](#로드)
+8. [해제](#해제)
+9. [CDN 에서 콘텐츠 받기](#cdn-에서-콘텐츠-받기)
+10. [로컬라이즈 콘텐츠](#로컬라이즈-콘텐츠)
+11. [에디터 시뮬레이션](#에디터-시뮬레이션)
+12. [진단](#진단)
+13. [Addressables · Resources 에서 옮겨 오기](#addressables--resources-에서-옮겨-오기)
+14. [알아 둘 점](#알아-둘-점)
 15. [라이선스](#라이선스)
 
 ---
 
 ## 무엇을 얻는가
 
-| 영역 | 기능 |
+| 단계 | ContentLink 가 주는 것 |
 |---|---|
-| 로딩 | `scope.LoadAsync<T>("Icons/sword")` — 에셋은 스코프의 것, 해제할 것이 없다 |
-| 스코프 | 스스로 끝나는 Root / Scene / GameObject / Explicit 스코프 · 스코프당 중복 제거 · 경로가 찍히는 누수 경고 |
-| 직렬화 참조 | `ContentLink<T>` · `ContentSceneLink`(이름) 와 `ContentRef<T>` · `ContentSceneRef`(GUID — 파일을 옮기거나 이름을 바꿔도 유지) 필드 — 인스펙터 드로어가 채우고 검증 |
-| 인스턴스 | `scope.InstantiateAsync("Prefabs/Cat")` — 프리팹 참조는 인스턴스와 그 복제본이 가진다 |
-| 씬 | 스코프나 링크가 소유하는 콘텐츠 씬 · 어떤 모드로든 비소유 로드 · 열린 씬 추적 |
-| 결정적 해제 | 엔진 해제는 프레임당 한 지점(`Collect()`)에서만 — 코드 중간에서 일어나지 않는다 |
-| 빌드 프로파일 | 소스 루트 · 출력 · 디렉터리당 여러 카테고리(카탈로그) · 아카이브 모드 · 압축 · 엔진 옵션 — `ProjectSettings` 에 저장 |
-| 빌드 창 | *Window > ContentLink > Build Window*: Undo 되는 프로파일 편집 · 검증 메시지 · 하나 또는 전부 빌드 |
-| 패킹 아카이브 | 빌드를 약 `MaxArchiveMB` 크기의 아카이브들로 결정론적으로 분할 · 런타임이 다시 한 디렉터리로 마운트 |
-| 후처리 | `IContentBuildPostProcess` 단계가 빌드 뒤 적힌 순서대로 돈다 |
-| 명령줄 | `-executeMethod` 로 `ContentBuildCLI.Build` · 덮어쓰기 · `profile all` · 종료 코드 · `tools/build-content.sh` |
-| 에디터 시뮬레이션 | Play Mode 에서 프로파일의 디렉터리를 프로젝트가 대신한다: 추가·수정·삭제가 그대로 보이고 빌드가 필요 없다 — 아무것도 쓰지 않는다 |
-| 진단 | 스코프 트리 덤프 · 참조 스냅샷 · 마지막 빌드 요약 |
+| **이름** | 폴더(`Assets/Content`) 아래의 모든 에셋이 경로에서 이름을 얻습니다: `Icons/sword`, `Prefabs/Cat`, `Scenes/Arena` |
+| **고르기** | 이름(`ContentLinkSprite icon;`)이나 GUID(`ContentRef<Sprite>`)를 담는 인스펙터 필드 — 끌어다 놓기와 상태 색 |
+| **작업** | 에디터에서는 Play Mode 가 프로젝트에서 바로 로드합니다 — 작업 중엔 빌드할 것이 없습니다 |
+| **빌드** | 프로파일 · 카탈로그 · 압축 · 크기 분할 아카이브를 다루는 빌드 창, CI 용 명령줄 |
+| **출하** | 플레이어 안(`StreamingAssets`)에, 또는 CDN 에서 받기 — 바뀐 아카이브만, 이어받기와 MD5 검증 |
+| **로드** | 스프라이트 · 프리팹 · 오디오 · 모든 에셋 형식, 프리팹 인스턴스와 씬 — 비동기 또는 동기, 이름으로 |
+| **해제** | 자동: 모든 로드는 **스코프**(GameObject · 씬 · 앱 · 직접 만든 것)에 속하고 스코프가 끝나면 함께 갑니다 |
+| **살펴보기** | 스코프 트리 덤프, 살아 있는 참조 스냅숏, 끝내기를 잊은 스코프를 이름으로 알리는 경고 |
 
-## 요구사항과 설치
+의존성은 Unity 6000.6 뿐입니다.
 
-- Unity **6000.6** 이상(`Unity.Loading` 콘텐츠 디렉터리 API).
-- 다른 의존성 없음.
+## 설치
 
-**git 에서** — *Window > Package Manager > + > Add package from git URL*:
+*Window > Package Manager > + > Add package from git URL*:
 
 ```
 https://github.com/xpTURN/ContentLink.git?path=/com.xpTURN.ContentLink
 ```
 
-**로컬 체크아웃에서** — `Packages/manifest.json`:
+또는 로컬 체크아웃이라면 `Packages/manifest.json` 에 추가합니다:
 
 ```json
 "com.xpturn.contentlink": "file:../../ContentLink/com.xpTURN.ContentLink"
 ```
 
-이 저장소의 `samples/LinkSample` 이 정확히 그렇게 연결된 Unity 프로젝트입니다.
+이 저장소의 `samples/LinkSample` 은 아래 튜토리얼과 똑같이 설정된 작은 Unity 프로젝트입니다: `Assets/Content` 아래의
+텍스처 · 스프라이트 아틀라스 · 프리팹 · 씬 · 오디오, 그리고 그것을 등록하고 로드하는 부트스트랩 스크립트.
 
-## 다섯 가지 개념
+## 전체 그림
 
-| 개념 | 무엇인가 |
+```
+ 에디터에서                                       런타임에서 (플레이어, 또는 Play Mode)
+ ─────────────────────────────────────────────   ─────────────────────────────────────────────────────
+ Assets/Content/Icons/sword.png                  1. 시작할 때 폴더를 한 번 등록
+        │                                            ContentService.RegisterDirectory(".../MainContent")
+        │  프로파일 "Main"                        2. 이름으로 스코프에 로드
+        ▼                                            this.Scope().LoadAsync<Sprite>("Icons/sword[sword]")
+ 카탈로그  "Icons/sword" → 엔진 id                 3. 스코프가 끝남 → 에셋이 해제됨
+        │
+        │  빌드
+        ▼
+ StreamingAssets/MainContent/  (콘텐츠 디렉터리: 빌드된 에셋 + 카탈로그)
+```
+
+| 용어 | 무엇인가 |
 |---|---|
-| **콘텐츠 디렉터리** | 엔진이 에셋에서 만들어 내는 폴더(`BuildPipeline.BuildContentDirectory`). 런타임에 등록하고 거기서 로드합니다. 하나의 빌드 타깃을 위해 만들어집니다. |
-| **카탈로그** | 빌드가 디렉터리에 넣는 `ContentCatalog` 에셋: 이름과 그것이 가리키는 엔진 id 의 목록. 한 디렉터리가 여러 카탈로그(*카테고리*마다 하나)를 가질 수 있습니다. |
-| **이름** | 로드할 때 쓰는 것: 소스 루트 기준 에셋 경로에서 확장자를 뺀 것 — `Icons/sword`. 서브에셋은 `Icons/sword[sword]`, 씬은 `Scenes/Arena`. |
-| **스코프** | 로드한 모든 것의 소유자. 스코프는 트리(Root → Scene → GameObject → Explicit)를 이루고 스스로 끝납니다. |
-| **링크** | 이름을 담는 직렬화 필드(`ContentLinkSprite icon;`). 인스펙터에서 정하고, 소유자를 넘겨 로드합니다. |
+| **소스 루트** | 에셋을 빌드할 폴더. 기본은 `Assets/Content`. |
+| **이름** | 로드할 때 쓰는 것: 소스 루트 아래 에셋 경로에서 확장자를 뺀 것 — `Icons/sword`. |
+| **카탈로그** | 모든 이름과 그 뒤의 엔진 id 를 적은 `ContentCatalog` 에셋. 창이 쓰고, 손으로 고치지 않습니다. 빌드가 콘텐츠 디렉터리에 넣습니다. |
+| **프로파일** | 콘텐츠 디렉터리 하나의 빌드 설정: 소스 루트, 출력 폴더, 카탈로그, 아카이브 형식. |
+| **콘텐츠 디렉터리** | 빌드의 출력 폴더. 런타임에 등록한 뒤 이름으로 로드합니다. |
+| **스코프** | 로드한 것의 소유자. 스코프가 끝나면 그것이 로드한 모든 것이 해제됩니다. |
+| **링크 · 참조** | 이름(링크)이나 에셋 GUID(참조)를 담는 직렬화 필드. 인스펙터에서 정합니다. |
 
-## 빠른 시작
+## 튜토리얼: 첫 콘텐츠 디렉터리
 
-**1. 소스 루트 아래에 에셋을 둡니다** — 기본은 `Assets/Content`:
+프로파일 하나, 카탈로그 하나, 빌드 한 번을 따라갑니다: 플레이어 안에 넣어 출하하는 콘텐츠입니다.
+
+### 1단계 — 에셋을 소스 루트 아래에 둔다
+
+`Assets/Content` 폴더를 만들고 콘텐츠를 넣습니다. 하위 폴더는 마음대로 나눠도 됩니다:
 
 ```
-Assets/Content/Icons/sword.png        →  "Icons/sword"            (Texture2D)
-                                         "Icons/sword[sword]"     (그 안의 Sprite 서브에셋)
-Assets/Content/Prefabs/Cat.prefab     →  "Prefabs/Cat"
-Assets/Content/Scenes/Arena.unity     →  "Scenes/Arena"
+Assets/Content/Icons/sword.png        (Texture Type: Sprite)
+Assets/Content/Prefabs/Cat.prefab
+Assets/Content/Audio/click.wav
+Assets/Content/Scenes/Arena.unity
 ```
 
-**2. 빌드합니다** — *Window > ContentLink > Build Window*. 처음 열면 `Main` 프로파일이 보입니다:
-소스 루트 `Assets/Content`, 루트 전체를 담는 카테고리 하나, 출력 `Assets/StreamingAssets/MainContent`,
-아카이브 `None`(평면 파일). **Build 'Main'** 을 누르세요. (*Window > ContentLink > Build Content
-Directory* 는 창을 열지 않고 활성 프로파일을 굽습니다.)
+파일마다 이름이 생깁니다 — `Assets/Content` 아래 경로에서 확장자를 뺀 것입니다:
 
-`StreamingAssets` 는 플레이어 안에 실리므로 아래 코드가 그 폴더를 찾습니다. 다운로드 파이프라인이라면
-`Archive` 를 `Packed` 로, 출력은 `Assets/` 밖으로 두고 아카이브를 직접 배포하세요 — [콘텐츠 빌드](#콘텐츠-빌드) 참고.
+| 파일 | 이름 | 로드되는 것 |
+|---|---|---|
+| `Icons/sword.png` | `Icons/sword` | `Texture2D` |
+| — 그 스프라이트 `sword` | `Icons/sword[sword]` | `Sprite` |
+| `Prefabs/Cat.prefab` | `Prefabs/Cat` | 프리팹(`GameObject`) |
+| `Audio/click.wav` | `Audio/click` | `AudioClip` |
+| `Scenes/Arena.unity` | `Scenes/Arena` | 씬 — `LoadSceneAsync` 로 로드 |
 
-**3. 시작할 때 디렉터리를 한 번 등록합니다** — 무엇이든 로드하기 전에:
+이 파일들이 쓰는 에셋 — 머티리얼의 텍스처, 프리팹의 메시 — 은 자동으로 함께 빌드됩니다. 이름으로 로드할 것만 루트
+아래에 있으면 됩니다.
+
+### 2단계 — 빌드 창을 연다
+
+*Window > ContentLink > Build Window*. 처음 열면 창에 프로파일 `Main` 하나가 있습니다:
+
+| 필드 | 값 | 뜻 |
+|---|---|---|
+| Name | `Main` | 프로파일 이름 |
+| Name style | `PathWithoutExtension` | 확장자 없는 이름(`Icons/sword`) — [이름 스타일](#이름-스타일) 참고 |
+| Source root | `Assets/Content` | 에셋을 빌드할 폴더 |
+| Output path | `Assets/StreamingAssets/MainContent` | 빌드를 쓸 곳 — `StreamingAssets` 는 플레이어 안에 들어갑니다 |
+| Categories | 한 행: *(whole root)* | 루트 전체가 카탈로그 하나로 — `Assets/ContentCatalog.asset` 에 만들어짐 |
+| Archive | `None` | 평평한 파일 — [아카이브 형식](#아카이브-형식) 참고 |
+| Compression | `Uncompressed` | 아카이브에만 적용 |
+| Target | `NoTarget` | 지금 활성인 플랫폼으로 빌드 |
+
+설정은 `ProjectSettings/ContentLinkBuild.asset` 에 저장됩니다. 이 파일을 커밋하세요.
+
+### 3단계 — 카탈로그를 만든다
+
+창 아래쪽의 **Update catalogs** 를 누릅니다. `Assets/Content` 를 훑어 `Assets/ContentCatalog.asset` 을 씁니다. Project
+창에서 그 에셋을 고르면 인스펙터에 모든 이름이 나옵니다.
+
+- 카탈로그 에셋을 커밋하세요. 인스펙터 필드가 이것을 읽어 이름이 유효한지 보여 줍니다.
+- 손으로 고치지 않습니다. **Update catalogs** 와 빌드가 매번 다시 씁니다.
+- 소스 루트 **밖에** 두세요 — 루트 아래의 카탈로그는 거부됩니다.
+
+빌드 전마다 **Update catalogs** 를 누를 필요는 없습니다: 빌드가 카탈로그를 스스로 갱신합니다. 에셋을 추가하거나
+옮긴 뒤 인스펙터가 새 이름을 바로 알아보게 하고 싶을 때 누르세요.
+
+### 4단계 — 디렉터리를 등록하고 로드한다
+
+앱이 시작할 때, 무엇이든 로드하기 전에 콘텐츠 디렉터리를 한 번 등록합니다. 첫 씬의 `Boot` 컴포넌트면 충분합니다:
 
 ```csharp
 using System.IO;
@@ -121,20 +173,17 @@ using xpTURN.ContentLink;
 
 public class Boot : MonoBehaviour
 {
-    async void Awake()
+    void Awake()
     {
         var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
-
-        // Archive = None(평면 파일 · 이주된 Main 프로파일) 또는 Engine(content0.archive 하나):
-        ContentService.RegisterDirectory(path);
-
-        // Archive = Packed(새 프로파일의 기본): 아카이브 몇 개 + archives.json
-        // await ContentService.RegisterPackedDirectoryAsync(path);
+        ContentService.RegisterDirectory(path);   // Archive = None 또는 Engine
+        // Archive = Packed:  await ContentService.RegisterPackedDirectoryAsync(path);  (async 메서드 안에서)
     }
 }
 ```
 
-**4. 스코프에 로드합니다.** 해제할 것이 없습니다: 스프라이트는 GameObject 와 함께 사라집니다.
+그다음 이름으로 로드합니다. `this.Scope()` 는 이 GameObject 의 스코프입니다: GameObject 가 파괴되면 스프라이트가
+해제됩니다.
 
 ```csharp
 using UnityEngine;
@@ -144,120 +193,235 @@ using xpTURN.ContentLink;
 public class ItemView : MonoBehaviour
 {
     public Image image;
+
     async void Start() => image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 }
 ```
 
-**5. 또는 직렬화 링크를 쓰고** 인스펙터에서 에셋을 고릅니다:
+또는 인스펙터에서 에셋을 고르게 합니다 — 필드에 `Assets/Content/Icons/sword.png` 를 끌어다 놓으세요:
 
 ```csharp
-public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png 를 떨어뜨리면 → "Icons/sword" + 스프라이트 "sword"
-async void Start() => image.sprite = await icon.LoadAsync(this);   // this = 이 GameObject 의 스코프(4단계와 같다). 다른 스코프를 넘겨도 된다
+public class ItemView : MonoBehaviour
+{
+    public Image image;
+    public ContentLinkSprite icon;   // 인스펙터가 "Icons/sword" + 스프라이트 "sword" 를 저장
+
+    async void Start() => image.sprite = await icon.LoadAsync(this);
+}
 ```
 
-에디터에서는 2단계를 통째로 건너뛸 수 있습니다: [에디터 시뮬레이션](#에디터-시뮬레이션)(기본 켜짐)이 켜져 있으면
-프로파일의 출력 폴더를 등록하는 순간 Play Mode 는 그 디렉터리를 **프로젝트에서** 냅니다 — 추가·수정·삭제한 에셋이
-그대로 보이고, 폴더가 아예 없어도 됩니다. 빌드는 출하할 때.
+Play 를 누릅니다. **빌드 없이** 동작합니다: 에디터에서는 프로파일의 출력 폴더를 등록하면 그 프로파일을 프로젝트가
+대신합니다([에디터 시뮬레이션](#에디터-시뮬레이션)). 에셋을 추가 · 수정 · 삭제하고 다시 Play 를 누르면 그대로 보입니다.
 
-## 이름
+### 5단계 — 빌드한다
 
-- 이름은 **프로파일의 소스 루트 기준** 에셋 경로에서 확장자를 뺀 것입니다: `Icons/sword`.
-  카테고리는 이름을 바꾸지 않습니다 — `Icons/sword` 는 어느 카탈로그에 들어 있든 `Icons/sword` 입니다.
-- **서브에셋**은 `<메인>[<서브>]`: `sword.png` 안의 스프라이트 `sword` 는 `Icons/sword[sword]`, 스프라이트 시트
-  `sheet.png` 는 `Icons/sheet[run_01]`, `Icons/sheet[run_02]`, …
-- **링크**는 스프라이트 이름을 따로 둡니다: `("Icons/sheet", "run_01")` 은 `Icons/sheet[run_01]` 을 로드합니다. 스프라이트
-  이름 없이 전체 이름을 적어도 같은 키로 로드됩니다.
-- **씬**도 에셋처럼 이름 붙습니다: `Scenes/Arena`. 에셋과 씬은 이름 공간을 공유합니다.
-- 이름은 **프로파일 안에서 고유**합니다. 같은 이름을 받게 될 두 에셋(카테고리가 겹치거나, 두 폴더에 같은 이름)은
-  콘솔에 두 경로를 찍으며 빌드를 실패시킵니다.
-- 인스펙터 드로어는 이름의 상태를 색으로 보여 줍니다: 빈 링크는 무채색, 아직 어느 카탈로그도 모르는 이름은
-  **호박색**(빌드하거나 *Update Content Catalog* 실행), 필드가 담을 수 없는 것으로 풀리는 이름은 **빨강**. 링크의 이름 줄은
-  스프라이트를 `Icons/sheet[run_01]` 로 보여 주고, 거기에 친 이름은 카탈로그에 있으면 두 필드로 나뉘어 저장됩니다.
+**Build 'Main'** 을 누릅니다. 창의 *Last build* 에 결과가 나오고, `Assets/StreamingAssets/MainContent` 에 콘텐츠
+디렉터리 — 엔진의 파일과 카탈로그 — 가 생깁니다.
 
-## 콘텐츠 빌드
+그다음 평소처럼 플레이어를 빌드합니다(*File > Build Profiles*). `StreamingAssets` 가 플레이어에 들어가고, `Boot` 가 그
+폴더를 찾습니다.
 
-### 프로파일
+- 콘텐츠가 바뀌었다면 **플레이어 빌드 전마다 콘텐츠를 빌드**하세요. 플레이어는 마지막 콘텐츠 빌드가 쓴 것을 싣습니다.
+- **콘텐츠 디렉터리는 플랫폼 하나용으로 빌드됩니다** — 에디터에서 활성인 플랫폼입니다. 플랫폼을 바꾸면 콘텐츠를 다시
+  빌드하세요.
 
-**프로파일**은 콘텐츠 디렉터리 하나를 기술합니다. `ProjectSettings/ContentLinkBuild.asset`(`ContentBuildSettings`)에
-저장되고 빌드 창에서 편집합니다. 프로파일 하나가 **활성**입니다: 메뉴 항목과 옛 정적 API 는 그것에 작용합니다.
+### 6단계 — 에디터에서 빌드 확인 (선택)
 
-| 필드 | 기본값(새 프로파일) | 뜻 |
+*Window > ContentLink > Editor Simulation* 을 끄고 Play 를 누르면, 에디터가 플레이어처럼 빌드된 폴더를 로드합니다. 다시
+켜면 빌드 없이 작업하는 상태로 돌아갑니다.
+
+이것이 한 바퀴 전부입니다: 에셋을 루트 아래에 두고, 이름으로 로드하고, 출하 전에 빌드합니다.
+
+## 카탈로그 설정
+
+### 이름
+
+- 이름은 소스 루트 아래 에셋 경로에서 확장자를 뺀 것입니다: `Assets/Content/Icons/sword.png` → `Icons/sword`.
+- **스프라이트**는 `<파일>[<스프라이트>]`: `Icons/sword[sword]`. 스프라이트 시트 `sheet.png` 는 `Icons/sheet[run_01]`,
+  `Icons/sheet[run_02]`, … 를 줍니다.
+- 루트 아래의 **스프라이트 아틀라스**(Sprite Atlas V2)는 그것이 묶는 스프라이트마다 아틀라스를 거친 이름을 하나 더
+  붙입니다: `Atlas/UI[icon]`. 스프라이트 자신의 이름과 아틀라스의 이름은 같은 스프라이트를 로드합니다.
+- **씬**은 에셋처럼 이름이 붙고(`Scenes/Arena`) `LoadSceneAsync` 로 로드합니다.
+- 이름은 **프로파일 안에서 유일**합니다. 같은 이름이 될 두 에셋 — 같은 폴더의 `sword.png` 와 `sword.prefab` — 은 두
+  파일을 밝히며 빌드가 실패합니다.
+- 이름은 대소문자를 가리고 파일의 철자를 그대로 씁니다. 한글 · 가나 · 악센트가 든 이름도 어느 기기에서나 똑같이
+  동작합니다.
+
+### 이름 스타일
+
+프로파일의 **Name style** 이 이름에 확장자를 남길지 정합니다:
+
+| Name style | `Icons/sword.png` | 나란히 놓인 `sword.png` 와 `sword.prefab` |
 |---|---|---|
-| `Name` | — | 고유. 활성 프로파일과 명령줄이 이 이름으로 고른다 |
-| `SourceRoot` | `Assets/Content` | 이름의 기준이 되는 폴더 |
-| `OutputPath` | `Build/Content/<Name>` | 디렉터리가 쓰이는 곳. 기본은 `Assets/` 밖 — 아래 참고 |
-| `Catalogs` | 루트 전체 카테고리 하나 | 카테고리 = 루트의 하위 폴더 + 그것이 채우는 카탈로그 에셋 |
-| `Archive` | `Packed` | `None`(평면) · `Engine`(엔진의 단일 아카이브) · `Packed`(크기 분할 아카이브) |
-| `MaxArchiveMB` | `20` | `Packed`: 아카이브를 닫는 크기 — 파일 하나 전후 |
-| `Compression` | `LZ4` | `Uncompressed` · `LZ4` · `LZMA` — 아카이브에만 적용. 평면 빌드는 항상 비압축 |
-| `CleanBuildCache` | 꺼짐 | 엔진 옵션: 빌드 캐시 무시 |
-| `DisableWriteTypeTree` | 꺼짐 | 더 작은 출력 — **정확히 같은 엔진 버전에서만** 로드된다(`SerializeUnityVersion` 은 자동으로 붙는다) |
-| `FailBuildWhenErrorsLogged` | 켜짐 | 빌드 중 찍힌 오류 로그는 빌드 실패 |
-| `Target` | `NoTarget` | `NoTarget` = 활성 빌드 타깃이면 무엇이든. 다른 값이면 다른 타깃에서의 빌드를 거부 |
-| `PostProcessors` | 없음 | `IContentBuildPostProcess` 구현체의 형식 이름, 실행 순서대로 |
+| `PathWithoutExtension` (기본) | `Icons/sword` | 거부 — 둘 다 `Icons/sword` |
+| `PathWithExtension` | `Icons/sword.png` | 허용 — `Icons/sword.png` 와 `Icons/sword.prefab` |
 
-**카테고리.** 하위 폴더(`Icons`, `Prefabs`, `Levels/Forest`, 루트 전체는 `""`)를 추가하면 빌드가 그 폴더의
-에셋을 별도 카탈로그에 넣습니다. 한 프로파일의 모든 카탈로그는 **하나의** 디렉터리로 들어가므로 런타임은 하나의
-이름 공간을 봅니다. 겹치는 카테고리, 자기 루트 아래 놓인 카탈로그, 중복 이름은 무엇을 쓰기 전에 거부됩니다.
-경로 문자(`/ \ : * ? " < > |`)가 든 프로파일 이름(이름은 아카이브 이름과 기본 경로에 들어갑니다), 끝에 구분자가 붙은
-소스 루트, 소스 루트 안에 있거나 루트를 품는 출력 폴더도 마찬가지입니다. 새 카테고리의 카탈로그 에셋은 첫 빌드 때
-`Assets/ContentCatalogs/<프로파일>.<카테고리>.asset` 에 만들어지며(폴더가 없으면 폴더도), 기존 카탈로그를 필드에
-지정할 수도 있습니다.
+**일찍 정하세요.** 바꾸면 다음 카탈로그 갱신에서 루트의 모든 이름이 바뀝니다: 옛 이름을 쥔 링크 · 코드 · 데이터는
+로드되지 않습니다. `ContentRef` 필드는 GUID 를 쥐므로 영향이 없습니다. 프로파일과 카탈로그가 어긋나 있는 동안 창이
+안내를 보여 줍니다.
 
-**출력 폴더.** 폴더는 무엇을 쓰기 전에 검사합니다: 비어 있거나 이전 콘텐츠 빌드(`BuildManifestHash.txt` 가 있는)
-폴더만 받아들이고, 다른 것이 든 폴더는 손대지 않고 빌드가 실패합니다. 비우는 것은 엔진이 돌기 직전이라, 그보다 앞
-단계(검증 · 카탈로그)에서 실패한 빌드는 이전 산출물을 그대로 남깁니다. `Assets/` 안의 출력(예: `StreamingAssets`)은 Unity 가
-임포트하고 빌드 뒤 자동 리프레시됩니다. `Assets/` 밖의 출력은 그렇지 않으며, 따로 배포할 콘텐츠라면 그쪽이 맞습니다.
+### 카테고리: 디렉터리 하나에 카탈로그 여러 개
 
-**빌드 타깃.** 콘텐츠 디렉터리는 에디터의 **활성 빌드 타깃**용으로 만들어지고 다른 타깃에서는 로드되지 않을 수
-있습니다. 창, 로그, 마지막 빌드 요약이 항상 어느 타깃용인지 말합니다.
+기본은 루트 전체가 카탈로그 하나에 들어갑니다. 큰 프로젝트는 루트를 하위 폴더로 나눠 폴더마다 카탈로그 파일을 따로 둘
+수 있습니다 — 파일이 작아지고, 다른 폴더에서 일하는 사람끼리 같은 카탈로그를 건드리지 않습니다.
 
-**정적 빌더에서 옮겨오기.** 스크립트로 `ContentDirectoryBuilder.SourceRoot` / `CatalogPath` / `OutputPath` 를 세팅하던
-프로젝트는 그대로 동작합니다: 설정이 없는 프로젝트는 그 기본값으로 만든 `Main` 프로파일(`Assets/Content` →
-`Assets/StreamingAssets/MainContent`, 평면, 비압축)을 받고, 정적 속성은 활성 프로파일의 뷰로 남습니다. 세터로 값을
-넣으면 에디터 세션 동안만 프로파일을 덮어쓰며, 창이 그 사실을 알려 줍니다.
+빌드 창의 **Categories** 에서:
 
-### 아카이브 모드와 등록
+1. *(whole root)* 행을 **−** 로 지웁니다. 카탈로그 하나로 충분하면 그대로 둡니다.
+2. **Add category** 에 루트의 하위 폴더 — `Characters` — 를 적고 **Add** 를 누릅니다. `UI` 와 `Levels` 도 같은 방법으로.
+3. **Catalog** 칸은 비워 둡니다: 카탈로그는 첫 빌드나 카탈로그 갱신 때 `Assets/ContentCatalogs/<프로파일>.<카테고리>.asset`
+   에 만들어집니다(창에 경로가 나옵니다). 또는 이미 있는 `ContentCatalog` 를 고릅니다(*Assets > Create > xpTURN >
+   ContentLink > Content Catalog*).
 
-| `Archive` | 쓰이는 것 | 등록 |
-|---|---|---|
-| `None` | 엔진의 평면 파일(`*.cf`, `*.resS`, 매니페스트) | `ContentService.RegisterDirectory(path)` |
-| `Engine` | `content0.archive` 하나(엔진의 `UseArchive`) | `ContentService.RegisterDirectory(path)` |
-| `Packed` | `<프로파일>.manifest-<해시>.archive`, `<프로파일>.<비트열>-<해시>.archive`, … + `archives.json` | `await ContentService.RegisterPackedDirectoryAsync(path)` |
+```
+프로파일 "Main"                소스 루트 Assets/Content
+  카테고리  Characters    →    Assets/ContentCatalogs/Main.Characters.asset
+  카테고리  UI            →    Assets/ContentCatalogs/Main.UI.asset
+  카테고리  Levels        →    Assets/ContentCatalogs/Main.Levels.asset
+```
 
-`Packed` 는 배포용입니다: 단일 아카이브는 다운로드 단위로 나쁘고 엔진에는 크기 옵션이 없어서, 패키지가 평면 빌드를
-직접 패킹합니다. 기본 규칙은 **해시 접두 트리**입니다: 매니페스트와 해시 파일은 작은 전용 아카이브에, 상한보다 큰
-파일은 혼자 한 아카이브에, 나머지는 키의 MD5 비트로 버킷을 나누고 상한에 안 들어가는 버킷만 다음 비트로 쪼갭니다.
-키는 직렬화 파일이면 매니페스트 ID(엔진이 에셋의 정체성에서 만들고 내용이 바뀌어도 유지), `.resS`/`.resource` 면 파일
-이름입니다. 그래서 에셋을 고치면 그 아카이브 안에서 바뀌고, 늘거나 빠지면 아카이브 하나(버킷이 쪼개지거나 합쳐지면
-이웃 하나 더)만 바뀌며, 나머지 아카이브는 이름도 바이트도 그대로입니다 — 패치 파이프라인이 원하는 성질입니다.
-(`.resS` 는 이름이 키라 텍스처를 고치면 픽셀 데이터는 한 아카이브에서 다른 아카이브로 옮겨 갑니다.) 아카이브 이름은 비트
-경로 + 파일 목록 해시(`Main.0110-a3f9c2e1.archive`)라 같은 이름이 다른 내용을 뜻하는 일이 없습니다. **같은 입력은
-언제나 바이트까지 같게 패킹**됩니다. 아카이브 수는 단순 채우기보다 약 1.5배가 됩니다(리프는 상한의 0.6배 근처) —
-상한 근처를 원하면 `MaxArchiveMB` 를 올리세요. 상한은 *입력* 바이트 기준입니다 — LZ4 면 디스크의 아카이브는 그
-절반 정도로 나옵니다. `archives.json` 은 아카이브마다 크기 · 입력 크기 · CRC · 안의 파일 목록을 적습니다: 패처는
-이것을 먼저 받고, 없는 이름을 내려받고, 사라진 이름을 지웁니다. CRC 는 엔진이 아카이브 내용에 대해 돌려주는 값이지
-디스크 파일의 CRC32 가 아니므로(실측), 내려받은 파일의 검증은 크기나 자체 해시로 하세요.
+- **카테고리는 이름을 바꾸지 않습니다.** `Assets/Content/UI/logo.png` 는 어느 카탈로그에 들든 `UI/logo` 입니다.
+- 프로파일의 모든 카탈로그는 **한** 콘텐츠 디렉터리에 들어갑니다: 한 번 등록하면 모든 이름을 로드할 수 있습니다.
+- 카테고리는 겹칠 수 없습니다: *(whole root)* 행과 하위 폴더 행을 함께 쓸 수 없고, `UI` 와 `UI/Icons` 도 함께 쓸 수
+  없습니다.
+- 어느 카테고리에도 들지 않는 루트 아래 에셋은 **빌드되지 않습니다** — 빌드가 그 개수와 함께 경고를 남깁니다.
 
-**분류 규칙 커스터마이징.** Editor 어셈블리에서 `IContentArchivePartitioner` 를 구현하고 프로파일의 `Partitioner`
-에 고르세요(명령줄은 `-contentlink.partitioner <타입 이름>`, `trie`, `sequential`). 구현체는 파일과 크기 · 매니페스트
-파일 · 파싱된 매니페스트 · 빌드된 로더블(카탈로그와 디스크 파일 포함)을 받아 아카이브 목록(이름 + 파일)을 돌려줍니다.
-내장 `SequentialFillPartitioner` 는 예전의 정렬 채우기로, 국소성 대신 더 적고 꽉 찬 아카이브를 원할 때 씁니다.
-패커는 어떤 답이든 검사하고(모든 파일이 정확히 한 번 · 빈 아카이브 없음 · 평범하고 유일한 이름) 파일 순서를 바꿔
-한 번 더 불러 답이 다르면 빌드를 실패시킵니다. 내장 구현처럼 이름에 내용 해시를 넣어야 캐시된 다운로드가 낡지
-않습니다. 구현체를 바꾸거나 `MaxArchiveMB` 를 바꾸면 다시 분할됩니다 — 한 번의 큰 다운로드입니다.
+### 프로파일 여러 개: 따로 등록하는 콘텐츠 디렉터리
 
-런타임의 `RegisterPackedDirectoryAsync` 는 모든 아카이브를 한 네임스페이스에 마운트하고 마운트 경로를 평면
-디렉터리처럼 등록합니다. `UnregisterDirectory` 가 다시 언마운트합니다. 폴더에 `archives.json` 이 없거나, 색인이
-아카이브를 하나도 적지 않았거나, 어느 아카이브의 디스크 크기가 색인과 다르면 오류 로그와 함께 `-1` 을 돌려주고
-아무것도 마운트하지 않습니다. 아카이브 하나가 마운트되지 않으면 어느 것인지 말하는 예외를 던집니다.
+프로파일마다 콘텐츠 디렉터리 하나를 빌드하고, 각각 따로 등록합니다. 콘텐츠를 따로 출하하거나 받을 때 여러 개를
+씁니다 — 본편과 DLC 팩, 또는 [로케일](#로컬라이즈-콘텐츠).
 
-다운로드로 기기에 온 콘텐츠는 등록하기 전에 검증할 가치가 있습니다. `archives.json` 은 아카이브마다 `Bytes` 와
-`Crc` 를 적습니다: `RegisterPackedDirectoryAsync` 는 디스크 크기가 색인과 다른 아카이브를 마운트 전에 거부하지만,
-길이가 같은 손상은 `Crc` 를 비교해야만 잡히고 그것은 호출자의 몫입니다 — 엔진은 손상된 콘텐츠 파일에서 실패하는 대신
-블록하므로, 먼저 검증하세요.
+| 프로파일 | 소스 루트 | 출력 경로 | Archive |
+|---|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` | `Packed` |
+| `Dlc1` | `Assets/Dlc1` | `Build/Content/Dlc1` | `Packed` |
 
-### 후처리
+추가하려면 **New profile** 에 이름을 적고 **Add** 를 누릅니다. 새 프로파일은 출력 경로 `Build/Content/<이름>`, LZ4 압축의
+`Packed` 아카이브, `Assets/ContentCatalogs/<이름>.asset` 의 카탈로그 하나로 시작합니다. **Set active** 는
+*Window > ContentLink* 메뉴 항목이 빌드할 프로파일을 고릅니다.
+
+- 소스 루트는 서로 안에 넣지 말고 **나란히** 두세요.
+- 한 루트 아래의 에셋이 다른 루트 아래의 에셋을 참조하면 그 **사본**이 자기 디렉터리로 들어갑니다. 공유하는 에셋은
+  루트를 건너 참조하지 말고 이름으로 로드하세요.
+
+## 빌드
+
+### 빌드 창
+
+| 필드 | 무엇을 넣나 |
+|---|---|
+| **Content version** | 선택. 모든 Packed 빌드에 찍히는 표지 — 받을 때 본편과 그 로케일을 짝짓는 데 씁니다 |
+| **Name** | 프로파일 이름. `Packed` 프로파일은 영문자 · 숫자 · `.` · `-` · `_` 만(아카이브 이름이 됩니다) |
+| **Name style** | [이름 스타일](#이름-스타일) 참고 |
+| **Source root** | 빌드할 폴더(**…** 로 고르기) |
+| **Output path** | 빌드를 쓸 곳(**…** 로 고르기) — [출력을 둘 곳](#출력을-둘-곳) 참고 |
+| **Target** | `NoTarget` 은 활성 플랫폼으로 빌드. 다른 값이면 그 밖의 플랫폼에서는 빌드를 거부 |
+| **Categories** | 하위 폴더와 그 카탈로그 — [카테고리](#카테고리-디렉터리-하나에-카탈로그-여러-개) 참고 |
+| **Archive** | `None` · `Engine` · `Packed` — [아카이브 형식](#아카이브-형식) 참고 |
+| **Max archive MB** | `Packed` 만: 아카이브 하나에 들어갈 콘텐츠의 대략적인 크기(기본 20) |
+| **Compression** | `Uncompressed` · `LZ4` · `LZMA` — 아카이브에만. `LZ4` 가 무난한 기본 |
+| **Clean build cache** | 엔진의 빌드 캐시를 무시하고 전부 다시 빌드 |
+| **Disable type trees** | 더 작은 출력, 대신 **정확히 같은 Unity 버전에서만** 로드됨 |
+| **Fail when errors are logged** | 기본 켬: 빌드 중 오류가 로그되면 빌드 실패 |
+| **Partitioner** | `Packed` 만: 파일을 아카이브로 묶는 방식(기본값 그대로 두세요) |
+| **Post-processors** | 빌드 뒤에 도는 단계 — [빌드 뒤](#빌드-뒤) 참고 |
+
+아래쪽: **Update catalogs**(카탈로그만 쓰기), **Build '\<프로파일\>'**, **Build all**. 문제는 무엇이든 빌드하기 전에 그
+버튼들 위에 나오고, 카테고리의 문제는 그 행 아래에 나옵니다.
+
+### 아카이브 형식
+
+| Archive | 출력 모양 | 등록 | 언제 쓰나 |
+|---|---|---|---|
+| `None` | 엔진의 평평한 파일 | `ContentService.RegisterDirectory(path)` | 콘텐츠를 플레이어에 넣고 가장 단순하게 가고 싶을 때 |
+| `Engine` | `content0.archive` 하나 | `ContentService.RegisterDirectory(path)` | 플레이어 안에 압축 파일 하나로 |
+| `Packed` | *Max archive MB* 쯤 되는 아카이브 몇 개 + `archives.json` · `archives.hash` | `await ContentService.RegisterPackedDirectoryAsync(path)` | 콘텐츠를 내려받을 때, 또는 압축하되 패치용으로 나눌 때 |
+
+`Packed` 빌드는 **결정론적**입니다: 같은 입력은 바이트까지 같은 아카이브로 묶이고, 작은 변경은 아카이브 몇 개만
+건드립니다 — 나머지는 이름과 바이트를 그대로 지키므로 패치가 작습니다. *Max archive MB* 는 압축 전 콘텐츠 크기를
+셉니다. LZ4 면 디스크의 파일은 그 절반쯤이 됩니다.
+
+### 출력을 둘 곳
+
+| 출력 경로 | 어떻게 되나 |
+|---|---|
+| `Assets/StreamingAssets/` 아래 | 폴더가 플레이어 안에 들어갑니다. `Application.streamingAssetsPath/<폴더>` 를 등록 |
+| `Assets/` 밖(예: `Build/Content/Main`) | 임포트되지 않고 플레이어에도 들어가지 않습니다 — 서버에 올리거나([CDN](#cdn-에서-콘텐츠-받기)) 직접 복사 |
+
+출력 폴더는 비어 있거나 이전 콘텐츠 빌드여야 합니다: 다른 것이 든 폴더는 손대지 않고 빌드가 실패합니다. 엔진이 돌기
+전에 실패한 빌드는 이전 출력을 그대로 남깁니다.
+
+### 설정 예
+
+**모두 앱 안에** — 가장 단순한 경우:
+
+| 필드 | 값 |
+|---|---|
+| Output path | `Assets/StreamingAssets/MainContent` |
+| Archive | `None`(또는 더 작은 파일을 원하면 `Packed` + `LZ4`) |
+
+```csharp
+var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
+ContentService.RegisterDirectory(path);                      // Archive = None
+// await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
+```
+
+**CDN 에서 받기** — 앱을 다시 빌드하지 않고 갱신:
+
+| 필드 | 값 |
+|---|---|
+| Output path | `Build/Content/Main` |
+| Archive | `Packed`, Compression `LZ4`, Max archive MB `20` |
+
+빌드마다 출력 폴더를 올리고, 시작할 때 받습니다 — [CDN 에서 콘텐츠 받기](#cdn-에서-콘텐츠-받기) 참고.
+
+**본편과 내려받는 팩** — [프로파일 여러 개](#프로파일-여러-개-따로-등록하는-콘텐츠-디렉터리)처럼 각각 프로파일 하나씩.
+
+### 흔한 빌드 오류
+
+| 메시지 | 고치는 법 |
+|---|---|
+| `source root '…' is not a folder` | 폴더를 만들거나 *Source root* 를 고치세요 |
+| `duplicate name '…': … / …` | 두 파일 중 하나의 이름을 바꾸거나, 프로파일을 `PathWithExtension` 으로 |
+| `'…' is a ContentCatalog under the source root` | 카탈로그 에셋을 루트 밖으로 옮기세요 |
+| `categories '…' and '…' overlap` | *(whole root)* 행이나 안쪽 하위 폴더 행을 지우세요 |
+| `output folder '…' is neither empty nor a previous content build` | *Output path* 를 빈 폴더로 하거나 폴더를 비우세요 |
+| `… asset(s) under '…' belong to no category` (경고) | 그 폴더의 카테고리를 추가하세요 — 그 에셋들은 빌드되지 않았습니다 |
+| `'…' is a V1 sprite atlas under the source root` | 아틀라스를 Sprite Atlas V2 로 옮기세요 — [알아 둘 점](#알아-둘-점) 참고 |
+| `profile is for … but the active build target is …` | 플랫폼을 바꾸거나 *Target* 을 `NoTarget` 으로 |
+
+### 명령줄로 빌드
+
+CI 에서는 배치 모드로 프로파일을 빌드합니다:
+
+```
+Unity -batchmode -nographics -quit -projectPath <project> -buildTarget Android -logFile build.log \
+      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
+      -contentlink.profile Main
+```
+
+| 옵션 (`-contentlink.<키> <값>`) | 값 |
+|---|---|
+| `profile` | 프로파일 이름, 또는 모든 프로파일이면 `all`. 생략하면 활성 프로파일 |
+| `output`, `source` | 이번 실행의 경로를 덮어씀 |
+| `archive` | `None` · `Engine` · `Packed` |
+| `compression` | `Uncompressed` · `LZ4` · `LZMA` |
+| `maxArchiveMB` | 1 이상의 정수 |
+| `contentVersion` | 이번 실행의 Packed 빌드에 찍을 콘텐츠 버전 |
+
+덮어쓰기는 그 실행에만 적용되고 설정 파일은 바뀌지 않습니다. 빌드 실패, 모르는 옵션이나 프로파일이면 종료 코드
+**1** 로 끝납니다. 다른 에디터에서 프로젝트를 먼저 닫으세요: 배치 모드에는 프로젝트 잠금이 필요합니다.
+
+`xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` 는 같은 옵션을 받아 카탈로그만 씁니다 — CI 가 플레이어 빌드
+전에 최신 카탈로그만 필요할 때 씁니다. 이 저장소에서는 `tools/build-content.sh` 가 두 호출을 감쌉니다.
+
+에디터 스크립트에서는 `ContentBuildRunner.Build(profile)` 과 `ContentBuildRunner.BuildAll()` 이 같은 일을 하고
+`ContentBuildResult` 를 돌려줍니다.
+
+### 빌드 뒤
+
+후처리기는 그것을 추가한 프로파일의 빌드마다 빌드 뒤에 돕니다 — 출력을 올리거나 복사할 자리입니다. Editor
+어셈블리에 두세요:
 
 ```csharp
 using xpTURN.ContentLink.Editor;
@@ -266,339 +430,274 @@ public sealed class UploadStep : IContentBuildPostProcess
 {
     public void OnBuilt(ContentBuildResult r)
     {
-        // r.ProfileName, r.Target, r.OutputPath, r.Files(정렬됨), r.Archives, r.Manifest, r.BuiltNames, r.Milliseconds
+        // r.ProfileName, r.Target, r.OutputPath, r.Files, r.Archives, r.Milliseconds
+        UnityEngine.Debug.Log($"{r.ProfileName}: {r.Files.Length} files in {r.OutputPath}");
     }
 }
 ```
 
-구현체는 창에서 고르고(`TypeCache` 로 찾아 줍니다) 순서를 정합니다. 순서는 프로파일에 저장되고 그것이 실행
-순서입니다. 찾을 수 없는 형식이나 예외를 던지는 단계는 **빌드를 실패**시키되, 살펴볼 수 있게 출력은 남깁니다.
-빌드의 다른 단계가 던져도 같은 방식으로 보고됩니다: 결과가 사유를 담고, 창과 로그와 명령줄이 모두 그것을 보여 줍니다.
-후처리는 패킹 다음에 돌므로 `r.Archives` 는 최종 상태입니다.
+그다음 빌드 창의 **Post-processors** 에 추가합니다. 여러 개면 거기 적힌 차례로 돕니다. 예외를 던진 단계는 빌드를
+실패시키고 출력을 그대로 남깁니다.
 
-### 메뉴와 스크립팅
+## 로드
 
-| 어디서 | 무엇 |
-|---|---|
-| *Window > ContentLink > Build Window* | 프로파일 편집 · 하나/전부 빌드 · 메시지와 마지막 결과 |
-| *… > Build Content Directory* | 활성 프로파일 빌드 |
-| *… > Update Content Catalog* | 빌드 없이 활성 프로파일의 카탈로그만 다시 쓴다(링크가 호박색에서 무채색으로) |
-| `ContentBuildRunner.Build(profile)` / `BuildAll()` | 코드에서 같은 일 · `ContentBuildResult` 반환 |
+### 먼저 등록
 
-### 명령줄
+모든 콘텐츠 디렉터리를 시작할 때 한 번, **첫 로드 전에** 등록합니다:
 
-```
-Unity -batchmode -nographics -quit -projectPath <project> -buildTarget StandaloneOSX -logFile <log> \
-      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
-      -contentlink.profile Main -contentlink.output Build/Content/Main -contentlink.compression LZ4
+```csharp
+int dir = ContentService.RegisterDirectory(path);                      // Archive = None 또는 Engine
+// int dir = await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
 ```
 
-`tools/build-content.sh` 가 이 호출을 감쌉니다(프로젝트 락을 먼저 검사 · 종료 코드 전달 · 로그의 `[ContentLink …]`
-줄 출력):
-
-```
-tools/build-content.sh -p samples/LinkSample -contentlink.profile Main
-tools/build-content.sh -p <project> -t Win64 -contentlink.profile all      # -t 는 -buildTarget 으로 (Win64, OSXUniversal, Linux64, Android, iOS, …)
-```
-
-| 키(`-contentlink.<key> <value>`) | 값 |
-|---|---|
-| `profile` | 프로파일 이름, 또는 `all`(대소문자 무관 · 전부 · 첫 실패에서 멈춤). 생략 = 활성 프로파일 |
-| `source`, `output` | 경로 |
-| `archive` | `None` · `Engine` · `Packed` |
-| `maxArchiveMB` | 1 이상의 정수 |
-| `compression` | `Uncompressed` · `LZ4` · `LZMA` |
-| `cleanBuildCache`, `disableWriteTypeTree`, `failBuildWhenErrorsLogged` | `true` · `false` |
-| `postProcessors` | 쉼표로 나눈 형식 이름 |
-
-덮어쓰기는 지정한 프로파일을 **메모리에서만** 바꿉니다 — 명령줄은 설정 파일을 절대 쓰지 않습니다(`profile all` 은
-덮어쓰기를 받지 않습니다). 빌드 실패, 모르는 키, 없는 프로파일은 종료 코드 **1**. 프로젝트가 다른 에디터
-인스턴스에 열려 있으면 안 됩니다: 배치 모드는 프로젝트 락이 필요합니다.
-
-**카탈로그만.** `-executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` 는 같은 인자를 받되
-프로파일의 카탈로그만 다시 씁니다 — 빌드도, 출력 폴더도 없습니다 — *Update Content Catalog* 메뉴의 명령줄
-짝입니다(`tools/build-content.sh -c -contentlink.profile Main`). CI 가 카탈로그 에셋만 최신으로 맞추면 될 때(플레이어
-빌드 전 링크 검증), 또는 디렉터리는 다른 파이프라인이 구울 때 씁니다. 빌드는 이미 카탈로그를 매번 다시 쓰므로
-빌드 쪽에 따로 켤 것은 없습니다. `profile all` 은 프로파일마다 갱신하고 첫 실패에서 멈춥니다. `source` 덮어쓰기는
-카탈로그의 기준 루트가 됩니다. 종료 코드는 위와 같습니다.
-
-## 콘텐츠 로딩
+둘 다 디렉터리 id 를 돌려줍니다(폴더를 쓸 수 없으면 `-1` 과 오류 로그 하나). 같은 폴더를 두 번 등록하면 거부됩니다.
+`ContentService.UnregisterDirectory(dir)` 로 다시 뺍니다 — 그 디렉터리의 에셋을 아직 쥐고 있으면 거부됩니다.
 
 ### 스코프
 
-| 스코프 | 만드는 법 | 끝나는 때 | 부모 |
-|---|---|---|---|
-| Root | 자동(`ContentScope.Root`) | `Application.quitting` | — |
-| Scene | `ContentScope.ForScene(scene)` | `SceneManager.sceneUnloaded` | Root |
-| GameObject | `gameObject.Scope()` / `component.Scope()` | `OnDestroy` | 그 씬 |
-| Explicit | `parent.CreateChild("Stage")` | 직접 `Dispose()`, 아니면 부모가 끝날 때 | 아무거나 |
+모든 로드는 **스코프**에 들어갑니다. 스코프가 끝나면 그것이 로드한 것이 해제됩니다.
 
-**GameObject 스코프** — 가장 흔한 경우. 에셋은 오브젝트와 함께 사라집니다:
-
-```csharp
-public class ItemView : MonoBehaviour
-{
-    public Image image;
-
-    async void Start()
-    {
-        var scope = this.Scope();                                   // 이 GameObject 의 스코프(gameObject.Scope() 도 같다)
-        image.sprite = await scope.LoadAsync<Sprite>("Icons/sword[sword]");
-    }                                                               // OnDestroy 에서 해제 — 더 쓸 것이 없다
-}
-```
-
-**Scene 스코프** — 씬이 사는 동안만 살아야 하는 에셋:
+| 스코프 | 얻는 법 | 끝나는 때 |
+|---|---|---|
+| GameObject | `this.Scope()` / `gameObject.Scope()` | GameObject 가 파괴될 때 |
+| Scene | `ContentScope.ForScene(scene)` | 씬이 언로드될 때 |
+| Explicit | `parent.CreateChild("Stage3")` | `Dispose()` 를 부를 때 — 또는 부모가 끝날 때 |
+| Root | `ContentScope.Root` | 앱이 끝날 때 |
 
 ```csharp
-var scope  = ContentScope.ForScene(gameObject.scene);               // 씬마다 하나 · 처음 쓸 때 만들어진다
-var skybox = await scope.LoadAsync<Material>("Materials/Sky");      // 씬이 언로드되면 해제
-```
+// GameObject — 일상적인 경우
+var sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 
-**Explicit 스코프** — 스테이지, 화면, 팝업: 끝나는 때를 직접 정하고, 늦어도 부모가 끝낼 때 끝납니다:
+// Scene — 씬이 사는 만큼
+var sky = await ContentScope.ForScene(gameObject.scene).LoadAsync<Material>("Materials/Sky");
 
-```csharp
-var stage = ContentScope.Root.CreateChild("Stage3");                // 또는 this.Scope().CreateChild("Popup")
-await stage.LoadAsync<AudioClip>("Wav/descent");
+// Explicit — 스테이지 · 화면 · 팝업: 언제 끝낼지 직접 정한다
+var stage = ContentScope.Root.CreateChild("Stage3");
+await stage.LoadAsync<AudioClip>("Audio/boss");
 await stage.LoadAsync<GameObject>("Prefabs/Boss");
 // ... 스테이지 진행 ...
-stage.Dispose();                                                    // 들고 있던 것 전부 반환
+stage.Dispose();   // 스테이지가 로드한 것이 전부 돌아간다
+
+// Root — 앱 전체 동안
+var font = await ContentScope.Root.LoadAsync<Font>("Fonts/Main");
 ```
 
-**Root 스코프** — 앱이 사는 동안:
+모든 스코프에서:
 
 ```csharp
-var atlas = await ContentScope.Root.LoadAsync<Texture2D>("UI/Atlas");   // Application.quitting 에서 해제
+var mat  = scope.Load<Material>("Materials/Steel");   // 동기
+bool has = scope.Contains("Icons/sword");             // 이미 여기 로드됨: 다시 로드해도 공짜
+scope.Release("Icons/sword");                         // 선택: 일찍 돌려주기
 ```
 
-**모든 스코프에서:**
+- 한 스코프에 같은 이름을 두 번 로드해도 한 번만 쥡니다 — 매 프레임 로드해도 괜찮습니다.
+- 여러 스코프가 같은 이름을 로드할 수 있습니다: 에셋은 한 번 로드되고, 마지막 스코프가 놓을 때 해제됩니다.
+- 다른 스코프에 에셋을 넘기려면 `source.ShareTo(target, name)` 이나 `target.Adopt(asset)` 을 쓰세요.
+
+### 인스펙터 필드: 링크
+
+**링크**는 이름을 쥡니다. 인스펙터에서 소스 루트 아래의 에셋을 끌어다 놓으세요:
 
 ```csharp
-var mat   = scope.Load<Material>("Materials/Steel");                // 동기(엔진 로드를 기다린다)
-bool held = scope.Contains("Icons/sword");                          // true: 다시 로드해도 비용이 없다
-scope.Release("Icons/sword");                                       // 선택: 일찍 돌려주기
-var token = scope.DisposedToken;                                    // 스코프가 끝나면 취소 — 직접 기다리는 곳에 넘긴다
-```
+public ContentLinkSprite icon;              // ContentLinkGameObject, ContentLinkTexture2D 도 있음
+public ContentLink<AudioClip> music;        // 어떤 에셋 형식이든
 
-- **중복 제거.** 한 키는 스코프당 최대 한 번 보유됩니다. 같은 키를 반복해서(매 프레임이라도) 로드해도 늘지 않습니다.
-- **누수 신호.** 씬 언로드나 종료가 회수한 명시적 스코프는 경로(`Root/Field/ForgottenPopup`)와 함께 경고를
-  남깁니다. `ContentService.CaptureStackTrace = true` 면 만든 곳도 붙습니다. 부모가 Dispose 되거나 소유
-  GameObject 가 파괴되어 끝나는 것은 정상 수명이라 경고하지 않습니다.
-- **과보유 경고.** `ContentScope.DefaultWarnThreshold`(또는 `scope.WarnThreshold`)보다 많이 들면 경고합니다 —
-  스코프의 실패 양상은 누수가 아니라 너무 많이 들고 있는 것입니다.
-- **한 번도 활성화되지 않은 오브젝트**는 `OnDestroy` 를 받지 못합니다. 그 스코프는 씬이 언로드될 때 회수됩니다.
-- **옮겨진 오브젝트**(`MoveGameObjectToScene`, `DontDestroyOnLoad`)는 에셋을 유지합니다: 원래 씬이 언로드되면
-  스코프가 지금 사는 씬으로 넘어갑니다.
-- **스코프 사이.** `source.ShareTo(target, key)` 는 `target` 에 자기 참조를 주고, `target.Adopt(asset)` 은 이미
-  들고 있는 에셋을 받습니다. 이 둘 없이 날것의 에셋을 다른 시스템에 넘기지 마세요.
-- 스코프는 에셋을 해제할 뿐, GameObject 를 파괴하지 않습니다.
+image.sprite = await icon.LoadAsync(this);  // 이 GameObject 의 스코프로
+var clip = music.Load(this);                // 동기
 
-### 직렬화 링크
-
-```csharp
-public ContentLinkSprite icon;                               // ContentLinkGameObject, ContentLinkTexture2D 도 있다
-public class ContentLinkAudio : ContentLink<AudioClip> { }   // 다른 타입은 파생 — 드로어는 이것도 그린다
-
-image.sprite = await icon.LoadAsync(this);                   // 소유자 필수(null 이면 ArgumentNullException) — Component/GameObject 면 그 GameObject 스코프, ContentScope 면 그 스코프
-image.sprite = await icon.LoadAsync(stage);                  // 예: 명시적 스코프에 넣기
-var clip = music.Load(this);                                 // 동기
-
-// 장비 교체: 옛것을 일찍 돌려주기(선택)
+// 아이템 교체: 옛것을 돌려주고 새것을 로드
 icon.Release();
-icon.SetName(table[itemId].IconName);
+icon.SetName("Icons/shield", "shield");
 image.sprite = await icon.LoadAsync(this);
-
-icon.SetName("Icons/sheet", "run_01");                       // 스프라이트: 메인 이름과 스프라이트 이름을 따로
-other.SetName(icon.Name, icon.SubObjectName);                // 링크 복사: Name 은 메인 이름뿐
-
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
 
-### GUID 직렬화 참조
+필드의 색이 상태를 알려 줍니다: 보통 — 정상, **호박색** — 아직 카탈로그에 없음(**Update catalogs** 를 누르세요),
+**빨강** — 그 이름이 필드가 담을 수 없는 것을 로드함.
+
+### 인스펙터 필드: GUID 참조
+
+**참조**는 이름 대신 에셋의 GUID 를 쥡니다: 파일을 옮기거나 이름을 바꿔도 계속 동작합니다.
 
 ```csharp
-public ContentRef<Sprite> icon;                          // ContentRef<GameObject>, ContentRef<Enemy>(프리팹의 컴포넌트) …
+public ContentRef<Sprite> icon;
 public ContentSceneRef level;
 
-image.sprite = await this.Scope().LoadAsync(icon);       // 이름과 똑같이 스코프가 소유
-this.Scope().Release(icon);                              // 일찍 돌려주기(선택)
-var enemy = await stage.InstantiateAsync(enemyRef);      // GameObject 를 돌려준다
+image.sprite = await this.Scope().LoadAsync(icon);
 var scene = await this.Scope().LoadSceneAsync(level);
-
-icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
 ```
 
-- 참조는 경로가 아니라 에셋의 **GUID**(와 스프라이트 이름)를 담습니다: 파일을 옮기거나 이름을 바꿔도 카탈로그를
-  갱신하면 그대로 동작합니다. 필드는 Addressables `AssetReference` 와 같습니다(`m_AssetGUID`, `m_SubObjectName`).
-- 빌드가 카탈로그 엔트리마다 GUID 를 기록하고, 런타임은 참조를 그 **카탈로그 이름**으로 풀어 이름으로 로드합니다.
-  그래서 같은 에셋의 참조 로드와 이름 로드는 **슬롯 하나 · 스코프 키 하나**입니다: `Release(icon)` 은
-  `LoadAsync<Sprite>("Icons/sword")` 도 돌려주고, 반대도 마찬가지입니다.
-- 참조는 로드가 아니라 키만 담습니다 — 복사해도 문제없고, 로드는 스코프를 거칩니다. 필드마다 따로 해제해야 하면
-  이름을 한 번 얻어 링크를 쓰세요: `ContentService.TryGetName(icon, out var name)` → `new ContentLink<Sprite>(name)`.
-- 서브에셋은 **스프라이트, 이름으로**입니다(Addressables 와 같음). 슬라이스 이름을 바꾸면 참조가 끊깁니다.
-- `RuntimeKeyIsValid()` 는 `ContentLink` 와 같이 "등록된 카탈로그(또는 에디터 시뮬레이션)가 로드할 수 있다"는
-  뜻입니다 — Addressables 의 "GUID 가 들어 있다"는 `IsSet` 입니다.
-- **인스펙터에서.** 에셋을 고르면 GUID 가 저장되고, 둘째 줄에 풀리는 이름이 읽기 전용으로 보입니다. 빨강: 그 GUID 의
-  에셋이 없음, 스프라이트 이름이 사라짐(슬라이스 이름 변경), 필드 타입과 다름. 노랑: 아직 카탈로그에 없음, 모든 콘텐츠
-  루트 밖(루트 아래로 옮겨도 GUID 는 유지), 스프라이트 아틀라스. 빌드에 담을 수 없는 선택은 링크처럼 거부하고,
-  필드에 이미 들어 있는 값은 거부하지 않고 표시만 합니다.
+같은 에셋의 참조와 이름은 같은 객체를 로드합니다: `Release(icon)` 은 `LoadAsync<Sprite>("Icons/sword")` 가 로드한 것도
+해제합니다.
 
-### 인스턴스
+### 프리팹 인스턴스
 
 ```csharp
-var go = await scope.InstantiateAsync("Prefabs/Cat", parent);
+var cat = await this.Scope().InstantiateAsync("Prefabs/Cat", parent);
 ```
 
-프리팹 참조는 `scope` 가 아니라 **인스턴스**의 것입니다(`scope` 는 자기가 먼저 끝나면 요청을 취소할 뿐). 인스턴스를
-파괴하면 돌아갑니다. `Object.Instantiate(instance)` 로 만든 복제본은 `Awake` 에서 참조를 물려받아, 원본이 먼저
-파괴돼도 텍스처를 유지합니다. 스포너 클래스가 필요 없습니다: 참조는 테이블 슬롯 하나라 인스턴스당 하나가 싸게 듭니다.
+프리팹은 인스턴스가 사는 동안 로드된 채로 있고, 인스턴스를 파괴하면 해제됩니다. `Object.Instantiate(cat)` 으로 만든
+복제본도 프리팹을 붙잡아 두므로 스포너 클래스가 필요 없습니다.
 
 ### 씬
 
-소스 루트 아래의 씬은 씬 엔트리(`Scenes/Arena`)가 되어 의존성과 함께 디렉터리에 구워집니다. 씬은 참조 계수되지
-않습니다: 수명은 씬 인스턴스 자체입니다. ContentLink 는 이름을 풀고, (누가 로드했든) 열린 콘텐츠 씬을 전부 추적해
-씬이 열린 동안 디렉터리가 해제되지 않게 하며, 스코프가 씬을 소유하게 합니다.
-
 ```csharp
-// 소유: 스코프가 끝나면 언로드(additive 만)
+// 스코프가 소유: 스코프가 끝나면 언로드 (additive)
 var arena = await this.Scope().LoadSceneAsync("Scenes/Arena");
-scope.ReleaseScene(arena);                                 // 선택: 일찍 언로드
+this.Scope().ReleaseScene(arena);   // 선택: 일찍 언로드
 
-// 직렬화 · 소유자 필수 — ContentLink<T> 와 같은 규칙
+// 인스펙터 필드에서
 public ContentSceneLink level;
 var scene = await level.LoadAsync(this);
-await level.UnloadAsync();                                 // 선택 · 언제 불러도 안전
 
-// 비소유 · 어떤 모드든(Single 은 다른 씬을 전부 닫는다). SceneManager.UnloadSceneAsync 로 언로드.
+// 소유자 없음, 모든 모드 — SceneManager.UnloadSceneAsync 로 직접 언로드
 var menu = await ContentService.LoadSceneAsync("Scenes/Menu", LoadSceneMode.Single);
 ```
 
-- Single 모드 씬은 소유할 수 없습니다(소유자도 닫히므로). Single 로드는 호출자도 파괴합니다: MonoBehaviour 에서
-  기다릴 때는 `destroyCancellationToken` 을 넘기세요.
-- 소유 스코프가 끝날 때 그 씬이 마지막 남은 씬이면 씬은 남고 경고가 찍힙니다. 앱 종료 때는 아무것도 언로드하지 않습니다.
-- 취소는 기다림을 멈춥니다. additive 씬은 엔진 로드가 끝난 뒤 다시 언로드됩니다.
-- 스코프는 자기 로드가 만든 인스턴스만 소유합니다: `SceneManager` 로 직접 연 씬은 스코프가 같은 씬을 로드해도 그대로
-  여러분의 것이고, 실패한 스코프 로드는 그것을 청구하지 않습니다.
-- `ContentService.LoadedSceneCount` / `SnapshotScenes(list)` 가 열린 씬을 보여 줍니다.
+### Resources 폴더
+
+`res:` 로 시작하는 이름은 플레이어의 `Resources` 폴더에서 로드합니다 — 같은 스코프와 필드를 거치므로 프로젝트를
+`Resources.Load` 에서 한 호출씩 옮겨 올 수 있습니다:
+
+```csharp
+var boot  = this.Scope().Load<TextAsset>("res:Config/boot");                 // Resources/Config/boot.txt
+var logo  = await this.Scope().LoadAsync<Sprite>("res:UI/logo[logo]");       // 스프라이트: [그 이름]
+var enemy = await this.Scope().InstantiateAsync("res:Prefabs/Enemy");
+```
+
+프리팹과 그것이 쓰는 에셋은 `ContentService.SweepResources()` 로만 메모리에서 나갑니다 — 로딩 화면처럼 끊김이 괜찮은
+곳에서 부르세요.
 
 ### 원시 핸들
 
-수명을 직접 관리하는 코드(풀, 스트리밍 시스템)용:
+수명을 스스로 관리하는 코드(풀 · 스트리밍)를 위해:
 
 ```csharp
-AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");   // 동기는 Acquire<T>
-h.Asset; h.IsValid; h.Status; h.Key;
-var h2 = h.Share();          // 두 번째 참조
-h.Dispose();                 // 반환 — 또는 스코프에 넘긴다:
-scope.Attach(h2);            // 이제 스코프가 소유
-
-if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // id 기반 로드용 엔진 id
-    h = await ContentService.AcquireAsync<Texture2D>(id);
+AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");
+var tex = h.Asset;
+h.Dispose();   // 돌려주기 — 또는 스코프에 넘기기: scope.Attach(h)
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` 은 등록된 디렉터리가 그 이름을 갖고 있는지 알려 줍니다. 같은 호출이 `ContentRef<T>` / `ContentSceneRef` 도 받고, `Acquire` / `AcquireAsync` 도 `ContentRef<T>` 를 받습니다.
+## 해제
 
-## Release 는 언제 부르나
+대부분의 코드는 `Release` 를 부르지 않습니다:
 
 | 상황 | 할 일 |
 |---|---|
-| 컴포넌트 · 팝업 · 스테이지 · 씬 콘텐츠 | 없음. 맞는 스코프에 로드한다. |
-| 에셋이 많은 스테이지/화면 | 명시적 스코프 하나, 스테이지가 끝나면 `Dispose()`. |
-| 셀을 재활용하는 스크롤 리스트 | 셀마다 자식 스코프, 셀을 다시 바인딩할 때 Dispose. |
-| 장비/스킨 교체 | 새것을 로드하기 전에 `Release(key)` 또는 `ContentLink.Release()`. |
-| 다른 시스템에 에셋 넘기기 | `ShareTo(target, key)` 또는 `target.Adopt(asset)`. 스코프 사이에 날것의 에셋을 넘기지 말 것. |
+| 컴포넌트 · 팝업 · 스테이지 · 씬의 콘텐츠 | 없음 — 알맞은 스코프에 로드 |
+| 에셋이 많은 스테이지나 화면 | Explicit 스코프 하나, 스테이지가 끝나면 `Dispose()` |
+| 셀을 재사용하는 스크롤 목록 | 셀마다 자식 스코프 하나, 셀을 재사용할 때 Dispose |
+| 장비 · 스킨 교체 | 새것을 로드하기 전에 `Release(name)` 이나 `link.Release()` |
+| 다른 시스템에 에셋 넘기기 | `ShareTo(target, name)` 이나 `target.Adopt(asset)` |
 
-## 해제는 어떻게 일어나나
+**어떻게 동작하나.** 스코프가 끝나면 — GameObject 파괴, 씬 언로드, `Dispose()` 호출, 앱 종료 — 그것이 로드한 것을 모두
+놓습니다. 아무도 쥐지 않는 에셋은 **프레임마다 한 번, 프레임 끝에서** 해제됩니다. 여러분의 코드가 모두 돈 뒤이고, 코드
+중간에는 일어나지 않습니다. 한 프레임 안에서 놓았다가 다시 로드하면 아무것도 다시 로드되지 않습니다.
 
-로드한 에셋이 엔진으로 돌아가기까지는 세 단계입니다: **스코프가 자기 끝을 알아채고** → **들고 있던 참조를 전부 놓고**
-→ **참조가 0 이 된 에셋을 프레임 끝에 한 번에 돌려줍니다.**
+**잊은 스코프.** 씬이 언로드되거나 앱이 끝날 때까지 열려 있는 Explicit 스코프는 대신 끝내지고, 그 경로와 함께 경고로
+남습니다(`Root/Field/ForgottenPopup`). 어디서 만들었는지 보려면 `ContentService.CaptureStackTrace = true` 로 두세요.
 
-### 1. 스코프는 자기 끝을 어떻게 아는가
+## CDN 에서 콘텐츠 받기
 
-| 스코프 | 끝을 알리는 신호 | 안쪽에서 일어나는 일 |
+`Packed` 프로파일의 출력은 캐시 폴더로 내려받아 거기서 등록할 수 있습니다.
+
+**1. 빌드하고 올린다.** 출력 경로가 `Assets/` 밖인 `Packed` 프로파일을 씁니다. 빌드마다 출력 폴더 전체 — 아카이브,
+`archives.json`, `archives.hash` — 를 플랫폼과 앱 버전마다 URL 하나에 올립니다. 아카이브 이름에는 내용의 해시가 들어
+있어 영구히 캐시해도 되고, `archives.json` 과 `archives.hash` 는 CDN 에서 캐시 시간을 짧게 주세요.
+
+**2. 시작할 때 확인 · 받기 · 등록:**
+
+```csharp
+var options = new ContentRemoteOptions
+{
+    BuiltInDirectory = Path.Combine(Application.streamingAssetsPath, "MainContent"),   // 선택: 앱이 함께 싣는 사본
+    RetryCount = 3,
+    Timeout = 30,
+};
+var remote = await ContentRemote.CheckAsync("Main", $"https://cdn.example.com/content/{platform}/Main", options);
+
+if (remote.BytesToDownload > 0)
+    ShowDownloadSize(remote.BytesToDownload);
+
+if (await remote.DownloadAsync())   // 진행은 remote.Status 를 폴링
+{
+    await ContentService.RegisterPackedDirectoryAsync(remote.CacheDirectory);
+    remote.CleanCache();            // 새 빌드가 더는 쓰지 않는 아카이브 삭제
+}
+else
+    Debug.LogError(remote.Error);
+```
+
+- 캐시에 없는 아카이브만 받습니다. 끊긴 받기는 이어지고, MD5 가 맞지 않는 파일은 절대 쓰이지 않습니다.
+- 오프라인이면 캐시가 마지막으로 받은 것, 그다음 `BuiltInDirectory` 로 물러섭니다. 어느 쪽을 썼는지는 `remote.Source`,
+  그 까닭은 `remote.Error` 가 알려 줍니다.
+- 앱이 이미 싣고 있는 아카이브(`BuiltInDirectory`)는 받지 않고 복사합니다.
+- 한 프로파일의 캐시 폴더 **또는** 내장 폴더 중 하나만 등록하세요. 둘 다는 안 됩니다: 엔진이 같은 빌드의 두 번째
+  디렉터리를 거부합니다.
+- 폴더가 등록된 채로 받아도 안전합니다. 다음에 그 폴더를 등록할 때 반영됩니다.
+- 에디터에서 시뮬레이션이 켜져 있으면 확인이 요청 없이 프로젝트에서 답합니다. 실제 받기를 해 보려면 시뮬레이션을
+  끄세요.
+
+| 옵션 | 기본 | 뜻 |
 |---|---|---|
-| **GameObject** | 그 오브젝트의 `OnDestroy` | `gameObject.Scope()` 를 처음 부를 때 숨은 컴포넌트 `ContentScopeOwner` 가 붙습니다. 그 컴포넌트의 `OnDestroy` 가 스코프를 Dispose 합니다. 한 번도 활성화되지 않은 오브젝트는 `OnDestroy` 를 받지 못하므로, 그 스코프는 **부모인 씬 스코프**가 씬 언로드 때 자식으로서 회수합니다. |
-| **Scene** | `SceneManager.sceneUnloaded` | `ContentScope.ForScene(scene)` 은 씬 핸들을 키로 스코프를 만들어 사전에 둡니다. `sceneUnloaded` 가 오면 그 핸들의 스코프를 Dispose 합니다. 자식 GameObject 스코프 가운데 **다른 씬으로 옮겨진 오브젝트**(`MoveGameObjectToScene` · `DontDestroyOnLoad` — 소유 오브젝트의 `scene` 이 이 씬이 아닌 것)는 해제하지 않고 지금 사는 씬의 스코프 밑으로 옮깁니다. |
-| **Root** | `Application.quitting` | `ContentService.Shutdown()` 이 Root 를 Dispose 해 트리 전체가 캐스케이드됩니다. Root 를 직접 `Dispose()` 하면 오류 로그만 남깁니다. |
-| **Explicit** | 직접 `Dispose()` | 부르지 않으면 부모가 끝날 때 캐스케이드로 끝납니다 — 그때 부모가 씬이나 Root 면 **누수 경고**(경로 + 만든 곳의 스택)를 남깁니다. 부모가 명시적 스코프거나 소유 GameObject 가 파괴된 경우는 정상 수명이라 경고하지 않습니다. |
+| `CacheRoot` | `persistentDataPath/ContentLink` | 캐시가 놓일 곳: `<CacheRoot>/<profile>` |
+| `BuiltInDirectory` | 없음 | 앱이 함께 싣는 Packed 빌드 |
+| `Timeout` | `0`(없음) | 새 바이트 없이 이만큼 초가 지나면 요청을 다시 시도 |
+| `RetryCount` | `0` | 요청마다 재시도 횟수 |
+| `VerifyCachedFiles` | `false` | 이미 캐시된 파일의 MD5 도 검사 |
+| `WebRequestOverride`, `TransformUrl` | 없음 | 모든 요청(헤더)이나 URL(서명)을 조정 |
 
-복제본(`Object.Instantiate`)은 `ContentScopeOwner` 가 직렬화해 둔 키 목록을 물려받아 `Awake` 에서 **자기 참조**를 잡습니다
-(원본이 아직 들고 있으면 공유, 이미 사라졌으면 다시 로드). 비활성으로 만든 복제본은 `Awake` 가 미뤄져 처음 활성화될
-때 잡습니다.
+## 로컬라이즈 콘텐츠
 
-### 2. 스코프가 끝날 때 하는 일 — 순서대로
+로케일은 언어가 바꾸는 파일만 같은 경로에 담은 두 번째 프로파일입니다. 본편 뒤에 등록하면 둘이 함께 가진 이름은
+로케일의 파일이 답하고, 나머지 이름은 본편 그대로입니다.
 
-1. `IsDisposed = true`, `DisposedToken` 취소 — 그 스코프로 진행 중이던 로드 요청이 취소됩니다.
-2. 자식 스코프를 역순으로 끝냅니다(위의 이관 규칙 적용).
-3. 이름으로 든 참조(`LoadAsync`/`Load`)와 `Attach` 한 핸들을 전부 놓습니다 → 각 에셋의 참조 카운트가 내려갑니다.
-4. 스코프가 소유한 씬을 언로드합니다(앱 종료 때는 제외 — 엔진이 알아서 내립니다).
-5. 명시적 스코프를 씬/Root 가 회수한 경우 경고를 찍습니다.
+| 프로파일 | 소스 루트 | 출력 경로 |
+|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` |
+| `Main.ko` | `Assets/Content.ko` | `Assets/StreamingAssets/MainContent.ko` |
 
-### 3. 참조가 0 이 된 뒤
+`Assets/Content.ko/Icons/flag.png` 가 `Assets/Content/Icons/flag.png` 를 대신합니다 — 둘 다 `Icons/flag` 입니다. 로케일
+루트는 본편 루트 **옆에** 두고, 두 프로파일의 이름 스타일을 같게 하세요.
 
-에셋마다 슬롯이 하나이고(같은 이름은 어느 스코프에서 불러도 같은 슬롯), 슬롯은 참조 카운트를 가집니다. 참조가 0 이
-되면 슬롯은 **바로 해제되지 않고** 대기 목록에 들어가며 그 프레임 번호를 기억합니다. 실제 해제는
-`ContentService.Collect()` 가 합니다 — 패키지가 플레이어 루프의 `PostLateUpdate` 끝에 끼워 넣어 **프레임당 한 번**,
-여러분의 코드가 다 돈 뒤에 돕니다.
+```csharp
+static string Dir(string name) => Path.Combine(Application.streamingAssetsPath, name);
 
-`Collect()` 는 대기 중인 슬롯마다:
+ContentService.RegisterDirectory(Dir("MainContent"));      // 본편 먼저
+ContentService.RegisterDirectory(Dir("MainContent.ko"));   // 그다음 로케일, 첫 로드 전에
 
-- 그 사이 누군가 다시 얻어 참조가 0 이 아니면 → 목록에서 뺄 뿐, 아무것도 안 합니다(**같은 프레임의 해제 → 재획득은
-  다시 로드하지 않습니다**).
-- 아직 로딩 중이면 → 로드가 끝날 때까지 건드리지 않습니다.
-- 참조 0 이 된 지 `ReleaseDelayFrames` 프레임이 안 됐으면 → 다음 프레임에 다시 봅니다.
-- 그 밖에는 → 엔진의 `Loadable.Release()` 를 부르고 슬롯을 비웁니다. 슬롯의 세대 번호가 올라가므로, 뒤늦게 끝난
-  로드 완료가 빈 슬롯을 건드리지 못합니다.
+var flag = await this.Scope().LoadAsync<Sprite>("Icons/flag");   // 한국어 깃발
+```
 
-`ContentService.AutoCollect = false` 면 플레이어 루프 훅이 아무것도 하지 않고 `Collect()` 를 직접 불러야 합니다.
+**실행 중 언어 바꾸기.** 로케일이 바꾸는 것은 스코프 하나에 로드해, 바꿀 때 한꺼번에 놓을 수 있게 합니다:
 
-### 디렉터리와 종료
+```csharp
+ContentScope localized = ContentScope.Root.CreateChild("Localized");
+int locale = -1;
 
-`ContentService.UnregisterDirectory(dir)` 는 그 디렉터리의 에셋이 아직 보유 중이거나 그 디렉터리의 씬이 열려 있으면
-거부합니다 — 엔진이 모든 `Loadable` 의 해제와 모든 씬의 언로드를 먼저 요구하기 때문입니다. `force: true` 는 남은
-에셋 참조를 무효화하며(열린 씬은 절대 아님), 그것을 들고 있던 스코프는 그 뒤 살아 있는 참조만 봅니다 — `Count`,
-`DumpTree`, `Release(key)` 는 죽은 참조를 조용히 버립니다. 패킹 디렉터리는 해제될 때 아카이브를 언마운트합니다.
-`ContentService.Shutdown()`(`Application.quitting` 에서도 실행)은 스코프 트리를 Dispose 하고, 남은 원시 핸들을
-보고하고, 전부 해제합니다.
+bool SwitchLocale(string code)   // "ko", "ja", … — 본편만이면 null
+{
+    localized.Dispose();                                    // 옛 로케일의 에셋을 놓는다
+    if (locale >= 0 && !ContentService.UnregisterDirectory(locale))
+        return false;                                       // 아직 어딘가 쥐고 있다 — 오류가 무엇인지 알려 준다
+    locale = code == null ? -1 : ContentService.RegisterDirectory(Dir("MainContent." + code));
+    localized = ContentScope.Root.CreateChild("Localized");
+    return true;                                            // 다시 로드: 이름이 이제 새 언어로 답한다
+}
+```
+
+Unity Localization 패키지를 쓴다면 문자열 번역은 그 패키지에 맡기고, `LocalizationSettings.SelectedLocaleChanged` 에서
+`SwitchLocale` 을 부르세요.
 
 ## 에디터 시뮬레이션
 
-에디터에서는 프로젝트가 콘텐츠 디렉터리를 대신합니다. Play Mode 에서 `RegisterDirectory`(또는
-`RegisterPackedDirectoryAsync`)에 넘긴 경로가 어느 **프로파일의 출력 폴더**이면 엔진에는 아무것도 등록되지 않고,
-이름은 프로파일의 소스 루트를 지금 디스크에 있는 대로 훑어(카테고리로 걸러) 답하며, 에셋은 프로젝트에서 로드됩니다.
-텍스처를 고치고 Play 를 누르면 고친 것이 보이고, 파일을 지우면 로드가 실패하고, 추가하면 로드됩니다. 저장소를 받아
-바로 Play 를 눌러도 됩니다 — 빌드가 필요 없습니다.
+*Window > ContentLink > Editor Simulation*(기본 켬). Play Mode 에서 프로파일의 출력 폴더를 등록하면 그 프로파일을
+**프로젝트가 대신**합니다: 추가 · 수정 · 삭제한 에셋이 그대로 보이고, 빌드할 것이 없습니다. 폴더가 아예 없어도 됩니다.
 
-```
-Window > ContentLink > Editor Simulation     토글(기본 켜짐 · 프로젝트별)
-```
-
-Addressables 의 *Use Asset Database* 플레이 모드에 해당합니다: 저작 편의이지 빌드의 대체가 아닙니다. 빌드가 같게
-동작할지 확인하려면 끄세요 — 그러면 에디터도 플레이어와 똑같이 구워진 디렉터리를 실제로 등록합니다.
-
-- **아무것도 쓰지 않습니다.** 색인(이름 → 경로)은 메모리에만 있고, 디렉터리 등록 때나 Play 진입에 만들고 Play 종료에 버립니다.
-- **프로파일의 출력 폴더만** 이렇게 대신합니다. 그 밖의 경로(다운로드 사본 · 임의로 구운 것)는 실제로 등록되며, 그런
-  디렉터리의 루트 밑에서는 아직 어느 카탈로그도 모르는 이름만 프로젝트에서 찾습니다(원래의 시뮬레이션). 두 곳에 다
-  있는 이름은 실제 카탈로그가 답합니다.
-- **등록은 여전히 필요합니다.** 빠뜨린 `RegisterDirectory` 는 플레이어에서처럼 에디터에서도 실패하고, 같은 폴더의 중복
-  등록은 거부되며, 소스 루트가 없는 프로파일은 예외를 던집니다.
-- **토글은 디렉터리를 등록할 때 읽습니다.** Play 중에 끄면 이미 프로젝트가 대신하던 디렉터리는 다음 Play 까지 그대로
-  동작하고, 실제 디렉터리 밑의 새 이름만 멈춥니다. Play 종료 때의 요약과 초기화는 그 순간의 토글 상태와 무관하게 돕니다.
-- **해제된 에셋은 언로드되지 않습니다.** 참조 계수는 그대로지만 에디터가 오브젝트를 살려 두므로, 저작 중의 메모리
-  수치는 빌드보다 높습니다. 언로드 동작은 토글을 끄고 확인하세요. 프로젝트가 대신한 에셋을 들고 있어도 디렉터리 해제는
-  막히지 않습니다.
-- **Play 중의 수정은 그 자리에서 보입니다**(재임포트가 로드된 객체를 다시 채웁니다). 삭제한 에셋은 들고 있던 핸들
-  아래에서 객체가 파괴되고, 새 로드는 오류와 함께 실패합니다.
-- **아카이브는 돌지 않습니다.** `Packed` · `Engine` 출력도 프로젝트가 대신하므로, 마운트·아카이브 동작은 토글을 끄고 봅니다.
-- **시뮬레이션 씬**은 `EditorSceneManager.LoadSceneAsyncInPlayMode` 로 열립니다. 요청한 스코프가 여전히 언로드하지만,
-  어느 디렉터리에도 속하지 않습니다.
-- **중복 이름은 거부됩니다** — 빌더가 거부하듯이. 에디터에서만 되는 이름은 없습니다.
-
-그렇게 대신한 등록마다 어느 프로파일과 루트가 답하는지 한 줄이 찍힙니다. Play Mode 를 나가면 시뮬레이션이 푼 이름 —
-로드했거나, `RuntimeKeyIsValid` / `Contains` 로 확인만 한 것 — 가운데 그 프로파일의 카탈로그가 아직 모르는 것을 한 줄로
-남깁니다 — 출하 전에 빌드가 필요한 링크들입니다.
-`ContentService.SnapshotSimulated(list)` 는 플레이 중에 프로젝트가 대신한 이름 전부를 알려 줍니다.
-`ContentService.TryGetLoadableObjectId(name, out id)` 도 프로젝트가 대신하는 이름을 답합니다.
+- 플레이어처럼 등록은 여전히 필요합니다.
+- 디스크에 아무것도 쓰지 않습니다.
+- 에디터에서는 해제한 에셋이 메모리에 남습니다 — 메모리와 해제 동작은 시뮬레이션을 끄고 확인하세요.
+- 아카이브를 쓰지 않습니다. 실제 빌드 · 아카이브 · 받기를 시험하려면 시뮬레이션을 끄세요.
+- Play Mode 가 끝나면 콘솔이 로드했지만 아직 어느 카탈로그에도 없는 이름을 알려 줍니다: 출하 전에 빌드하세요.
 
 ## 진단
 
@@ -610,87 +709,53 @@ Addressables 의 *Use Asset Database* 플레이 모드에 해당합니다: 저�
       Hold [Explicit] 1 (peak 1) : Icons/sword
       Boss [GameObject] 1 (peak 1) : Icons/shield
   ```
-  자식은 스코프가 들고 있는 순서대로 찍히며 그것은 생성 순서가 아닙니다: 스코프를 지우면 마지막 형제가 그 자리로
-  오므로, 트리가 얼마나 크든 제거 비용이 같습니다.
 
-- `ContentService.Snapshot(list)` — 살아 있는 모든 참조(`CaptureStackTrace` 가 켜져 있으면 스택 트레이스 포함)
-- `ContentService.SnapshotScenes(list)` / `LoadedSceneCount` — 열린 콘텐츠 씬
-- `ContentService.SnapshotSimulated(list)` — 에디터 시뮬레이션이 푼 이름
-- `ContentService.LiveAssetCount` — 현재 보유 중인 에셋 수
-- 빌드 창은 에디터 세션의 마지막 빌드(프로파일 · 타깃 · 파일 수 · 시간 · 오류)를 보여 주고, 로그에는 빌드마다
-  `[ContentLink] built …` 한 줄이 남습니다
+- `ContentService.Snapshot(list)` — 지금 쥐고 있는 모든 참조: 그 이름, 잡은 프레임, 그리고 잡은 곳
+  (`ContentService.CaptureStackTrace = true` 일 때)
+- `ContentService.LiveAssetCount` — 쥐고 있는 에셋 수
+- `ContentScope.DefaultWarnThreshold` — 한 스코프가 이만큼보다 많은 에셋을 쥐면 경고
+- 빌드 창이 마지막 빌드를 보여 주고, 콘솔에는 빌드마다 `[ContentLink] built …` 한 줄이 남습니다
 
-## AssetLink · Addressables 에서 옮겨오기
+## Addressables · Resources 에서 옮겨 오기
 
-| 이전 | ContentLink |
+| Addressables | ContentLink |
 |---|---|
-| `AssetLink.LoadAssetAsync()` + `ReleaseAsset()` | `ContentLink.LoadAsync(owner)` · `Release()` 는 선택 |
-| `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
-| `AddressablesTracker.ReportUnreferencedHandles()`(GC 기반) | 씬 언로드/종료 때의 스코프 경고(결정적) |
-| Auto Regist Folder Pattern | 빌드 프로파일과 카테고리 |
-| `AssetRef`(GUID) | `ContentRef<T>` / `ContentSceneRef` |
-| `AssetReference` / `AssetReferenceSprite` 필드 | `ContentRef<T>` 필드 — 타입만 바꾸면 데이터가 남는다(아래) |
-| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` · `this.Scope().Release(ref)` 는 선택 |
-| `ref.RuntimeKeyIsValid()`("값이 있나") | `ref.IsSet` |
+| 그룹과 번들 | 프로파일과 카테고리, `Packed` 아카이브 |
+| `Addressables.LoadAssetAsync` + `Release` | `scope.LoadAsync` — 해제는 자동 |
+| `AssetReference` / `AssetReferenceSprite` 필드 | `ContentRef<T>` — 필드 형식만 바꾸면 저장된 GUID 가 그대로 이어짐 |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` |
+| `InstantiateAsync` + `ReleaseInstance` | `scope.InstantiateAsync` — 인스턴스를 파괴 |
 | *Use Asset Database* 플레이 모드 | 에디터 시뮬레이션 |
-| Addressables 그룹 / 번들 | 프로파일 / 카테고리 · `Packed` 아카이브 |
+| `CheckForCatalogUpdates` / `UpdateCatalogs` | `ContentRemote.CheckAsync` |
+| `GetDownloadSizeAsync` / `DownloadDependenciesAsync` | `remote.BytesToDownload` / `remote.DownloadAsync()` |
+| `ClearDependencyCacheAsync` | `ContentRemote.ClearCache(profile)` / `remote.CleanCache()` |
 
-**`AssetReference` 필드에서.** 필드 타입을 `ContentRef<T>` 로 바꾸면 직렬화된 GUID 와 스프라이트 이름이 남습니다.
-에셋은 콘텐츠 루트 아래에 있어야 합니다(옮겨도 GUID 는 유지). Addressables 는 세 가지 모양으로 기록하고, 그대로
-풀리는 것은 하나입니다:
+`AssetReference` 에서 넘어온 `ContentRef<T>` 는 에셋이 콘텐츠 루트 아래에 있어야 합니다(그리로 옮겨도 GUID 는
+유지됩니다).
 
-| Addressables 에서 고른 것 | 저장된 값 | ContentLink 에서 |
-|---|---|---|
-| 스프라이트 | 텍스처 GUID + 스프라이트 이름 | 풀림 |
-| `AssetReferenceSprite` 에 떨군 텍스처 | 텍스처 GUID, 스프라이트 이름 없음 | 스프라이트가 아니라 텍스처: 필드가 빨강 — 스프라이트를 다시 고르세요 |
-| Addressable 스프라이트 아틀라스에 든 스프라이트 | 아틀라스 GUID + 스프라이트 이름 | 지원 안 함(아틀라스 경유 스프라이트는 카탈로그에 없음): 노랑 — 텍스처에서 스프라이트를 고르세요 |
-
-## 주의와 제한
-
-- 메인 스레드 전용. 취소 토큰도 메인 스레드에서.
-- 엔진 로드는 취소할 수 없습니다. 취소된 요청은 참조를 즉시 돌려주고, 로드는 끝난 뒤 다음 `Collect()` 에서 해제됩니다.
-- 엔진이 예외를 던진 로드는 동기·비동기 경로 모두 다른 실패와 똑같이 보고됩니다 — 무효 핸들과 로그 — 남는 것은 없습니다.
-- 프로젝트가 대신한 Play Mode 콘텐츠(에디터 시뮬레이션)는 Unity 가 참조 계수하지 않습니다. 해제 동작은 시뮬레이션을
-  끄고, 구워서 등록한 콘텐츠 디렉터리로 확인하세요.
-- 비활성 상태로 만든 복제본은 처음 활성화될 때 참조를 가져갑니다.
-- 씬은 참조 계수되지 않습니다. 같은 씬을 additive 로 두 번 로드하면 인스턴스 둘이 생기고 각각 추적·언로드됩니다.
-  씬에는 `ShareTo` / `Adopt` 가 없습니다.
-- 콘텐츠 디렉터리는 한 빌드 타깃용이라 다른 타깃에서는 로드되지 않을 수 있습니다.
-- `Packed` 의 아카이브 크기 상한은 압축된 파일이 아니라 입력 바이트 기준입니다. 해시 접두 트리는 단순 채우기보다
-  아카이브를 약 1.5배 만들고, 상한 근처에서 오가는 아카이브는 빌드마다 쪼개지고 합쳐질 수 있으며, `MaxArchiveMB`
-  나 분류 구현체를 바꾸면 산출물이 다시 분할됩니다.
-- 빌드는 프로젝트 락이 필요합니다: 명령줄 빌드 전에 다른 에디터 인스턴스에서 프로젝트를 닫으세요.
-- 참조와 이름은 에셋의 스코프 키를 공유합니다: 어느 쪽으로 해제해도 둘 다 풀립니다. 두 필드를 따로 해제해야 하면
-  `ContentLink` 나 자식 스코프를 쓰세요.
-- 링크의 `Name` 은 메인 이름이고, 스프라이트 링크의 스프라이트 이름은 `SubObjectName` 입니다. `SetName(name)` 은 스프라이트
-  이름을 비우므로 링크는 `SetName(a.Name, a.SubObjectName)` 으로 복사하세요 — 그걸 잃은 `ContentLink<Object>` 는 에러 없이
-  텍스처를 로드합니다.
-- 서브에셋은 스프라이트만, 이름으로 참조합니다. 다른 서브에셋(모델 파일 안의 메시)과 스프라이트 아틀라스를 거친
-  스프라이트는 참조할 수 없습니다.
-- 같은 파일이 두 이름으로 빌드됐으면 — 베이스 디렉터리와 이후 패치 사이에 옮김 — 참조는 가장 최근에 등록된 디렉터리의
-  이름으로 풀리고 옛 이름을 가진 링크는 다른 사본을 로드합니다: 메모리에 사본이 둘입니다.
-
-## 저장소 구조와 테스트
-
-| 경로 | 무엇 |
+| Resources | ContentLink |
 |---|---|
-| `com.xpTURN.ContentLink/` | 패키지(`Runtime`, `Editor`, `Tests~/Verify`, `README`, `CHANGELOG`) |
-| `samples/LinkSample/` | 패키지를 `file:` 로 쓰는 Unity 6.6 프로젝트 — `Assets/Content` 아래 텍스처 · 스프라이트 아틀라스 · 프리팹 · 씬 · 오디오 |
-| `tests/LinkTests/` | Unity Test Runner 프로젝트: EditMode(빌더 · 설정 · 패커 · 창 모델) · PlayMode(수명 · 씬 · 패킹 등록 · 할당) |
-| `tools/run-all-tests.sh` | 전부 실행: dotnet 하네스 → EditMode → PlayMode(`--player` 로 스탠드얼론 플레이어 추가) |
-| `tools/build-content.sh` | 명령줄 콘텐츠 빌드 |
-| `docs/IMP/` | 설계·구현 기록 |
-| `.github/` | CI(`workflows/check.yml`): push 와 pull request 마다 dotnet 하네스 · `.meta` 사이드카 검사 · 버전 매니페스트 검사. Unity 스위트는 라이선스가 필요해 로컬에 남긴다 |
+| `Resources.Load<TextAsset>("Config/boot")` | `scope.Load<TextAsset>("res:Config/boot")` |
+| `Resources.Load<Sprite>("UI/logo")` | `scope.Load<Sprite>("res:UI/logo[logo]")` |
+| `Resources.UnloadAsset(asset)` | 없음 — 스코프가 해제 |
+| `Resources.UnloadUnusedAssets()` | `ContentService.SweepResources()` |
 
-`Tests~/Verify` 는 문서화된 Unity 6.6 API 의 스텁과 Loadable 참조 규칙을 강제하는 가짜 엔진에 대해 패키지를
-컴파일하고 수명·빌드·패킹 시나리오를 돌립니다(.NET 8 SDK 로 `dotnet run`). Unity 스위트는 테스트가 직접 구운
-콘텐츠 디렉터리에 대해 에디터와 스탠드얼론 플레이어에서 돕니다. Unity 6000.6.0f1 로 검증했습니다.
+## 알아 둘 점
 
-```
-tools/run-all-tests.sh                 # 하네스 + EditMode + PlayMode
-tools/run-all-tests.sh --dotnet-only   # 하네스만(몇 초)
-tools/run-all-tests.sh --player        # StandaloneOSX 플레이어에서의 PlayMode 도
-```
+- **메인 스레드 전용.** 로드 · 등록 · 취소는 메인 스레드에서.
+- **빌드 하나에 플랫폼 하나.** 한 플랫폼용으로 빌드한 콘텐츠 디렉터리는 다른 플랫폼에서 로드되지 않을 수 있습니다.
+- **스프라이트 아틀라스**는 *Project Settings > Editor > Sprite Packer > Mode* 가 Sprite Atlas V2 여야 합니다. 옛(V1)
+  `.spriteatlas` 파일은 콘텐츠 루트 아래에서 거부됩니다 — V2 로 옮기세요.
+- 서브에셋은 **스프라이트만** 로드할 수 있습니다. 모델 파일 안의 메시는 따로 로드할 수 없습니다.
+- **씬은 공유되지 않습니다.** 씬을 두 번 로드하면 인스턴스가 둘 생기고, 각각 따로 언로드됩니다.
+- **비활성 복제본.** 비활성으로 만든 복제본은 처음 깨어날 때까지 아무것도 쥐지 않습니다. 원본이 먼저 파괴될 수 있다면
+  `Instantiate` 바로 뒤에 `clone.Scope()` 를 부르세요.
+- **참조와 이름은 한 자리를 씁니다.** 하나를 해제하면 다른 것도 해제됩니다. 두 필드를 따로 해제해야 하면 링크나 자식
+  스코프를 쓰세요.
+- **콘텐츠 루트와 `Resources` 폴더를 떨어뜨려 두세요.** 양쪽에 든 파일은 이름 둘로 두 번 빌드됩니다.
+- **콘텐츠 씬이 로드되는 도중에 Play Mode 를 멈추지 마세요** — 6000.6 에디터가 ContentLink 유무와 관계없이 그 경우
+  크래시할 수 있습니다.
+- **에디터에서는 `Resources.UnloadAsset` 이 아무것도 언로드하지 않습니다.** `res:` 에셋의 해제는 플레이어에서 확인하세요.
 
 ## 라이선스
 

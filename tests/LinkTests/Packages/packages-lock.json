@@ -188,6 +188,15 @@
       "version": "file:../../../com.xpTURN.ContentLink",
       "depth": 0,
       "source": "local",
+      "dependencies": {
+        "com.unity.modules.jsonserialize": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      }
+    },
+    "com.xpturn.contentlink.tests.resources": {
+      "version": "file:com.xpturn.contentlink.tests.resources",
+      "depth": 0,
+      "source": "embedded",
       "dependencies": {}
     },
     "com.unity.modules.accessibility": {

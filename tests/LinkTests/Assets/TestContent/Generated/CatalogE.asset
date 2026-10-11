@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08cd40f84d530471689a91006e6d88f8, type: 3}
+  m_Name: CatalogE
+  m_EditorClassIdentifier: xpTURN.ContentLink::xpTURN.ContentLink.ContentCatalog
+  m_Entries:
+  - name: Icons/Sheet.PNG
+    id: {fileID: 2800000, loadable: 1, guid: 172897e43a254e09a04d1a3bfd14dfdb, type: 3}
+    guid: 172897e43a254e09a04d1a3bfd14dfdb
+    sub: 
+  - name: 'Icons/Sheet.PNG[s0]'
+    id: {fileID: 813992796, loadable: 1, guid: 172897e43a254e09a04d1a3bfd14dfdb, type: 3}
+    guid: 172897e43a254e09a04d1a3bfd14dfdb
+    sub: s0
+  - name: 'Icons/Sheet.PNG[s1]'
+    id: {fileID: 383394739, loadable: 1, guid: 172897e43a254e09a04d1a3bfd14dfdb, type: 3}
+    guid: 172897e43a254e09a04d1a3bfd14dfdb
+    sub: s1
+  - name: Icons/sword.png
+    id: {fileID: 2800000, loadable: 1, guid: 5cc2c0472fa94b45a796d77e3486e003, type: 3}
+    guid: 5cc2c0472fa94b45a796d77e3486e003
+    sub: 
+  - name: 'Icons/sword.png[sword]'
+    id: {fileID: 21300000, loadable: 1, guid: 5cc2c0472fa94b45a796d77e3486e003, type: 3}
+    guid: 5cc2c0472fa94b45a796d77e3486e003
+    sub: sword
+  - name: Icons/sword.prefab
+    id: {fileID: 487914082173767759, loadable: 1, guid: b229b5afec1d4323abab274729728c24, type: 3}
+    guid: b229b5afec1d4323abab274729728c24
+    sub: 
+  m_Scenes:
+  - name: Scenes/Small.unity
+    id:
+      m_SceneGUID: 571f2df65fef402f9a0f208e836f2358
+    guid: 571f2df65fef402f9a0f208e836f2358
+  m_SourceRoot: Assets/TestContent/E
+  m_NameStyle: 1

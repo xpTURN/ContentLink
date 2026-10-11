@@ -18,8 +18,11 @@ namespace xpTURN.ContentLink.Editor
 
         string m_Selected;
         int m_MessagesRevision = -1;
+        int m_MessagesGeneration = -1;   // the editor utility's generation: the messages also depend on the project (folders, catalogs)
         string m_MessagesFor;
         readonly List<string> m_Errors = new();
+        readonly List<string> m_ProfileErrors = new();
+        readonly List<(int Row, string Error)> m_CategoryErrors = new();
         readonly List<string> m_Notes = new();
         List<Type> m_Available, m_AvailablePartitioners;
 
@@ -53,7 +56,9 @@ namespace xpTURN.ContentLink.Editor
             if (name.Length == 0) return "profile name is empty";
             if (Settings.Find(name) != null) return $"profile '{name}' exists already";
             Record("Add build profile");
-            m_Selected = Settings.Add(name).Name;
+            var added = Settings.Add(name);
+            if (ContentLinkEditorUtility.DiskPath(added.SourceRoot) is string root) added.SourceRoot = root;   // the default root, as the project spells it
+            m_Selected = added.Name;
             Commit();
             return null;
         }
@@ -70,6 +75,16 @@ namespace xpTURN.ContentLink.Editor
             if (wasActive) Settings.SetActive(Settings.Profiles[0].Name);   // Active falls back to the first anyway; make the file say so
             Commit();
             return null;
+        }
+
+        /// <summary>The project's content version (every packed index of the next builds carries it). The same value records nothing.</summary>
+        public void SetContentVersion(string version)
+        {
+            version ??= "";
+            if (version == Settings.ContentVersion) return;
+            Record("Content version");
+            Settings.ContentVersion = version;
+            Commit();
         }
 
         public void SetSelectedActive()
@@ -104,9 +119,23 @@ namespace xpTURN.ContentLink.Editor
             var p = Selected;
             if (p == null) return;
             Record(undoName);
+            var rootBefore = p.SourceRoot;
+            var entriesBefore = (CatalogEntry[])(p.Catalogs ?? Array.Empty<CatalogEntry>()).Clone();
+            var subsBefore = Array.ConvertAll(entriesBefore, c => c?.SubFolder);
             change(p);
-            p.SourceRoot = ContentBuildSettings.NormalizePath(p.SourceRoot);   // typed paths: no trailing separator, no backslashes
+            p.SourceRoot = ContentBuildSettings.NormalizeRoot(p.SourceRoot);   // typed paths: no trailing or doubled separator, no backslashes
             p.OutputPath = ContentBuildSettings.NormalizePath(p.OutputPath);
+            // typed in another case: the project's spelling — for an edited value only, as another checkout may spell a folder otherwise
+            if (p.SourceRoot != rootBefore && ContentLinkEditorUtility.DiskPath(p.SourceRoot) is string root) p.SourceRoot = root;
+            var catalogs = p.Catalogs ?? Array.Empty<CatalogEntry>();
+            for (int i = 0; i < catalogs.Length; ++i)
+            {
+                int before = catalogs[i] == null ? -1 : Array.IndexOf(entriesBefore, catalogs[i]);
+                if (catalogs[i] == null || (before >= 0 && catalogs[i].SubFolder == subsBefore[before])) continue;   // the entry as it was
+                var sub = ContentBuildSettings.NormalizeSubFolder(catalogs[i].SubFolder);
+                var spelled = DiskSpelling(p, sub);
+                if (spelled != sub) catalogs[i].SubFolder = spelled;   // the case only: an edited value is left as it is otherwise
+            }
             Commit();
         }
 
@@ -125,7 +154,7 @@ namespace xpTURN.ContentLink.Editor
         {
             var p = Selected;
             if (p == null) return "nothing selected";
-            var sub = ContentBuildSettings.NormalizeSubFolder(subFolder);
+            var sub = DiskSpelling(p, ContentBuildSettings.NormalizeSubFolder(subFolder));
             var catalogs = p.Catalogs ?? Array.Empty<CatalogEntry>();
             foreach (var c in catalogs)
                 if (ContentBuildSettings.NormalizeSubFolder(c?.SubFolder) == sub)
@@ -138,6 +167,14 @@ namespace xpTURN.ContentLink.Editor
             p.Catalogs = list.ToArray();
             Commit();
             return null;
+        }
+
+        /// <summary>A category folder as it is spelled on disk under the profile's root; as given when there is no such folder.</summary>
+        static string DiskSpelling(Profile p, string sub)
+        {
+            if (sub.Length == 0 || string.IsNullOrEmpty(p.SourceRoot)) return sub;
+            var disk = ContentLinkEditorUtility.DiskPath(p.SourceRoot + "/" + sub);
+            return disk != null ? disk.Substring(ContentLinkEditorUtility.Composed(p.SourceRoot).Length + 1) : sub;
         }
 
         public void RemoveCategory(int index)
@@ -215,8 +252,14 @@ namespace xpTURN.ContentLink.Editor
 
         // ───────────── messages ─────────────
 
-        /// <summary>What stops the build: the validator's findings plus post-processors that would not be found.</summary>
+        /// <summary>What stops the build: the validator's findings, post-processors that would not be found among them.</summary>
         public IReadOnlyList<string> Errors { get { Refresh(); return m_Errors; } }
+
+        /// <summary>The <see cref="Errors"/> about category rows, by row of the selected profile's categories — a finding about two rows under both.</summary>
+        public IReadOnlyList<(int Row, string Error)> CategoryErrors { get { Refresh(); return m_CategoryErrors; } }
+
+        /// <summary>The <see cref="Errors"/> about no category row: the profile's own.</summary>
+        public IReadOnlyList<string> ProfileErrors { get { Refresh(); return m_ProfileErrors; } }
 
         /// <summary>What the user should know but may keep: an output inside Assets/, live static overrides, ignored compression.</summary>
         public IReadOnlyList<string> Notes { get { Refresh(); return m_Notes; } }
@@ -229,24 +272,35 @@ namespace xpTURN.ContentLink.Editor
         void Refresh()
         {
             var p = Selected;
-            if (m_MessagesRevision == ContentBuildSettings.Revision && m_MessagesFor == p?.Name) return;
+            if (m_MessagesRevision == ContentBuildSettings.Revision && m_MessagesGeneration == ContentLinkEditorUtility.Generation && m_MessagesFor == p?.Name) return;
             m_MessagesRevision = ContentBuildSettings.Revision;
+            m_MessagesGeneration = ContentLinkEditorUtility.Generation;
             m_MessagesFor = p?.Name;
             m_Errors.Clear();
+            m_ProfileErrors.Clear();
+            m_CategoryErrors.Clear();
             m_Notes.Clear();
-            if (p == null) { m_Errors.Add("no profile"); return; }
+            if (p == null) { m_Errors.Add("no profile"); m_ProfileErrors.Add("no profile"); return; }
 
-            m_Errors.AddRange(Settings.Validate(p));
-            foreach (var name in p.PostProcessors ?? Array.Empty<string>())
-                if (!IsResolved(name)) m_Errors.Add($"post-processor '{name}' was not found — the build would fail");
+            m_Errors.AddRange(Settings.Validate(p, m_CategoryErrors));
+            foreach (var e in m_Errors)
+                if (!m_CategoryErrors.Exists(c => c.Error == e)) m_ProfileErrors.Add(e);
 
             if (p.Archive == ContentBuildSettings.ArchiveMode.None && p.Compression != ContentBuildSettings.CompressionKind.Uncompressed)
                 m_Notes.Add("compression belongs to archives: a flat build is written uncompressed");
             var output = (p.OutputPath ?? "").Replace('\\', '/').TrimStart('/');
             if (output == "Assets" || output.StartsWith("Assets/", StringComparison.Ordinal))
                 m_Notes.Add($"output '{p.OutputPath}' is inside Assets/: every built file is imported and gets a .meta");
+            foreach (var entry in p.Catalogs ?? Array.Empty<CatalogEntry>())
+            {
+                var path = entry?.ResolvePath();
+                var catalog = string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<ContentCatalog>(path);
+                if (catalog == null || catalog.NameStyle == p.NameStyle || (catalog.Entries.Count == 0 && catalog.Scenes.Count == 0)) continue;
+                m_Notes.Add($"the catalogs were written with name style {catalog.NameStyle} and the profile now says {p.NameStyle}: updating the catalogs renames every name — links, code and data that hold the old names stop resolving (ContentRef fields are unaffected)");
+                break;
+            }
             if (ContentDirectoryBuilder.HasOverrides)
-                m_Notes.Add("session overrides on ContentDirectoryBuilder.SourceRoot/CatalogPath/OutputPath are set and hide the active profile from the static API until ClearOverrides()");
+                m_Notes.Add("session overrides on ContentDirectoryBuilder.SourceRoot/CatalogPath/OutputPath/NameStyle are set and hide the active profile from the static API until ClearOverrides()");
         }
 
         // ───────────── actions ─────────────

@@ -214,6 +214,105 @@ namespace xpTURN.ContentLink.Tests.Editor
             Assert.That(ContentBuildSettings.instance.Validate(a), Has.None.Contains("used by"));
         }
 
+        /// <summary>T27: a root gives an asset one name, so profiles on one root must agree on the style; a value the enum does not define is refused by name.</summary>
+        [Test]
+        public void T12_ProfilesOnOneRoot_MustAgreeOnTheNameStyle()
+        {
+            var a = ContentBuildSettings.instance.Add("StyleA");
+            var b = ContentBuildSettings.instance.Add("StyleB");
+            a.SourceRoot = k_RootSceneCase; a.OutputPath = "Build/Content/StyleA";
+            b.SourceRoot = k_RootSceneCase.ToLowerInvariant(); b.OutputPath = "Build/Content/StyleB";   // the same folder in another case
+            b.NameStyle = ContentNameStyle.PathWithExtension;
+            Assert.That(ContentBuildSettings.instance.Validate(a), Has.Some.Contains("a root gives an asset one name"));
+            Assert.That(ContentBuildSettings.instance.Validate(b), Has.Some.Contains("a root gives an asset one name"));
+            b.NameStyle = ContentNameStyle.PathWithoutExtension;
+            Assert.That(ContentBuildSettings.instance.Validate(a), Has.None.Contains("a root gives an asset one name"), "one root, one style");
+            b.SourceRoot = k_RootA; b.NameStyle = (ContentNameStyle)7;   // a root nobody else uses: the same-root check would answer instead
+            Assert.That(ContentBuildSettings.instance.Validate(b), Has.Some.Contains("name style 7 is not a ContentNameStyle"));
+        }
+
+        [Test]
+        public void T13_APackedProfileName_TakesOnlyWhatAnArchiveNameCanCarry()
+        {
+            // A packed profile's name goes into its archive names, its remote folder and its cache folder; a flat one keeps any file name.
+            var settings = ContentBuildSettings.instance;
+            var p = settings.Add("Stage#1");
+            Assume.That(p, Is.Not.Null);
+            p.SourceRoot = k_RootA;
+            p.Catalogs = new[] { Category("", $"{k_Generated}/stage1.asset") };
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            Assert.That(settings.Validate(p), Has.Some.Contains("archive name cannot carry"), "a packed profile named after a URL character");
+            p.Archive = ContentBuildSettings.ArchiveMode.None;
+            Assert.That(settings.Validate(p), Is.Empty, "a flat profile keeps its name");
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            Assert.That(settings.Validate(p), Has.Some.Contains("archive name cannot carry"), "packed again");
+        }
+
+        [Test]
+        public void T14_ASourceRootInAnotherCase_IsRefusedWithTheDiskSpelling()
+        {
+            // The AssetDatabase finds a folder in any case and answers with the disk's spelling (measured on 6000.6), but the content
+            // tools compare the root as written: a root in another case validated, then named nothing under it.
+            var settings = ContentBuildSettings.instance;
+            var p = settings.Add("Case");
+            p.Catalogs = new[] { Category("", $"{k_Generated}/case.asset") };
+            foreach (var written in new[] { "Assets/TestContent/a", "assets/TestContent/A", "Assets/testcontent/A" })
+            {
+                p.SourceRoot = written;
+                Assume.That(AssetDatabase.IsValidFolder(written), Is.True, "the engine finds the folder in any case — that is why validation has to refuse it");
+                Assert.That(settings.Validate(p), Has.Some.Contains($"source root '{written}' is spelled '{k_RootA}' in the project — write it as '{k_RootA}'"), "the root must be refused with its spelling on disk");
+            }
+            p.SourceRoot = k_RootA;
+            Assert.That(settings.Validate(p), Is.Empty);
+        }
+
+        [Test]
+        public void T15_ACategoryInAnotherCase_IsRefused_BeforeACatalogIsWritten()
+        {
+            // Matched as written, a category written 'icons' would leave out every asset under Icons/, with one warning.
+            var settings = ContentBuildSettings.instance;
+            var p = settings.Add("CaseCategory");
+            p.SourceRoot = k_RootA;
+            p.Catalogs = new[] { Category("icons", m_TempCatalog) };
+            Assume.That(AssetDatabase.IsValidFolder($"{k_RootA}/icons"), Is.True);
+            Assert.That(settings.Validate(p), Has.Some.Contains("category 'icons' is spelled 'Icons' in the project — write it as 'Icons'"), "the category must be refused with its spelling on disk");
+            Assert.That(ContentBuildRunner.UpdateCatalogs(p, new System.Collections.Generic.List<string>()), Is.False, "a catalog update runs the validation first");
+            Assert.That(AssetDatabase.LoadAssetAtPath<ContentCatalog>(m_TempCatalog), Is.Null, "nothing is written");
+            p.Catalogs = new[] { Category("Icons", m_TempCatalog) };
+            Assert.That(settings.Validate(p), Is.Empty);
+        }
+
+        /// <summary>
+        /// What the command line could never build, or what the build would find only at its end, is refused
+        /// before anything is written — 'all' as a name, a mode by a number it does not have, a post-processor it cannot find.
+        /// </summary>
+        [Test]
+        public void T16_AllAsAName_AModeItDoesNotHave_AndAPostProcessorNotFound_AreRefused()
+        {
+            var settings = ContentBuildSettings.instance;
+            var p = settings.Add("All");
+            Assume.That(p, Is.Not.Null);
+            p.SourceRoot = k_RootA;
+            p.Archive = ContentBuildSettings.ArchiveMode.None;
+            p.Catalogs = new[] { Category("", m_TempCatalog) };
+            Assert.That(settings.Validate(p), Has.Some.Contains("is the command line's word for every profile"), "'-contentlink.profile all' could never build it alone");
+            p.Name = "Allx";
+            Assert.That(settings.Validate(p), Is.Empty);
+
+            p.Archive = (ContentBuildSettings.ArchiveMode)7; p.Compression = (ContentBuildSettings.CompressionKind)9;   // a hand edit, or a later package's value
+            Assert.That(settings.Validate(p), Has.Some.Contains("archive mode 7 is not an ArchiveMode"));
+            Assert.That(settings.Validate(p), Has.Some.Contains("compression 9 is not a CompressionKind"));
+            p.Archive = ContentBuildSettings.ArchiveMode.None; p.Compression = ContentBuildSettings.CompressionKind.LZ4;
+
+            p.PostProcessors = new[] { ContentBuildWindowModel.NameOf(typeof(ContentArchivePackerTests.RecordA)), "Nope.Missing", "A.B, C.D, E" };
+            var errors = settings.Validate(p);
+            Assert.That(errors, Has.Some.Contains("post-processor 'Nope.Missing' was not found"), "found before the build, not after the engine");
+            Assert.That(errors, Has.Some.Contains("post-processor 'A.B, C.D, E' was not found"), "a malformed assembly part resolves to nothing — it does not throw");
+            Assert.That(errors, Has.None.Contains("RecordA"), "the stored form resolves");
+            Assert.That(ContentBuildRunner.UpdateCatalogs(p, new System.Collections.Generic.List<string>()), Is.False, "a catalogs-only update refuses it too");
+            Assert.That(AssetDatabase.LoadAssetAtPath<ContentCatalog>(m_TempCatalog), Is.Null, "nothing is written");
+        }
+
         [Test]
         public void T7_NoSettings_FindAndSetActiveSeeTheMigratedMain()
         {

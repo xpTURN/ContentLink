@@ -1,6 +1,7 @@
 using System;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.U2D;
 using Object = UnityEngine.Object;
 
 namespace xpTURN.ContentLink.Editor
@@ -84,6 +85,7 @@ namespace xpTURN.ContentLink.Editor
 
         void DrawObjectField(Rect rect, SerializedProperty nameProp, SerializedProperty subProp, Type assetType, bool mixed)
         {
+            if (AtlasDrop.Handle(rect, assetType, nameProp, subProp, reference: false)) return;
             var current = mixed ? null
                 : subProp != null ? ContentLinkEditorUtility.ResolveAsset(nameProp.stringValue, subProp.stringValue)
                 : ContentLinkEditorUtility.ResolveAsset(nameProp.stringValue);
@@ -148,6 +150,59 @@ namespace xpTURN.ContentLink.Editor
 
             if (status != NameStatus.Ok && status != NameStatus.Empty)
                 GUI.Label(rect, new GUIContent(string.Empty, ContentLinkEditorUtility.Describe(status, shown)));
+        }
+    }
+
+    /// <summary>
+    /// A sprite atlas dropped on a field that holds sprites. The object field would refuse it (a Sprite field takes no
+    /// SpriteAtlas), so the drop is taken before the field sees it, and a menu of the sprites the atlas packs writes the pick
+    /// through the atlas: a link (atlas name, sprite), a reference (atlas GUID, sprite). Nothing else changes in the field.
+    /// </summary>
+    static class AtlasDrop
+    {
+        /// <summary>True when the event was a drag of one such atlas over the rect — used here; on the drop the menu opens.</summary>
+        internal static bool Handle(Rect rect, Type assetType, SerializedProperty first, SerializedProperty second, bool reference)
+        {
+            var e = Event.current;
+            if ((e.type != EventType.DragUpdated && e.type != EventType.DragPerform) || !rect.Contains(e.mousePosition)) return false;
+            var dragged = DragAndDrop.objectReferences;
+            if (dragged == null || dragged.Length != 1) return false;
+            var choices = ContentLinkEditorUtility.AtlasChoices(dragged[0], assetType);
+            if (choices.Length == 0) return false;
+
+            DragAndDrop.visualMode = DragAndDropVisualMode.Link;
+            if (e.type == EventType.DragPerform)
+            {
+                DragAndDrop.AcceptDrag();
+                var atlas = (SpriteAtlas)dragged[0];
+                // The pick arrives after this GUI pass: hold the object and the paths, not the properties
+                var target = first.serializedObject;
+                string firstPath = first.propertyPath, secondPath = second?.propertyPath;
+                var menu = new GenericMenu();
+                foreach (var sprite in choices)
+                {
+                    var picked = sprite;
+                    menu.AddItem(new GUIContent(picked.name), false, () => Write(target, firstPath, secondPath, atlas, picked, reference));
+                }
+                menu.DropDown(rect);
+            }
+            e.Use();
+            return true;
+        }
+
+        static void Write(SerializedObject target, string firstPath, string secondPath, SpriteAtlas atlas, Sprite sprite, bool reference)
+        {
+            if (target == null || target.targetObject == null) return;
+            string a, b;
+            if (!(reference ? ContentLinkEditorUtility.TryGetRefForAtlasSprite(atlas, sprite, out a, out b)
+                            : ContentLinkEditorUtility.TryGetLinkForAtlasSprite(atlas, sprite, out a, out b))) return;
+            target.Update();
+            var first = target.FindProperty(firstPath);
+            var second = secondPath != null ? target.FindProperty(secondPath) : null;
+            if (first == null) return;
+            first.stringValue = second != null || reference ? a : ContentLinkEditorUtility.LinkName(a, b);
+            if (second != null) second.stringValue = b;
+            target.ApplyModifiedProperties();
         }
     }
 

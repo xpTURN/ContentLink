@@ -1,5 +1,6 @@
 using System.Collections;
 using System.IO;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -99,6 +100,32 @@ namespace xpTURN.ContentLink.Tests.Editor
             ContentLinkSimulation.Drop();
             Assert.That(ContentLinkSimulation.TryGetPath("volatile", out _, out _), Is.False,
                 "the overlay must be volatile — Play exit drops it and nothing is stored");
+        }
+
+        /// <summary>
+        /// A ContentCatalog under the root — saved as .asset, or under another extension the engine imports as a
+        /// catalog all the same (.preset — measured on 6000.6; a .mat one makes ShaderGraph's material postprocessor throw). A build
+        /// refuses it, so the overlay does not serve it either.
+        /// </summary>
+        [Test]
+        public void O5_ACatalogUnderTheRoot_IsNotServed()
+        {
+            ContentDirectoryBuilder.SourceRoot = k_Root;
+            ContentDirectoryBuilder.CatalogPath = m_TempCatalog;
+            Assert.That(ContentDirectoryBuilder.UpdateCatalog(), Is.True);
+            File.WriteAllText($"{k_Root}/plain.txt", "plain");
+            AssetDatabase.ImportAsset($"{k_Root}/plain.txt");
+            AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<ContentCatalog>(), $"{k_Root}/Nested.asset");
+            AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<ContentCatalog>(), $"{k_Root}/Renamed.preset");
+            ContentLinkEditorUtility.Invalidate();
+
+            LogAssert.Expect(LogType.Warning, new Regex(Regex.Escape($"'{k_Root}/Nested.asset' is a ContentCatalog under '{k_Root}'")));
+            LogAssert.Expect(LogType.Warning, new Regex(Regex.Escape($"'{k_Root}/Renamed.preset' is a ContentCatalog under '{k_Root}'")));
+            ContentLinkSimulation.Rebuild();
+            Assert.That(ContentLinkSimulation.TryGetPath("Nested", out _, out _), Is.False, "the overlay served a catalog under the root");
+            Assert.That(ContentLinkSimulation.TryGetPath("Renamed", out _, out _), Is.False, "the overlay served a catalog saved as .preset");
+            Assert.That(ContentLinkSimulation.TryGetPath("plain", out var found, out _), Is.True, "the plain file beside them was not served");
+            Assert.That(found, Is.EqualTo($"{k_Root}/plain.txt"));
         }
 
         // ───────────── references (ContentRef) ─────────────

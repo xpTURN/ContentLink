@@ -34,6 +34,19 @@ namespace xpTURN.ContentLink
         /// <summary>Record stack traces for leases and explicit scopes. Development builds only.</summary>
         public static bool CaptureStackTrace = false;
 
+        /// <summary>
+        /// Unload a Resources asset when its last reference goes (Resources.UnloadAsset). The engine hands one object to every
+        /// caller of a path, so the unload also kills references code took with Resources.Load directly — turn this off while
+        /// such code remains; zero-reference assets are then reclaimed by <see cref="SweepResources"/>.
+        /// </summary>
+        public static bool UnloadResourcesOnRelease = true;
+
+        /// <summary>A name that starts with this loads from a Resources folder built into the player: "res:UI/logo", "res:UI/sheet[s0]".</summary>
+        public const string ResourcesPrefix = "res:";
+
+        /// <summary>The directory index of an asset loaded from Resources (<see cref="LeaseInfo.Dir"/>): it belongs to no content directory and never blocks one.</summary>
+        public const int ResourcesDirectory = -2;
+
         // ───────────── directories / catalogs ─────────────
 
         sealed class DirectoryRecord
@@ -43,6 +56,8 @@ namespace xpTURN.ContentLink
             public ContentCatalog[] Catalogs;
             public bool Alive;
             public Unity.IO.Archive.ArchiveHandle[] Archives;   // set for a packed directory: unmounted when it is unregistered
+            public string PackedFolder;                          // a packed directory's folder (full path); Path is the mount path
+            public string[] PackedFiles;                         // the archives mounted from it (full paths) — the engine reads them on demand
             // Served from the project by the editor instead of the engine — no handle, no catalogs.
             public bool Simulated;
             public string Profile;
@@ -57,6 +72,7 @@ namespace xpTURN.ContentLink
         const int kDirUnknown = NoDirectory;
 
         static readonly List<DirectoryRecord> s_Dirs = new();
+        static readonly HashSet<string> s_Mounting = new(StringComparer.OrdinalIgnoreCase);   // packed folders whose archives are mounting
         static readonly Dictionary<string, NameEntry> s_Names = new(StringComparer.Ordinal);
         static readonly Dictionary<LoadableObjectId, int> s_DirById = new();
         static readonly Dictionary<LoadableObjectId, int> s_SimDirById = new();   // ids the simulation answered → their simulated directory
@@ -64,7 +80,10 @@ namespace xpTURN.ContentLink
         /// <summary>
         /// Registers a content directory and indexes its ContentCatalog root assets.
         /// When the same name exists in several directories the most recently registered one wins,
-        /// matching the engine's Loadable resolution order.
+        /// matching the engine's Loadable resolution order — a locale or patch directory registered after its base takes
+        /// over the names it carries. A name already open keeps the object it was opened with until it is released, so
+        /// register such a directory before loading. The engine refuses a second directory of one build name — a profile's
+        /// name, or an unnamed build's folder name.
         /// </summary>
         public static int RegisterDirectory(string path)
         {
@@ -123,23 +142,39 @@ namespace xpTURN.ContentLink
         /// <summary>
         /// Registers a directory the editor packed into archives: mounts every archive of archives.json
         /// under one namespace, then registers the mount path like any flat directory. Unregistering unmounts again.
-        /// Returns -1 (logged) when there is no index, it lists no archives, or an archive's size on disk differs from
-        /// the index; throws when an archive does not mount or the engine refuses.
+        /// Returns -1 (logged) when there is no index or one it cannot use (another version, an archive without its MD5, an archive
+        /// name that is not <see cref="ContentArchives.IsArchiveName"/> or comes twice), it lists no archives, it describes content this player cannot load
+        /// (another platform; without type trees another engine or catalog layout; a newer engine), or an archive's size on
+        /// disk differs from the index; throws when the folder is already registered or being registered (before anything is
+        /// mounted), an archive does not mount or the engine refuses.
         /// </summary>
         public static async Awaitable<int> RegisterPackedDirectoryAsync(string directory)
         {
             var simulated = DirectoryFallback?.Invoke(directory);
             if (simulated != null) return RegisterSimulated(directory, simulated);   // served from the project: nothing to mount
 
+            var folder = NormalizePath(directory);
+            for (int d = 0; d < s_Dirs.Count; ++d)   // before anything is mounted: mounting its archives again breaks the registered directory (measured)
+                if (s_Dirs[d].Alive && s_Dirs[d].PackedFolder != null && string.Equals(s_Dirs[d].PackedFolder, folder, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"[ContentLink] '{directory}' is already registered (directory {d}) — unregister it before registering it again.");
+            if (s_Mounting.Contains(folder))
+                throw new InvalidOperationException($"[ContentLink] '{directory}' is being registered — its archives are mounting: await that registration instead of starting another.");
+
             var index = ContentArchives.ReadIndex(directory);
             if (index == null)
             {
-                Debug.LogError($"[ContentLink] '{directory}' has no {ContentArchives.IndexFile}; use RegisterDirectory for a flat or engine-archive build.");
+                if (!System.IO.File.Exists(System.IO.Path.Combine(directory, ContentArchives.IndexFile)))
+                    Debug.LogError($"[ContentLink] '{directory}' has no {ContentArchives.IndexFile}; use RegisterDirectory for a flat or engine-archive build.");
                 return -1;
             }
             if (index.Archives.Length == 0)
             {
                 Debug.LogError($"[ContentLink] '{directory}' has an {ContentArchives.IndexFile} that lists no archives; nothing to mount.");
+                return -1;
+            }
+            if (!ContentArchives.CheckCompatible(index, out var why))
+            {
+                Debug.LogError($"[ContentLink] '{directory}' cannot be loaded by this player: {why}; nothing mounted.");
                 return -1;
             }
             for (int i = 0; i < index.Archives.Length; ++i)   // a truncated or replaced archive is refused before anything is mounted (the engine mounts a truncated one without complaint)
@@ -153,7 +188,10 @@ namespace xpTURN.ContentLink
                     return -1;
                 }
             }
-            var handles = await ContentArchives.MountAsync(directory, index);
+            s_Mounting.Add(folder);
+            Unity.IO.Archive.ArchiveHandle[] handles;
+            try { handles = await ContentArchives.MountAsync(directory, index); }
+            finally { s_Mounting.Remove(folder); }
             int dir;
             try { dir = RegisterDirectory(handles[0].GetMountPath()); }
             catch
@@ -162,12 +200,43 @@ namespace xpTURN.ContentLink
                 throw;
             }
             s_Dirs[dir].Archives = handles;
+            s_Dirs[dir].PackedFolder = folder;
+            var files = new string[index.Archives.Length];
+            for (int i = 0; i < files.Length; ++i) files[i] = NormalizePath(System.IO.Path.Combine(directory, index.Archives[i].File));
+            s_Dirs[dir].PackedFiles = files;
             return dir;
+        }
+
+        /// <summary>Whether a registered packed directory was mounted from <paramref name="folder"/> — or is being mounted from it.</summary>
+        internal static bool IsPackedFolderRegistered(string folder)
+        {
+            var full = NormalizePath(folder);
+            if (s_Mounting.Contains(full)) return true;   // its archives are mounting
+            for (int d = 0; d < s_Dirs.Count; ++d)
+                if (s_Dirs[d].Alive && s_Dirs[d].PackedFolder != null && string.Equals(s_Dirs[d].PackedFolder, full, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>Whether a registered packed directory has <paramref name="path"/> mounted — or a folder being mounted holds it; the engine reads it on demand, so it must stay (measured: a deleted one fails the loads).</summary>
+        internal static bool IsMountedFile(string path)
+        {
+            var full = NormalizePath(path);
+            if (s_Mounting.Count > 0 && s_Mounting.Contains(NormalizePath(System.IO.Path.GetDirectoryName(full)))) return true;   // a folder being mounted
+            for (int d = 0; d < s_Dirs.Count; ++d)
+            {
+                var files = s_Dirs[d].Alive ? s_Dirs[d].PackedFiles : null;
+                if (files == null) continue;
+                foreach (var f in files) if (string.Equals(f, full, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>
         /// Unregisters a directory. The engine requires every Loadable from it to be released first, so this
-        /// refuses while live assets remain. force=true invalidates the remaining leases (still refused while loading).
+        /// refuses while live assets remain — an asset another directory's name opened counts too when this directory gave it (registered
+        /// after that one, it carries the same asset: two profiles whose roots nest). force=true invalidates the remaining leases (still refused while loading).
+        /// A scene of it still loaded, or still loading, refuses it too, forced or not. The names it took over answer from the directories
+        /// registered before it again — how a locale is switched off.
         /// </summary>
         public static bool UnregisterDirectory(int dir, bool force = false)
         {
@@ -178,15 +247,22 @@ namespace xpTURN.ContentLink
 
             StringBuilder scenes = null;
             foreach (var ls in s_LoadedScenes)
-                if (s_DirsBySceneId.TryGetValue(ls.Id, out var dirs) && dirs.Contains(dir))
+                if (Holds(dir, ls))
                     (scenes ??= new StringBuilder($"[ContentLink] '{rec.Path}' still has loaded scene(s) — unload them first:")).Append("\n  ").Append(ls.Key);
             if (scenes != null) { Debug.LogError(scenes.ToString()); return false; }   // cannot be forced: unloading is asynchronous
+            if (HasSceneLoadsInFlight(dir))   // cannot be forced: unregistering under a scene load crashes the engine (measured)
+            {
+                var loading = new StringBuilder($"[ContentLink] '{rec.Path}' has scene load(s) in flight — unregister it once they have ended (a cancelled one's too: the engine finishes it):");
+                SceneLoadsInFlight(dir, loading);
+                Debug.LogError(loading.ToString());
+                return false;
+            }
 
             var blocking = new List<int>();
             for (int i = 0; i < s_Slots.Count; ++i)
             {
                 var s = s_Slots[i];
-                if (s.Alive && (s.Dir == dir || (s.Dir == kDirUnknown && !s.Simulated))) blocking.Add(i);   // a slot the editor serves from the project belongs to no engine directory
+                if (s.Alive && (s.Dir == dir || s.Source == dir || (s.Dir == kDirUnknown && !s.Simulated))) blocking.Add(i);   // a slot the editor serves from the project belongs to no engine directory
             }
 
             if (blocking.Count > 0)
@@ -196,6 +272,7 @@ namespace xpTURN.ContentLink
                 foreach (var i in blocking)
                 {
                     sb.Append($"\n  {s_Slots[i].Key} refs={s_Slots[i].Refs} status={s_Slots[i].Status}");
+                    if (s_Slots[i].Dir != dir && s_Slots[i].Dir >= 0) sb.Append($" — a name of '{s_Dirs[s_Slots[i].Dir].Path}', loaded from this directory: registered after it, this one carries the same asset");
                     anyLoading |= s_Slots[i].Status == ContentStatus.Loading;
                 }
                 if (!force || anyLoading) { Debug.LogError(sb.ToString()); return false; }
@@ -260,6 +337,15 @@ namespace xpTURN.ContentLink
         public static Func<string, SimulatedDirectory> DirectoryFallback;
 
         /// <summary>
+        /// Set by the editor: what a player's Resources gives for a path — its main asset, or the sprite of that name — or null,
+        /// for every res: load in the editor (Edit Mode as well as Play Mode).
+        /// The editor's own Resources also finds the Resources folders under an Editor folder, which a player lacks, and may give
+        /// such a file for a path a player's file shares (measured on 6000.6). Null in a player. Not cleared by
+        /// <see cref="ResetStatics"/>, like <see cref="NameFallback"/>.
+        /// </summary>
+        public static Func<string, string, Object> ResourcesFallback;
+
+        /// <summary>
         /// The simulated directory that covers an asset under a source root: the most recently registered
         /// one wins, as the engine's rule for real directories does. False when none does.
         /// </summary>
@@ -267,21 +353,29 @@ namespace xpTURN.ContentLink
         {
             dir = NoDirectory;
             if (string.IsNullOrEmpty(sourceRoot) || string.IsNullOrEmpty(assetPath)) return false;
-            var root = NormalizePath(sourceRoot);
-            var path = NormalizePath(assetPath);
+            var root = ComposedOf(NormalizePath(sourceRoot));
+            var path = ComposedOf(NormalizePath(assetPath));   // the editor spells a path's folders decomposed on macOS; the covered folders are typed
             for (int d = s_Dirs.Count - 1; d >= 0; --d)
             {
                 var rec = s_Dirs[d];
-                if (!rec.Alive || !rec.Simulated || !string.Equals(NormalizePath(rec.SourceRoot), root, StringComparison.OrdinalIgnoreCase)) continue;
-                foreach (var folder in rec.Covered)
+                if (!rec.Alive || !rec.Simulated || !string.Equals(ComposedOf(NormalizePath(rec.SourceRoot)), root, StringComparison.OrdinalIgnoreCase)) continue;
+                if (Covers(rec, path))
                 {
-                    var covered = NormalizePath(folder);
-                    if (string.Equals(path, covered, StringComparison.OrdinalIgnoreCase) || path.StartsWith(covered + "/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        dir = d;
-                        return true;
-                    }
+                    dir = d;
+                    return true;
                 }
+            }
+            return false;
+        }
+
+        /// <summary>A simulated directory's covered folders hold the file (<paramref name="path"/> normalized).</summary>
+        static bool Covers(DirectoryRecord rec, string path)
+        {
+            path = ComposedOf(path);   // as the covered folders are: the editor spells a scene's folders decomposed on macOS, and a project's own path may be spelled either way
+            foreach (var folder in rec.Covered)
+            {
+                var covered = ComposedOf(NormalizePath(folder));
+                if (string.Equals(path, covered, StringComparison.OrdinalIgnoreCase) || path.StartsWith(covered + "/", StringComparison.OrdinalIgnoreCase)) return true;
             }
             return false;
         }
@@ -336,7 +430,9 @@ namespace xpTURN.ContentLink
         public static bool Contains(string name)
         {
             if (name == null) return false;
+            if (IsResourcesName(name)) return IsWellFormedResourcesName(name);   // no index for Resources: the format only (the file shows at load)
             if (s_Names.ContainsKey(name)) return true;
+            if (OtherForm(name) is string composed) return Contains(composed);
             var fallback = NameFallback;
             return fallback != null && fallback(name).Id.IsValid;
         }
@@ -345,8 +441,9 @@ namespace xpTURN.ContentLink
         public static bool TryGetLoadableObjectId(string name, out LoadableObjectId id)
         {
             if (name != null && s_Names.TryGetValue(name, out var e)) { id = e.Id; return true; }
+            if (OtherForm(name) is string composed) return TryGetLoadableObjectId(composed, out id);
             var fallback = NameFallback;
-            if (fallback != null && !string.IsNullOrEmpty(name))
+            if (fallback != null && !string.IsNullOrEmpty(name) && !IsResourcesName(name))
             {
                 var simulated = fallback(name);
                 if (simulated.Id.IsValid)
@@ -359,6 +456,61 @@ namespace xpTURN.ContentLink
             id = default;
             return false;
         }
+
+        static readonly Dictionary<string, string> s_ComposedKeys = new(StringComparer.Ordinal);   // a name asked in another Unicode form → its composed form
+
+        /// <summary>
+        /// The composed (NFC) form of a name given in another Unicode form, else null. Catalog names are indexed composed — the form
+        /// an IME types; a catalog an earlier version built, or a link it saved, may spell a name as the macOS editor spells a path:
+        /// folders decomposed, the file as on disk (measured on 6000.6). An ASCII name answers null after a scan and a composed one
+        /// after a check, neither allocating nor remembered — a name no catalog has adds nothing; a name in another form is
+        /// normalized once and remembered, and the lookups that use it allocate nothing after the first.
+        /// </summary>
+        static string OtherForm(string name)
+        {
+            if (name == null || Ascii(name)) return null;
+            if (s_ComposedKeys.TryGetValue(name, out var composed)) return composed;
+            try
+            {
+                if (name.IsNormalized(NormalizationForm.FormC)) return null;
+                composed = name.Normalize(NormalizationForm.FormC);
+            }
+            catch (ArgumentException) { return null; }   // not Unicode (an unpaired surrogate): no other form
+            return s_ComposedKeys[name] = composed == name ? null : composed;
+        }
+
+        /// <summary>The key a scope holds a name under: composed (<see cref="OtherForm"/>) — one key for an asset whichever form loads it.</summary>
+        internal static string ScopeKey(string name) => OtherForm(name) ?? name;
+
+        /// <summary>
+        /// Two names of one catalog that compose to one — an earlier version named a file spelled composed and one spelled decomposed
+        /// apart: one of them answers both now. Warned once a catalog.
+        /// </summary>
+        static void WarnFormTwins(ContentCatalog cat)
+        {
+            if (!s_TwinsWarned.Add(cat)) return;
+            var seen = new Dictionary<string, string>(StringComparer.Ordinal);   // a composed name → the asset its first entry names
+            foreach (var e in cat.Entries)
+            {
+                if (string.IsNullOrEmpty(e.name)) continue;
+                var key = ComposedOf(e.name);
+                var asset = string.IsNullOrEmpty(e.guid) ? e.id.ToString() : e.guid;
+                if (seen.TryAdd(key, asset)) continue;
+                Debug.LogWarning($"[ContentLink] catalog '{cat.name}' holds the name '{key}' twice, in two Unicode forms ({seen[key]} · {asset}) — an earlier version built it: one of them answers both now; update the catalog and build it again");
+                return;
+            }
+        }
+
+        static readonly HashSet<ContentCatalog> s_TwinsWarned = new();
+
+        /// <summary>A name or a path as it is indexed and compared: composed (<see cref="OtherForm"/>) — normalized here, not remembered.</summary>
+        static string ComposedOf(string name)
+        {
+            if (name == null || Ascii(name)) return name;
+            return name.IsNormalized(NormalizationForm.FormC) ? name : name.Normalize(NormalizationForm.FormC);
+        }
+
+        static bool Ascii(string s) { foreach (var c in s) if (c >= 0x80) return false; return true; }
 
         static void RebuildNameIndex()
         {
@@ -374,20 +526,25 @@ namespace xpTURN.ContentLink
                 foreach (var cat in rec.Catalogs)
                 {
                     if (cat == null) continue;
+                    bool spelledOtherwise = false;   // a catalog an earlier version built on macOS: names as that editor spelled the paths
                     foreach (var e in cat.Entries)
                     {
                         s_DirById[e.id] = d;
-                        if (!string.IsNullOrEmpty(e.name))
-                            s_Names[e.name] = new NameEntry { Id = e.id, Dir = d };
+                        if (string.IsNullOrEmpty(e.name)) continue;
+                        var key = ComposedOf(e.name);
+                        spelledOtherwise |= !ReferenceEquals(key, e.name);
+                        s_Names[key] = new NameEntry { Id = e.id, Dir = d };
                     }
+                    if (spelledOtherwise) WarnFormTwins(cat);
                     foreach (var e in cat.Scenes)
                     {
                         if (!e.id.IsValid) continue;
                         if (!s_DirsBySceneId.TryGetValue(e.id, out var dirs)) s_DirsBySceneId[e.id] = dirs = new List<int>(1);
                         if (!dirs.Contains(d)) dirs.Add(d);
                         if (string.IsNullOrEmpty(e.name)) continue;
-                        s_SceneNames[e.name] = new SceneNameEntry { Id = e.id, Dir = d };
-                        s_SceneKeyById[e.id] = e.name;
+                        var key = ComposedOf(e.name);
+                        s_SceneNames[key] = new SceneNameEntry { Id = e.id, Dir = d };
+                        s_SceneKeyById[e.id] = key;
                     }
                 }
             }
@@ -429,7 +586,7 @@ namespace xpTURN.ContentLink
             name = null;
             if (string.IsNullOrEmpty(guid)) return false;
             EnsureRefIndex();
-            if (scene ? s_SceneNameByGuid.TryGetValue(guid, out name) : s_NameByRef.TryGetValue(new RefKey(guid, sub), out name)) return true;
+            if (scene ? s_SceneNameByGuid.TryGetValue(guid, out name) : s_NameByRef.TryGetValue(new RefKey(guid, sub), out name) || (OtherForm(sub) is string composed && s_NameByRef.TryGetValue(new RefKey(guid, composed), out name))) return true;   // a sprite's name is spelled as its file: indexed composed
             var fallback = RefFallback;
             name = fallback?.Invoke(guid, sub ?? "", scene);
             if (!string.IsNullOrEmpty(name)) return true;
@@ -452,10 +609,10 @@ namespace xpTURN.ContentLink
                     if (cat == null) continue;
                     foreach (var e in cat.Entries)
                         if (!string.IsNullOrEmpty(e.guid) && !string.IsNullOrEmpty(e.name))
-                            s_NameByRef[new RefKey(e.guid, e.sub)] = e.name;
+                            s_NameByRef[new RefKey(e.guid, ComposedOf(e.sub))] = ComposedOf(e.name);
                     foreach (var e in cat.Scenes)
                         if (!string.IsNullOrEmpty(e.guid) && !string.IsNullOrEmpty(e.name))
-                            s_SceneNameByGuid[e.guid] = e.name;
+                            s_SceneNameByGuid[e.guid] = ComposedOf(e.name);
                 }
             }
         }
@@ -505,7 +662,7 @@ namespace xpTURN.ContentLink
 
         /// <summary>
         /// The catalog name of a (main name, sprite name) pair when it can be loaded: <paramref name="name"/> itself for an empty
-        /// <paramref name="sub"/>, else "name[sub]". Unlike <see cref="TryGetName{T}(ContentRef{T}, out string)"/>, which only
+        /// <paramref name="sub"/>, else "name[sub]" — composed (NFC), as the catalog and a scope hold it. Unlike <see cref="TryGetName{T}(ContentRef{T}, out string)"/>, which only
         /// resolves, this answers the same as <see cref="Contains(string, string)"/>. After the first lookup of a pair it
         /// allocates nothing, hit or miss (in the editor a miss composes each time).
         /// </summary>
@@ -513,7 +670,7 @@ namespace xpTURN.ContentLink
         {
             if (string.IsNullOrEmpty(sub))
             {
-                catalogName = Contains(name) ? name : null;
+                catalogName = name != null && s_Names.ContainsKey(name) ? name : Contains(name) ? OtherForm(name) ?? name : null;   // the catalog's spelling: composed
                 return catalogName != null;
             }
             if (TryLinkName(name, sub, out catalogName)) return true;
@@ -532,7 +689,7 @@ namespace xpTURN.ContentLink
             if (s_LinkKeys.TryGetValue(key, out composed)) return Contains(composed);   // its directory may be gone
             if (NameFallback == null && s_LinkMisses.Contains(key)) return false;
             composed = string.Concat(name, "[", sub, "]");
-            if (Contains(composed)) { s_LinkKeys[key] = composed; return true; }
+            if (Contains(composed)) { s_LinkKeys[key] = composed = OtherForm(composed) ?? composed; return true; }
             if (NameFallback == null) s_LinkMisses.Add(key);   // a fallback can find a file made during Play without a registration change
             return false;
         }
@@ -559,6 +716,7 @@ namespace xpTURN.ContentLink
         {
             public string Key;
             public int Dir;
+            public int Source;       // the directory the engine serves it from: Dir, or one registered after it that carries the asset under another name
             public Loadable<Object> Loadable;
             public ContentStatus Status;
             public int Refs;
@@ -569,6 +727,10 @@ namespace xpTURN.ContentLink
             public bool Simulated;   // resolved by the editor simulation, not by a catalog
             public bool ById;        // opened by GetSlotById: listed in s_SlotById under its Loadable's id
             public List<AwaitableCompletionSource<bool>> Waiters;
+            public string ResPath, ResSub;   // a Resources slot (Dir == ResourcesDirectory): the path in a Resources folder, the sprite name or null
+            public string ResLoadPath;       // the spelling Resources found the path in, when it is not ResPath (LoadResources)
+            public string ResGivenPath;      // the path as a name in another form gave it: its file spelling is asked last (ResourcesForms)
+            public Object ResTarget;         // what Resources gave; null until loaded and after release
         }
 
         static readonly List<Slot> s_Slots = new();
@@ -588,6 +750,7 @@ namespace xpTURN.ContentLink
             var s = s_Slots[si];
             s.Key = key;
             s.Dir = dir;
+            s.Source = dir;
             s.Loadable = loadable;
             s.Status = ContentStatus.None;
             s.Refs = 0;
@@ -595,6 +758,8 @@ namespace xpTURN.ContentLink
             s.Alive = true;
             s.Simulated = false;
             s.ById = false;
+            s.ResPath = s.ResSub = s.ResLoadPath = s.ResGivenPath = null;
+            s.ResTarget = null;
             s_SlotByKey[key] = si;
             return si;
         }
@@ -602,9 +767,19 @@ namespace xpTURN.ContentLink
         static bool TryGetSlotByName(string name, out int si)
         {
             if (name != null && s_SlotByKey.TryGetValue(name, out si)) return true;
+            if (OtherForm(name) is string composed)   // another form: slots and the index know the name composed
+            {
+                if (!TryGetSlotByName(composed, out si)) return false;
+                var s = s_Slots[si];
+                if (s.Dir == ResourcesDirectory && s.ResGivenPath == null && TrySplitResourcesName(name, out int end, out _))
+                    s.ResGivenPath = name.Substring(ResourcesPrefix.Length, end - ResourcesPrefix.Length);
+                return true;
+            }
+            if (name != null && IsResourcesName(name)) return TryOpenResourcesSlot(name, out si);   // a miss only: a hit never looks at the name
             if (!string.IsNullOrEmpty(name) && s_Names.TryGetValue(name, out var e))
             {
                 si = AllocSlot(name, e.Dir, new Loadable<Object>(e.Id));
+                if (s_DirById.TryGetValue(e.Id, out var source)) s_Slots[si].Source = source;   // the engine serves an id from the most recently registered directory that carries it, chosen as the load starts — here (measured on 6000.6)
                 return true;
             }
 
@@ -624,7 +799,7 @@ namespace xpTURN.ContentLink
             }
 
             var roots = SimulatedRootsDescription();
-            Debug.LogError(name != null && s_SceneNames.ContainsKey(name)
+            Debug.LogError(name != null && (s_SceneNames.ContainsKey(name) || (SceneContainsFallback?.Invoke(name) ?? false))   // a scene the editor serves from the project too
                 ? $"[ContentLink] '{name}' is a scene — use LoadSceneAsync."
                 : roots != null
                     ? $"[ContentLink] '{name}' is not under {roots} in the project."
@@ -632,6 +807,215 @@ namespace xpTURN.ContentLink
             si = -1;
             return false;
         }
+
+        // ───────────── Resources ─────────────
+
+        static bool IsResourcesName(string name) => name.StartsWith(ResourcesPrefix, StringComparison.Ordinal);
+
+        /// <summary>"res:" + a path, and "[sprite]" when it ends with ']' (split at the last '['): a path that ends with ']' is not reachable.</summary>
+        static bool TrySplitResourcesName(string name, out int pathEnd, out int subStart)
+        {
+            int start = ResourcesPrefix.Length;
+            pathEnd = name.Length;
+            subStart = -1;
+            if (name.Length > start && name[name.Length - 1] == ']')
+            {
+                int open = name.LastIndexOf('[');
+                if (open < start || open == name.Length - 2) return false;   // "res:[s0]" or "res:x[]"
+                pathEnd = open;
+                subStart = open + 1;
+            }
+            return pathEnd > start;
+        }
+
+        static bool IsWellFormedResourcesName(string name) => TrySplitResourcesName(name, out _, out _);
+
+        static bool TryOpenResourcesSlot(string name, out int si)
+        {
+            if (!TrySplitResourcesName(name, out int pathEnd, out int subStart))
+            {
+                Debug.LogError($"[ContentLink] '{name}' is not a Resources name: '{ResourcesPrefix}' then a path in a Resources folder, and '[sprite]' for a sprite.");
+                si = -1;
+                return false;
+            }
+            si = AllocSlot(name, ResourcesDirectory, null);
+            var s = s_Slots[si];
+            s.ResPath = name.Substring(ResourcesPrefix.Length, pathEnd - ResourcesPrefix.Length);
+            Count(s_ResPathSlots, s.ResPath);
+            s.ResSub = subStart < 0 ? null : name.Substring(subStart, name.Length - 1 - subStart);
+            return true;
+        }
+
+        /// <summary>The slot's object from what Resources gave for its path: the main asset, or the sprite of that name — in the editor, what a player's Resources holds (<see cref="ResourcesFallback"/>).</summary>
+        static Object PickResources(Slot s, Object main)
+        {
+            var player = ResourcesFallback;   // the editor: what a player's Resources holds, not what the editor's finds
+            if (player != null) main = player(s.ResGivenPath ?? s.ResPath, null);   // as the name gave it: the editor asks its spellings too (PlayerResources)
+            if (main == null) { Debug.LogError($"[ContentLink] '{s.Key}' is not in a Resources folder of this build."); return null; }
+            if (s.ResSub == null) return main;
+            var sprite = player != null ? player(s.ResGivenPath ?? s.ResPath, s.ResSub) as Sprite : SpriteOf(s.ResPath, s.ResLoadPath ?? s.ResPath, s.ResSub);
+            if (sprite != null) return sprite;
+            Debug.LogError($"[ContentLink] '{s.Key}': '{s.ResPath}' has no sprite named '{s.ResSub}'.");
+            return null;
+        }
+
+        /// <summary>
+        /// The first sprite of that name a Resources path has. The names are read once — a native getter that makes the string —
+        /// and kept while a slot holds the path, until a <see cref="SweepResources"/>: the next sprite slot of the path reads none.
+        /// </summary>
+        static Sprite SpriteOf(string path, string loadPath, string name)
+        {
+            if (!s_ResSpritesByPath.TryGetValue(path, out var byName) || (byName.TryGetValue(name, out var kept) && kept == null))   // new, or code outside ContentLink unloaded it: read the path again
+            {
+                var sprites = Resources.LoadAll<Sprite>(loadPath);   // the texture is loaded now: a warm call
+                byName = new Dictionary<string, Sprite>(sprites.Length, StringComparer.Ordinal);
+                foreach (var sprite in sprites) byName.TryAdd(ComposedOf(sprite.name), sprite);   // a sprite is named as its file: keyed composed, as the slot's name is
+                s_ResSpritesByPath[path] = byName;
+            }
+            return byName.TryGetValue(name, out var found) ? found : null;
+        }
+
+        static async void StartResourcesLoad(Slot s)
+        {
+            s.Status = ContentStatus.Loading;
+            uint serial = s.Serial;
+            var request = Resources.LoadAsync(s.ResPath);
+            var forms = ResourcesForms(s.ResPath, s.ResGivenPath);   // asked for at once, not in turn: a spelling that misses costs a load a frame (measured on 6000.6)
+            var others = forms.Length == 0 ? null : new ResourceRequest[forms.Length];
+            for (int i = 0; i < forms.Length; ++i) if (forms[i] != null) others[i] = Resources.LoadAsync(forms[i]);
+            try { await Awaitable.FromAsyncOperation(request); }
+            catch (Exception e) { Debug.LogException(e); }
+            if (!s.Alive || s.Serial != serial || s.Status != ContentStatus.Loading) return;   // a synchronous load completed it first (it never waits for the request)
+            var asset = request.asset;
+            for (int i = 0; asset == null && i < forms.Length; ++i)   // the first that loads, in LoadResources' order
+            {
+                if (others[i] == null) continue;
+                try { await Awaitable.FromAsyncOperation(others[i]); }
+                catch (Exception e) { Debug.LogException(e); }
+                if (!s.Alive || s.Serial != serial || s.Status != ContentStatus.Loading) return;
+                if ((asset = others[i].asset) != null) s.ResLoadPath = forms[i];
+            }
+            s.ResTarget = PickResources(s, asset);
+            if (!ReferenceEquals(s.ResTarget, null)) Count(s_ResTargetSlots, s.ResTarget);
+            FinishLoad(s);
+        }
+
+        /// <summary>
+        /// Resources.Load in the spelling the player has the path in: Resources finds a path only as the editor that built the player
+        /// spelled it, and the macOS editor spells folders decomposed and the file as on disk (measured on 6000.6). A path not in ASCII
+        /// that misses is tried in the other spellings (<see cref="ResourcesForms"/>); the one that loads is kept for the slot's sprites.
+        /// </summary>
+        static Object LoadResources(Slot s)
+        {
+            var asset = Resources.Load(s.ResPath);
+            if (asset != null) return asset;
+            foreach (var form in ResourcesForms(s.ResPath, s.ResGivenPath))
+                if (form != null && (asset = Resources.Load(form)) != null) { s.ResLoadPath = form; return asset; }
+            return null;
+        }
+
+        /// <summary>
+        /// The other spellings a player may have a Resources path in, in the order they are tried: the folders decomposed (a build made
+        /// on macOS), all of it, the file alone (an editor that spells a path as on disk); for a name given in another form, its file as
+        /// given under either form of the folders, then the path as given — a file no other spelling reaches (part of its name decomposed,
+        /// a compatibility character). Null where one spells the path as given or as one before it. None for an ASCII path.
+        /// </summary>
+        static string[] ResourcesForms(string path, string given = null)
+        {
+            if (Ascii(path)) return Array.Empty<string>();
+            int slash = path.LastIndexOf('/') + 1;
+            string folders = path.Substring(0, slash), file = path.Substring(slash);
+            string dFolders = folders.Normalize(NormalizationForm.FormD), dFile = file.Normalize(NormalizationForm.FormD);
+            var gFile = given?.Substring(given.LastIndexOf('/') + 1);
+            var forms = given == null ? new[] { dFolders + file, dFolders + dFile, folders + dFile } : new[] { dFolders + file, dFolders + dFile, folders + dFile, folders + gFile, dFolders + gFile, given };
+            for (int i = 0; i < forms.Length; ++i)
+                if (forms[i] == path || Array.IndexOf(forms, forms[i], 0, i) >= 0) forms[i] = null;
+            return forms;
+        }
+
+        static readonly List<(string Path, Object Target)> s_DeferredUnloads = new();   // what a slot left loaded while another slot held its path — only paths a slot still holds
+
+        sealed class ReferenceComparer : IEqualityComparer<Object>
+        {
+            public static readonly ReferenceComparer Instance = new();
+            public bool Equals(Object a, Object b) => ReferenceEquals(a, b);
+            public int GetHashCode(Object o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
+        }
+
+        // Live Resources slots per path (any case) and per object they hold, kept as slots open, load and close: a release asks
+        // them instead of walking every slot. By reference: an object other code unloaded is still its own key.
+        static readonly Dictionary<string, int> s_ResPathSlots = new(StringComparer.OrdinalIgnoreCase);
+        static readonly Dictionary<Object, int> s_ResTargetSlots = new(ReferenceComparer.Instance);
+        static readonly Dictionary<string, Dictionary<string, Sprite>> s_ResSpritesByPath = new(StringComparer.OrdinalIgnoreCase);   // a held path's sprites by name (SpriteOf)
+
+        static void Count<TKey>(Dictionary<TKey, int> counts, TKey key) => counts[key] = counts.TryGetValue(key, out var n) ? n + 1 : 1;
+
+        /// <summary>Takes one off and returns what is left: how many other slots still hold the key.</summary>
+        static int Uncount<TKey>(Dictionary<TKey, int> counts, TKey key)
+        {
+            if (!counts.TryGetValue(key, out var n)) return 0;
+            if (--n == 0) counts.Remove(key); else counts[key] = n;
+            return n;
+        }
+
+        static bool DefersPath(string path)
+        {
+            for (int i = 0; i < s_DeferredUnloads.Count; ++i)
+                if (string.Equals(s_DeferredUnloads[i].Path, path, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        static bool IsDeferred(string path, Object target)
+        {
+            for (int i = 0; i < s_DeferredUnloads.Count; ++i)
+                if (ReferenceEquals(s_DeferredUnloads[i].Target, target) && string.Equals(s_DeferredUnloads[i].Path, path, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Lets go of a Resources slot's object. Unloaded only when nothing else of ours holds it or its path: two names reach one
+        /// object (another case, a nested Resources folder), and a texture unloaded under its live sprite just reloads — so it
+        /// waits, and goes when the path's last slot closes.
+        /// </summary>
+        static void ReleaseResources(Slot s)
+        {
+            var target = s.ResTarget;
+            s.ResTarget = null;
+            int othersHoldingTarget = ReferenceEquals(target, null) ? 0 : Uncount(s_ResTargetSlots, target);   // counted off before anything returns
+            int othersOnPath = Uncount(s_ResPathSlots, s.ResPath);
+            if (othersOnPath == 0) s_ResSpritesByPath.Remove(s.ResPath);   // the path's last slot: its names are read again next time
+            if (!UnloadResourcesOnRelease && !DefersPath(s.ResPath)) return;   // the switch off unloads nothing: only what this path still holds back is let go
+            bool unloadable = UnloadResourcesOnRelease && target != null && !(target is GameObject || target is Component);   // a prefab is reclaimed by SweepResources only; the switch off leaves everything to it
+            bool pathHeld = othersOnPath > 0;
+            if (unloadable && othersHoldingTarget == 0)                       // held by another slot: that slot unloads it when it closes
+            {
+                if (!pathHeld) Resources.UnloadAsset(target);
+                else if (!IsDeferred(s.ResPath, target)) s_DeferredUnloads.Add((s.ResPath, target));   // unloaded with the path's last slot — once
+            }
+            if (pathHeld) return;
+            for (int i = s_DeferredUnloads.Count - 1; i >= 0; --i)           // the path's last slot closed: what its siblings left goes now — whatever became of this slot's own; with the switch off it is only dropped (the sweep takes it)
+            {
+                var (path, deferred) = s_DeferredUnloads[i];
+                if (!string.Equals(path, s.ResPath, StringComparison.OrdinalIgnoreCase)) continue;
+                s_DeferredUnloads.RemoveAt(i);
+                if (UnloadResourcesOnRelease && deferred != null && !s_ResTargetSlots.ContainsKey(deferred)) Resources.UnloadAsset(deferred);
+            }
+        }
+
+        /// <summary>
+        /// Releases the zero-reference assets now, then lets the engine unload whatever nothing references — the only way a
+        /// prefab from Resources (and what Resources assets depend on) leaves memory. A pass over every loaded object: call it
+        /// where a hitch is fine (a loading screen, a scene change). What waits for a path a slot still holds (a texture under
+        /// its sprite) stays, and goes with that path's last slot.
+        /// </summary>
+        public static AsyncOperation SweepResources()
+        {
+            Collect(ignoreDelay: true);
+            s_ResSpritesByPath.Clear();   // the held paths' names go too: the sweep reclaims their other sprites, and their next sprite slot reads the path again
+            return Resources.UnloadUnusedAssets();
+        }
+
+        static Object TargetOf(Slot s) => s.Loadable != null ? s.Loadable.Target : s.ResTarget;
 
         /// <summary>The key of a slot opened by id — diagnostics, TryFindKey, Snapshot. Made once per slot; lookups go through s_SlotById.</summary>
         static string IdKey(LoadableObjectId id) => "#" + id.ToString();
@@ -662,7 +1046,7 @@ namespace xpTURN.ContentLink
         static void FreeSlot(int si)
         {
             var s = s_Slots[si];
-            try { s.Loadable?.Release(); }
+            try { if (s.Dir == ResourcesDirectory) ReleaseResources(s); else s.Loadable?.Release(); }
             catch (Exception e) { Debug.LogException(e); }
 
             s_SlotByKey.Remove(s.Key);
@@ -691,6 +1075,7 @@ namespace xpTURN.ContentLink
 
         static async void StartLoad(Slot s)
         {
+            if (s.Dir == ResourcesDirectory) { StartResourcesLoad(s); return; }
             s.Status = ContentStatus.Loading;
             uint serial = s.Serial;
             var loadable = s.Loadable;
@@ -704,8 +1089,9 @@ namespace xpTURN.ContentLink
         static void FinishLoad(Slot s)
         {
             if (s.Status != ContentStatus.Loading) return;
-            s.Status = s.Loadable.Status == LoadableStatus.Loaded ? ContentStatus.Loaded : ContentStatus.Failed;
-            if (s.Status == ContentStatus.Failed)
+            bool resources = s.Dir == ResourcesDirectory;
+            s.Status = (resources ? s.ResTarget != null : s.Loadable.Status == LoadableStatus.Loaded) ? ContentStatus.Loaded : ContentStatus.Failed;
+            if (s.Status == ContentStatus.Failed && !resources)   // a Resources miss was logged with its reason
                 Debug.LogError($"[ContentLink] failed to load '{s.Key}'.");
 
             var waiters = s.Waiters;
@@ -756,7 +1142,15 @@ namespace xpTURN.ContentLink
             if (s.Status == ContentStatus.None) s.Status = ContentStatus.Loading;
             if (s.Status == ContentStatus.Loading)
             {
-                try { s.Loadable.Load(); }   // also completes an in-flight async load
+                try
+                {
+                    if (s.Dir == ResourcesDirectory)   // does not wait for an in-flight request: completes the slot itself
+                    {
+                        s.ResTarget = PickResources(s, LoadResources(s));
+                        if (!ReferenceEquals(s.ResTarget, null)) Count(s_ResTargetSlots, s.ResTarget);
+                    }
+                    else s.Loadable.Load();   // also completes an in-flight async load
+                }
                 catch (Exception e) { Debug.LogException(e); }
                 FinishLoad(s);               // Failed when the engine did not get to Loaded, as on the async path
             }
@@ -789,7 +1183,7 @@ namespace xpTURN.ContentLink
                 using (scopeCt.CanBeCanceled ? scopeCt.Register(s_CancelWaiter, acs) : default)
                 {
                     try { await acs.Awaitable; }
-                    catch (OperationCanceledException) { h.Dispose(); throw; }
+                    catch (OperationCanceledException) { h.Dispose(); ct.ThrowIfCancellationRequested(); scopeCt.ThrowIfCancellationRequested(); throw; }   // the waiter's cancellation carries no token: rethrow with the one that cancelled
                 }
             }
 
@@ -818,7 +1212,7 @@ namespace xpTURN.ContentLink
             {
                 var s = s_Slots[kv.Value];
                 if (s.Status != ContentStatus.Loaded) continue;
-                var t = s.Loadable.Target;
+                var t = TargetOf(s);
                 if (ReferenceEquals(t, asset) || (!ReferenceEquals(go, null) && ReferenceEquals(t, go))) { key = kv.Key; return true; }
             }
             return false;
@@ -925,7 +1319,7 @@ namespace xpTURN.ContentLink
             if (!IsLeaseAlive(li, gen)) return null;
             var s = s_Slots[s_Leases[li].Slot];
             if (s.Status != ContentStatus.Loaded) return null;
-            var target = s.Loadable.Target;
+            var target = TargetOf(s);
             if (target is T t) return t;
             if (target is GameObject go && typeof(Component).IsAssignableFrom(typeof(T)))
                 return go.GetComponent(typeof(T)) as T;
@@ -936,8 +1330,10 @@ namespace xpTURN.ContentLink
         {
             if (!IsLeaseAlive(li, gen)) return;
             var s = s_Slots[s_Leases[li].Slot];
-            var target = s.Loadable.Target;
-            Debug.LogError($"[ContentLink] '{s.Key}' is {(target != null ? target.GetType().Name : "null")}, not {typeof(T).Name}.");
+            var target = TargetOf(s);
+            Debug.LogError(s.Status == ContentStatus.Loaded && target == null   // a loaded slot's object is null only once it was unloaded under its holder
+                ? $"[ContentLink] '{s.Key}' was unloaded while held — code destroyed or unloaded it, or a directory it came from was unregistered: let go of every reference to it, and it loads again after the next Collect."
+                : $"[ContentLink] '{s.Key}' is {(target != null ? target.GetType().Name : "null")}, not {typeof(T).Name}.");
         }
 
         internal static string GetLeaseKey(int li, uint gen)
@@ -989,18 +1385,29 @@ namespace xpTURN.ContentLink
         ///   · SceneFallback         — start the load and give me the operation; null means "not mine".
         ///                             The editor runs it, because EditorSceneManager cannot be called from here.
         ///   · SceneResultFallback   — which Scene did that load produce? An AsyncOperation does not say, and a
-        ///                             simulated scene belongs to no directory so the id-based Claim finds nothing,
-        ///                             so the editor matches the scene by the path it asked for.
+        ///                             simulated scene has no id so the id-based Claim finds nothing, so the editor
+        ///                             matches the scene by the path it asked for. Called once for every load the
+        ///                             fallback started, when its operation completes — a cancelled one too.
         /// All null in a player. Not cleared by ResetStatics, for the reason NameFallback is not.
         /// </summary>
         public static Func<string, bool> SceneContainsFallback;
         public static Func<string, LoadSceneParameters, AsyncOperation> SceneFallback;
         public static Func<string, Scene> SceneResultFallback;
 
+        /// <summary>
+        /// Set by the editor: adds the project path of each simulated scene load still in flight — what UnregisterDirectory refuses a
+        /// directory served from the project for, as it refuses a built one for its own scene loads. Null in a player. Not cleared by
+        /// ResetStatics, for the reason NameFallback is not.
+        /// </summary>
+        public static Action<List<string>> SceneLoadsInFlightFallback;
+        static readonly List<string> s_PathsInFlight = new();
+        static bool s_Quitting;   // Shutdown's directory pass: a simulated scene load holds no engine directory (SceneLoadsInFlight)
+
         public static bool ContainsScene(string name)
         {
-            if (name == null) return false;
+            if (name == null || IsResourcesName(name)) return false;
             if (s_SceneNames.ContainsKey(name)) return true;
+            if (OtherForm(name) is string composed) return ContainsScene(composed);
             var known = SceneContainsFallback;
             return known != null && known(name);
         }
@@ -1009,6 +1416,7 @@ namespace xpTURN.ContentLink
         public static bool TryGetLoadableSceneId(string name, out LoadableSceneId id)
         {
             if (name != null && s_SceneNames.TryGetValue(name, out var e)) { id = e.Id; return true; }
+            if (OtherForm(name) is string composed) return TryGetLoadableSceneId(composed, out id);
             id = default;
             return false;
         }
@@ -1028,7 +1436,9 @@ namespace xpTURN.ContentLink
         /// <summary>A scope's scene load: the caller's token and the scope's own, each registered directly — no linked source per load.</summary>
         internal static Awaitable<Scene> LoadSceneAsync(string name, LoadSceneParameters parameters, CancellationToken ct, CancellationToken scopeCt)
         {
+            if (ct.IsCancellationRequested || scopeCt.IsCancellationRequested) return LoadSceneCore(name, default, parameters, ct, scopeCt);   // a cancelled token wins over a miss, as on the asset path
             if (name != null && s_SceneNames.TryGetValue(name, out var e)) return LoadSceneCore(name, e.Id, parameters, ct, scopeCt);
+            if (OtherForm(name) is string composed) return LoadSceneAsync(composed, parameters, ct, scopeCt);   // scenes are indexed composed
             if (name != null && SceneFallback != null) return LoadSimulatedSceneCore(name, parameters, ct, scopeCt);   // a catalog name wins over the simulation
             Debug.LogError($"[ContentLink] scene '{name}' is not in any registered ContentCatalog.");
             return InvalidScene();
@@ -1042,7 +1452,10 @@ namespace xpTURN.ContentLink
             => LoadSceneAsync(reference, new LoadSceneParameters(mode), ct);
 
         public static Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, LoadSceneParameters parameters, CancellationToken ct = default)
-            => ResolveSceneForLoad(reference, out var name) ? LoadSceneAsync(name, parameters, ct) : InvalidScene();
+        {
+            if (ct.IsCancellationRequested) return LoadSceneAsync((string)null, parameters, ct);   // a cancelled token wins over a miss, as on the name path
+            return ResolveSceneForLoad(reference, out var name) ? LoadSceneAsync(name, parameters, ct) : InvalidScene();
+        }
 
         static Awaitable<Scene> InvalidScene()
         {
@@ -1053,8 +1466,8 @@ namespace xpTURN.ContentLink
 
         /// <summary>
         /// The editor-simulation twin of <see cref="LoadSceneCore"/>. The editor starts the load and
-        /// names the resulting Scene; everything else — the cancellation shape, the error wording — matches, so a
-        /// caller cannot tell the two apart except that the scene is not part of any directory.
+        /// names the resulting Scene; everything else — the cancellation shape, the error wording, the tracking — matches, so a
+        /// caller cannot tell the two apart except that the scene has no LoadableSceneId.
         /// </summary>
         static async Awaitable<Scene> LoadSimulatedSceneCore(string key, LoadSceneParameters parameters, CancellationToken ct, CancellationToken scopeCt)
         {
@@ -1081,23 +1494,31 @@ namespace xpTURN.ContentLink
             catch (OperationCanceledException)
             {
                 if (parameters.loadSceneMode == LoadSceneMode.Additive)
-                    op.completed += _ => { var late = SceneResultFallback?.Invoke(key) ?? default; if (late.IsValid()) _ = TryUnloadScene(late); };
+                    op.completed += _ => { var late = TrackSimulated(key); if (late.IsValid()) _ = TryUnloadScene(late); };
                 else
+                {
                     Debug.LogWarning($"[ContentLink] load of scene '{key}' was cancelled after a Single-mode load started; the scene stays loaded.");
+                    op.completed += _ => TrackSimulated(key);   // the scene stays loaded, and tracked, as a built one is
+                }
+                ct.ThrowIfCancellationRequested();   // the waiter's cancellation carries no token: rethrow with the one that cancelled
+                scopeCt.ThrowIfCancellationRequested();
                 throw;
             }
 
-            var scene = SceneResultFallback?.Invoke(key) ?? default;
-            if (!scene.IsValid())
-            {
-                Debug.LogError($"[ContentLink] failed to load scene '{key}'.");
-                return default;
-            }
+            var scene = TrackSimulated(key);
+            if (!scene.IsValid()) Debug.LogError($"[ContentLink] failed to load scene '{key}'.");
+            return scene;
+        }
 
-            // OnSceneLoaded ignored it: a simulated scene is in no directory. Track it here anyway so the scope
-            // that asked for it can unload it; what it stays outside of is UnregisterDirectory's open-scene guard,
-            // which is by definition about directories.
-            s_LoadedScenes.Add(new LoadedScene { Scene = scene, Id = default, Key = key, Claimed = true });
+        /// <summary>
+        /// The Scene a simulated load produced, tracked: OnSceneLoaded ignores it (a simulated scene has no id), so it is added here — a
+        /// cancelled load's too, as a built scene is tracked whoever loaded it — so that the scope that asked for it can unload it and the
+        /// open-scene guard finds the directory served from the project that covers its file (Holds).
+        /// </summary>
+        static Scene TrackSimulated(string key)
+        {
+            var scene = SceneResultFallback?.Invoke(key) ?? default;
+            if (scene.IsValid()) s_LoadedScenes.Add(new LoadedScene { Scene = scene, Id = default, Key = key, Claimed = true });
             return scene;
         }
 
@@ -1143,6 +1564,8 @@ namespace xpTURN.ContentLink
                     Debug.LogWarning($"[ContentLink] load of scene '{key}' was cancelled after a Single-mode load started; the scene stays loaded.");
                     op.completed += _ => Flight(id, -1);
                 }
+                ct.ThrowIfCancellationRequested();   // the waiter's cancellation carries no token: rethrow with the one that cancelled
+                scopeCt.ThrowIfCancellationRequested();
                 throw;
             }
 
@@ -1201,11 +1624,58 @@ namespace xpTURN.ContentLink
             return op;
         }
 
+        /// <summary>
+        /// Whether a scene load from the directory is still in flight — what <see cref="UnregisterDirectory"/> refuses it for, forced or
+        /// not: a load ContentLink started that the engine has not finished, a cancelled one's too; for a directory served from the
+        /// project, a simulated load of a file it covers. False for a directory not registered. Wait for false before unregistering.
+        /// </summary>
+        public static bool HasSceneLoadsInFlight(int dir) => (uint)dir < (uint)s_Dirs.Count && s_Dirs[dir].Alive && SceneLoadsInFlight(dir, null);
+
+        /// <summary>
+        /// The scene loads from the directory still in flight (<see cref="Flight"/>) and, for a directory served from the project, the
+        /// simulated loads of the files it covers (the editor's answer, as Holds covers an open one) — each one's name added to names
+        /// when given. The simulated ones do not count during Shutdown: a directory served from the project holds no engine directory.
+        /// </summary>
+        static bool SceneLoadsInFlight(int dir, StringBuilder names)
+        {
+            bool any = false;
+            foreach (var kv in s_Flights)
+                if (s_DirsBySceneId.TryGetValue(kv.Key, out var dirs) && dirs.Contains(dir))
+                {
+                    if (names == null) return true;
+                    any = true; names.Append("\n  ").Append(SceneKey(kv.Key));
+                }
+            var rec = s_Dirs[dir];
+            var simulated = SceneLoadsInFlightFallback;
+            if (!rec.Simulated || simulated == null || s_Quitting) return any;
+            s_PathsInFlight.Clear();
+            simulated(s_PathsInFlight);
+            foreach (var path in s_PathsInFlight)
+                if (Covers(rec, NormalizePath(path)))
+                {
+                    if (names == null) return true;
+                    any = true; names.Append("\n  ").Append(path);
+                }
+            return any;
+        }
+
         static bool HasLoadedScenes(int dir)
         {
             foreach (var ls in s_LoadedScenes)
                 if (s_DirsBySceneId.TryGetValue(ls.Id, out var dirs) && dirs.Contains(dir)) return true;
             return false;
+        }
+
+        /// <summary>
+        /// The directory holds the loaded scene: its catalog carries the scene's id, or — a scene the editor opened from the project for a
+        /// directory it serves (no id) — its covered folders hold the scene's file, which is what the built directory would carry.
+        /// </summary>
+        static bool Holds(int dir, in LoadedScene ls)
+        {
+            if (s_DirsBySceneId.TryGetValue(ls.Id, out var dirs)) return dirs.Contains(dir);
+            if (ls.Id.IsValid) return false;
+            var rec = s_Dirs[dir];
+            return rec.Alive && rec.Simulated && Covers(rec, NormalizePath(ls.Scene.path));
         }
 
         static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -1228,7 +1698,7 @@ namespace xpTURN.ContentLink
             public readonly string Key;
             public readonly int Frame;
             public readonly StackTrace Trace;
-            public readonly int Dir;      // the directory the asset belongs to, NoDirectory when unknown
+            public readonly int Dir;      // the directory the asset belongs to (a directory registered after it that gave the asset blocks unregistering too), NoDirectory when unknown, ResourcesDirectory for a res: name
             internal LeaseInfo(string key, int frame, StackTrace trace, int dir) { Key = key; Frame = frame; Trace = trace; Dir = dir; }
             public override string ToString() => $"'{Key}' frame={Frame}";
         }
@@ -1265,14 +1735,22 @@ namespace xpTURN.ContentLink
         {
             results.Clear();
             foreach (var ls in s_LoadedScenes)
-                results.Add(new SceneInfo(ls.Key, s_DirsBySceneId.TryGetValue(ls.Id, out var dirs) && dirs.Count > 0 ? dirs[0] : kDirUnknown, ls.Scene));
+                results.Add(new SceneInfo(ls.Key, FirstHolder(ls), ls.Scene));
+        }
+
+        static int FirstHolder(in LoadedScene ls)
+        {
+            if (s_DirsBySceneId.TryGetValue(ls.Id, out var dirs)) return dirs.Count > 0 ? dirs[0] : kDirUnknown;
+            if (ls.Id.IsValid) return kDirUnknown;
+            for (int d = 0; d < s_Dirs.Count; ++d) if (Holds(d, ls)) return d;
+            return kDirUnknown;
         }
 
         // ───────────── lifetime ─────────────
 
         /// <summary>
         /// In the editor with domain reload disabled, content directories that Shutdown left registered (a scene from
-        /// them was still open at quit) survive in the engine and would make the next Play session's
+        /// them was still open at quit, or a load from them still in flight) survive in the engine and would make the next Play session's
         /// RegisterDirectory throw "already registered". Nothing from the previous session is alive any more
         /// when a new session starts, so hand them back here. In a player the list is empty.
         /// </summary>
@@ -1292,32 +1770,54 @@ namespace xpTURN.ContentLink
             Debug.Log($"[ContentLink] released {dirs} content director{(dirs == 1 ? "y" : "ies")} and unmounted {archives} archive(s) left by the previous session.");
         }
 
-        /// <summary>Disposes the scope tree, reports and returns remaining raw leases, unregisters all directories.</summary>
+        /// <summary>
+        /// Disposes the scope tree, returns the remaining raw leases — reporting each, but not a load still in flight: its caller has
+        /// no handle yet — and unregisters every directory it can. One with a scene still open or a load still in flight cannot be
+        /// released now; the next session start lets it go (<see cref="ReleaseLeftoverDirectories"/>), a player's process with it.
+        /// </summary>
         public static void Shutdown()
         {
             ContentScope.ShutdownRoot();
             for (int i = 0; i < s_LeaseHigh; ++i)
                 if (s_Leases[i].Active)
                 {
-                    Debug.LogWarning($"[ContentLink] leaked raw AssetHandle at shutdown: '{s_Slots[s_Leases[i].Slot].Key}'\n{s_Leases[i].Trace}");
+                    if (s_Slots[s_Leases[i].Slot].Status != ContentStatus.Loading)   // a load still in flight is not a leak: its caller has no handle yet
+                        Debug.LogWarning($"[ContentLink] leaked raw AssetHandle at shutdown: '{s_Slots[s_Leases[i].Slot].Key}'\n{s_Leases[i].Trace}");
                     Release(i, s_Leases[i].Gen);
                 }
             Collect(ignoreDelay: true);
-            for (int d = 0; d < s_Dirs.Count; ++d)
-                if (s_Dirs[d].Alive && !HasLoadedScenes(d)) UnregisterDirectory(d, force: true);   // open scenes: the engine tears them down
+            for (int i = s_LoadedScenes.Count - 1; i >= 0; --i)
+                if (!s_LoadedScenes[i].Id.IsValid) s_LoadedScenes.RemoveAt(i);   // a simulated scene holds no engine directory: its directory goes with the rest
+            s_Quitting = true;
+            try
+            {
+                for (int d = 0; d < s_Dirs.Count; ++d)
+                    if (s_Dirs[d].Alive && !HasLoadedScenes(d) && !HasLoadsInFlight(d)) UnregisterDirectory(d, force: true);   // open scenes: the engine tears them down · loads in flight: let go at the next session (measured)
+            }
+            finally { s_Quitting = false; }
             s_LoadedScenes.Clear();
+        }
+
+        /// <summary>A load from the directory still in flight — an asset's (the slots <see cref="UnregisterDirectory"/> counts as the directory's) or a scene's: what it refuses even when forced.</summary>
+        static bool HasLoadsInFlight(int dir)
+        {
+            if (HasSceneLoadsInFlight(dir)) return true;
+            foreach (var s in s_Slots)
+                if (s.Alive && s.Status == ContentStatus.Loading && (s.Dir == dir || s.Source == dir || (s.Dir == kDirUnknown && !s.Simulated))) return true;
+            return false;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void ResetStatics()   // runs on every Play entry, even with domain reload disabled
         {
             ReleaseLeftoverDirectories();
-            s_Dirs.Clear(); s_Names.Clear(); s_DirById.Clear(); s_SimDirById.Clear();
+            s_Dirs.Clear(); s_Mounting.Clear(); s_Names.Clear(); s_DirById.Clear(); s_SimDirById.Clear();
             s_Slots.Clear(); s_FreeSlots.Clear(); s_SlotByKey.Clear(); s_SlotById.Clear(); s_Pending.Clear();
             s_Leases = new Lease[256]; s_LeaseHigh = 0; s_FreeLeases.Clear();
             s_SceneNames.Clear(); s_DirsBySceneId.Clear(); s_SceneKeyById.Clear(); s_LoadedScenes.Clear(); s_Flights.Clear();
             s_NameByRef.Clear(); s_SceneNameByGuid.Clear(); s_RefIndexDirty = false;
-            s_LinkKeys.Clear(); s_LinkMisses.Clear();
+            s_LinkKeys.Clear(); s_LinkMisses.Clear(); s_ComposedKeys.Clear(); s_TwinsWarned.Clear();
+            s_DeferredUnloads.Clear(); s_ResPathSlots.Clear(); s_ResTargetSlots.Clear(); s_ResSpritesByPath.Clear();
             SceneManager.sceneLoaded -= OnSceneLoaded;
             SceneManager.sceneLoaded += OnSceneLoaded;
             SceneManager.sceneUnloaded -= OnSceneUnloaded;

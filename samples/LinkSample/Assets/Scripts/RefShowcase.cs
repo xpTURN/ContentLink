@@ -4,9 +4,11 @@ using UnityEngine;
 namespace xpTURN.ContentLink.Samples
 {
     /// <summary>
-    /// ContentRef fields: asset GUIDs (and sprite names) set in the inspector (Prefabs/RefShowcase), so moving or renaming
-    /// the files does not break them. A reference holds a key only; on Start each loads into this GameObject's scope.
+    /// ContentRef fields: asset GUIDs (and sprite names) set in the inspector (Prefabs/RefShowcase.prefab), so moving or
+    /// renaming the files does not break them. A reference holds a key only; on Start each loads into this GameObject's scope.
     /// LinkShowcase loads the same assets by name, so the two share their slots — the live asset count does not grow.
+    /// iconB holds the sprite atlas's GUID and the sprite's name — what Addressables writes for an atlas sprite — and
+    /// resolves to the atlas's name for it, as LinkShowcase's iconB does.
     /// </summary>
     public sealed class RefShowcase : MonoBehaviour
     {

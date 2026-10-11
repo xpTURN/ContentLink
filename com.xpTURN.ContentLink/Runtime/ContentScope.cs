@@ -24,6 +24,7 @@ namespace xpTURN.ContentLink
     /// Leak signal: an explicit scope that is reclaimed by a scene unload or by quit (instead of its own Dispose,
     /// a disposed parent, or its owner GameObject being destroyed) logs a warning with its path.
     /// Release(key) is optional and only lowers peak memory (lists, equipment swaps).
+    /// A key is a catalog name, or "res:" and a path in a Resources folder of the player (<see cref="ContentService.ResourcesPrefix"/>).
     /// </summary>
     public sealed class ContentScope : IDisposable
     {
@@ -98,8 +99,11 @@ namespace xpTURN.ContentLink
         public IEnumerable<string> Keys => m_Keyed.Keys;
         public string Path => Parent == null ? Name : $"{Parent.Path}/{Name}";
 
-        /// <summary>Cancelled when the scope ends. In-flight loads for this scope stop waiting.</summary>
-        public CancellationToken DisposedToken => IsDisposed ? new CancellationToken(true) : (m_Cts ??= new CancellationTokenSource()).Token;
+        /// <summary>
+        /// Cancelled when the scope ends. In-flight loads for this scope stop waiting. The same token after the end as before it — the
+        /// one an OperationCanceledException from the scope's end carries.
+        /// </summary>
+        public CancellationToken DisposedToken => m_Cts != null ? m_Cts.Token : IsDisposed ? new CancellationToken(true) : (m_Cts = new CancellationTokenSource()).Token;
 
         ContentScope(string name, ContentScopeKind kind, ContentScope parent)
         {
@@ -138,13 +142,15 @@ namespace xpTURN.ContentLink
 
         /// <summary>
         /// Loads an asset into this scope and returns the asset itself (no handle to release).
-        /// The same key is held at most once per scope. Returns null on failure.
+        /// The same key is held at most once per scope — a name in another Unicode form is the same key, held composed. Returns null on failure.
         /// Throws OperationCanceledException if ct is cancelled or the scope ends while loading.
         /// </summary>
         public async Awaitable<T> LoadAsync<T>(string key, CancellationToken ct = default) where T : Object
         {
             ThrowIfDisposed();
+            ct.ThrowIfCancellationRequested();   // before the cache: a held key answers a cancelled token as a miss does
             if (TryGetKeyed<T>(key, out var cached)) return cached;
+            if (!ReferenceEquals(key, key = ContentService.ScopeKey(key)) && TryGetKeyed<T>(key, out cached)) return cached;   // held composed
 
             var h = await ContentService.AcquireAsync<Object>(key, ct, DisposedToken);
             return Keep<T>(key, h);
@@ -155,6 +161,7 @@ namespace xpTURN.ContentLink
         {
             ThrowIfDisposed();
             if (TryGetKeyed<T>(key, out var cached)) return cached;
+            if (!ReferenceEquals(key, key = ContentService.ScopeKey(key)) && TryGetKeyed<T>(key, out cached)) return cached;   // held composed
             return Keep<T>(key, ContentService.Acquire<Object>(key));
         }
 
@@ -167,6 +174,7 @@ namespace xpTURN.ContentLink
         public async Awaitable<GameObject> InstantiateAsync(string key, Transform parent = null, bool worldPositionStays = false, CancellationToken ct = default)
         {
             ThrowIfDisposed();
+            key = ContentService.ScopeKey(key);
             var h = await ContentService.AcquireAsync<GameObject>(key, ct, DisposedToken);
             if (!h.IsValid) return null;
 
@@ -181,7 +189,7 @@ namespace xpTURN.ContentLink
         /// <summary>Returns one asset early. Optional: everything is returned when the scope ends anyway.</summary>
         public bool Release(string key)
         {
-            if (key == null || !m_Keyed.TryGetValue(key, out var h)) return false;
+            if (key == null || !m_Keyed.TryGetValue(key, out var h) && !m_Keyed.TryGetValue(key = ContentService.ScopeKey(key), out h)) return false;
             m_Keyed.Remove(key);
             bool live = h.IsValid;   // a lease a forced unregistration killed is dropped quietly: nothing to release, no warning
             if (live) h.Dispose();
@@ -189,7 +197,7 @@ namespace xpTURN.ContentLink
             return live;
         }
 
-        public bool Contains(string key) => key != null && m_Keyed.TryGetValue(key, out var h) && h.IsValid;
+        public bool Contains(string key) => key != null && (m_Keyed.TryGetValue(key, out var h) || m_Keyed.TryGetValue(ContentService.ScopeKey(key), out h)) && h.IsValid;
 
         // ───────────── scenes ─────────────
 
@@ -232,7 +240,7 @@ namespace xpTURN.ContentLink
         /// <summary>Gives <paramref name="target"/> its own reference to an asset held by this scope.</summary>
         public bool ShareTo(ContentScope target, string key)
         {
-            if (target == null || target.IsDisposed || !m_Keyed.TryGetValue(key, out var h) || !h.IsValid) return false;
+            if (key == null || target == null || target.IsDisposed || !m_Keyed.TryGetValue(key, out var h) && !m_Keyed.TryGetValue(key = ContentService.ScopeKey(key), out h) || !h.IsValid) return false;
             if (target.Contains(key)) return true;
             target.KeepHandle(key, h.Share());
             return true;
@@ -312,7 +320,7 @@ namespace xpTURN.ContentLink
         /// <summary><see cref="LoadSceneAsync(string, CancellationToken)"/> through a scene reference.</summary>
         public Awaitable<Scene> LoadSceneAsync(ContentSceneRef reference, CancellationToken ct = default)
         {
-            if (IsDisposed)
+            if (IsDisposed || ct.IsCancellationRequested)   // the name overload reports these its usual way
             {
                 ContentService.TryGetSceneName(reference, out var known);
                 return LoadSceneAsync(known, ct);
@@ -337,7 +345,9 @@ namespace xpTURN.ContentLink
         {
             if (IsDisposed) return;
             IsDisposed = true;
-            m_Cts?.Cancel();
+            AggregateException cancelError = null;
+            try { m_Cts?.Cancel(); }
+            catch (AggregateException e) { cancelError = e; }   // a callback that throws must not stop the release: reported once the scope has ended
 
             for (int i = m_Children.Count - 1; i >= 0; --i)
             {
@@ -387,6 +397,7 @@ namespace xpTURN.ContentLink
             if (Kind == ContentScopeKind.Scene && s_Scenes.TryGetValue(m_SceneHandle, out var cur) && cur == this)
                 s_Scenes.Remove(m_SceneHandle);
             if (m_OwnerComponent != null) m_OwnerComponent.OnScopeDisposed(this);
+            if (cancelError != null) Debug.LogException(cancelError);
         }
 
         // ───────────── internals ─────────────
@@ -396,6 +407,7 @@ namespace xpTURN.ContentLink
             asset = null;
             if (key == null || !m_Keyed.TryGetValue(key, out var h)) return false;
             if (!h.IsValid) { m_Keyed.Remove(key); return false; }
+            if (ContentService.GetLeaseStatus(h.Lease, h.Gen) == ContentStatus.Loading) return false;   // taken over while still loading (a clone's inheritance): the acquire waits for it, and Keep keeps one lease
             asset = ContentService.GetAsset<T>(h.Lease, h.Gen);
             if (asset == null) ContentService.LogTypeMismatch<T>(h.Lease, h.Gen);
             return true;

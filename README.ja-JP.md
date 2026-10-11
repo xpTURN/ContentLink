@@ -4,116 +4,170 @@
 
 [English](README.md) | [한국어](README.ko-KR.md) | **日本語** | [简体中文](README.zh-CN.md)
 
-ContentLink は、Unity 6.6 に組み込まれた **コンテンツディレクトリ** から、スプライト・プレハブ・シーン・オーディオといった
-ゲームコンテンツを **名前で** ロードし、あらゆるロードシステムが利用者に押し付けてきたひとつの仕事 — ロードしたアセットを
-いつ解放してよいかを決めること — を肩代わりします。
+ContentLink は、Unity 6.6 のための完結したコンテンツワークフローで、エンジンの **コンテンツディレクトリ** の上に作られて
+います。コンテンツディレクトリとは、プレイヤーが実行時に登録してロードする、ビルド済みアセットのフォルダーです。ContentLink
+はアセットをプロジェクトフォルダーから画面まで運びます。アセットを **名前で** 指し、ビルドし、プレイヤーに同梱するか CDN
+から配信し、スクリプトやインスペクターのフィールドからロードします。ロードした側がいなくなると、アセットはひとりでに解放
+されます。
 
-**問題。** `Resources`、AssetBundle、Addressables のいずれも、ロードごとに解放を手作業で、すべてのスクリプトで対にしなければ
-なりません。ひとつ忘れればアプリが終了するまでメモリは増え続け、早すぎればテクスチャが消えます。犯人を探す道具は、事が
-起きた後にプロファイラーで当たりを付けるだけです。
+```csharp
+public class ItemView : MonoBehaviour
+{
+    public Image image;
 
-**ContentLink がすること。** すべてのロードは **スコープ** に属します — 要求した GameObject、そのシーン、アプリ、あるいは
-ステージやポップアップのために自分で作ったもの。スコープが終わると（オブジェクトの破棄・シーンのアンロード・アプリの終了・
-自分で Dispose）、それが保持していたものは全部解放されます。ロードすれば、それで終わりです。忘れた解放はピークメモリを少し
-上げるだけで、正しさを損ないません。同じ考え方がシリアライズ参照（インスペクター描画付きの `ContentLinkSprite icon;`）、
-インスタンス化したプレハブ、コンテンツシーンにも及びます。
+    async void Start()
+    {
+        // Assets/Content/Icons/sword.png — 名前でロードし、この GameObject が破棄されると解放される
+        image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
+    }
+}
+```
 
-**ほかに入っているもの。** コンテンツディレクトリそのものを作るビルドパイプライン — `ProjectSettings` に保存されるプロファイル、
-ビルドウィンドウ、ダウンロードパイプライン向けの決定論的なサイズ分割アーカイブ、後処理フック、コマンドライン — と、Play Mode が
-プロジェクトから直接ロードするので作業中は何もビルドしなくてよいエディターモード。依存は Unity 6000.6 だけです。
-
-> **ロードして、解放のことは忘れてください。** アセットは所有者 — GameObject、シーン、アプリ — が生きている間だけ生き、
-> `Release()` はつねに最適化であって、義務ではありません。
+> **名前で指してください、エディターから CDN まで — そして解放のことは忘れてください。** アセットは所有者 — GameObject、
+> シーン、アプリ — が生きている間だけ生き、`Release()` はつねに最適化であって、義務ではありません。
 
 ---
 
 ## 目次
 
 1. [得られるもの](#得られるもの)
-2. [要件とインストール](#要件とインストール)
-3. [五つの概念](#五つの概念)
-4. [クイックスタート](#クイックスタート)
-5. [名前](#名前)
-6. [コンテンツのビルド](#コンテンツのビルド)
-7. [コンテンツのロード](#コンテンツのロード)
-8. [Release はいつ呼ぶか](#release-はいつ呼ぶか)
-9. [解放はどう起きるか](#解放はどう起きるか)
-10. [エディターシミュレーション](#エディターシミュレーション)
-11. [診断](#診断)
-12. [AssetLink · Addressables からの移行](#assetlink--addressables-からの移行)
-13. [注意と制限](#注意と制限)
-14. [リポジトリ構成とテスト](#リポジトリ構成とテスト)
+2. [インストール](#インストール)
+3. [全体像](#全体像)
+4. [チュートリアル: 最初のコンテンツディレクトリ](#チュートリアル-最初のコンテンツディレクトリ)
+5. [カタログの設定](#カタログの設定)
+6. [ビルド](#ビルド)
+7. [ロード](#ロード)
+8. [解放](#解放)
+9. [CDN からコンテンツをダウンロードする](#cdn-からコンテンツをダウンロードする)
+10. [ローカライズされたコンテンツ](#ローカライズされたコンテンツ)
+11. [エディターシミュレーション](#エディターシミュレーション)
+12. [診断](#診断)
+13. [Addressables・Resources からの移行](#addressablesresources-からの移行)
+14. [知っておくこと](#知っておくこと)
 15. [ライセンス](#ライセンス)
 
 ---
 
 ## 得られるもの
 
-| 領域 | 機能 |
+| 段階 | ContentLink が与えるもの |
 |---|---|
-| ロード | `scope.LoadAsync<T>("Icons/sword")` — アセットはスコープのもの。解放するものがない |
-| スコープ | 自動で終わる Root / Scene / GameObject / Explicit スコープ · スコープごとの重複排除 · パス付きのリーク警告 |
-| シリアライズ参照 | `ContentLink<T>` / `ContentSceneLink`（名前）と `ContentRef<T>` / `ContentSceneRef`（GUID — ファイルを移動・改名しても保たれる）フィールド — インスペクター描画が埋めて検証する |
-| インスタンス | `scope.InstantiateAsync("Prefabs/Cat")` — プレハブ参照はインスタンスとその複製が持つ |
-| シーン | スコープやリンクが所有するコンテンツシーン · どのモードでも非所有ロード · 開いているシーンの追跡 |
-| 決定論的な解放 | エンジンへの解放はフレームごとに一箇所（`Collect()`）で — コードの途中では起きない |
-| ビルドプロファイル | ソースルート · 出力 · ディレクトリごとに複数のカテゴリ（カタログ） · アーカイブモード · 圧縮 · エンジンオプション — `ProjectSettings` に保存 |
-| ビルドウィンドウ | *Window > ContentLink > Build Window*: Undo できるプロファイル編集 · 検証メッセージ · ひとつまたは全部をビルド |
-| パックアーカイブ | ビルドを約 `MaxArchiveMB` ずつのアーカイブに決定論的に分割 · ランタイムがひとつのディレクトリにマウントし直す |
-| 後処理 | `IContentBuildPostProcess` の各ステップがビルド後に、並べた順に走る |
-| コマンドライン | `-executeMethod` で `ContentBuildCLI.Build` · 上書き · `profile all` · 終了コード · `tools/build-content.sh` |
-| エディターシミュレーション | Play Mode でプロファイルのディレクトリをプロジェクトが肩代わりする: 追加・編集・削除したアセットがそのまま見え、ビルドは不要 — 何も書かない |
-| 診断 | スコープツリーのダンプ · 参照スナップショット · 最後のビルドの要約 |
+| **名前** | フォルダー（`Assets/Content`）の下のすべてのアセットが、パスから名前を得ます: `Icons/sword`、`Prefabs/Cat`、`Scenes/Arena` |
+| **選ぶ** | 名前（`ContentLinkSprite icon;`）や GUID（`ContentRef<Sprite>`）を保持するインスペクターのフィールド — ドラッグ＆ドロップと状態の色 |
+| **作業** | エディターでは Play Mode がプロジェクトから直接ロードします — 作業中にビルドするものはありません |
+| **ビルド** | プロファイル・カタログ・圧縮・サイズ分割アーカイブを扱うビルドウィンドウと、CI 向けのコマンドライン |
+| **出荷** | プレイヤーの中（`StreamingAssets`）に、または CDN からダウンロード — 変わったアーカイブだけ、再開と MD5 検証つき |
+| **ロード** | スプライト・プレハブ・オーディオ・あらゆるアセット型、プレハブのインスタンスとシーン — 非同期でも同期でも、名前で |
+| **解放** | 自動: すべてのロードは **スコープ**（GameObject・シーン・アプリ・自分で作ったもの）に属し、スコープが終わるとともに去ります |
+| **調べる** | スコープツリーのダンプ、生きている参照のスナップショット、終え忘れたスコープを名指しする警告 |
 
-## 要件とインストール
+依存は Unity 6000.6 だけです。
 
-- Unity **6000.6** 以降（`Unity.Loading` コンテンツディレクトリ API）。
-- ほかに依存なし。
+## インストール
 
-**git から** — *Window > Package Manager > + > Add package from git URL*:
+*Window > Package Manager > + > Add package from git URL*:
 
 ```
 https://github.com/xpTURN/ContentLink.git?path=/com.xpTURN.ContentLink
 ```
 
-**ローカルチェックアウトから** — `Packages/manifest.json`:
+または、ローカルのチェックアウトなら `Packages/manifest.json` に追加します:
 
 ```json
 "com.xpturn.contentlink": "file:../../ContentLink/com.xpTURN.ContentLink"
 ```
 
-このリポジトリの `samples/LinkSample` が、まさにそのように配線された Unity プロジェクトです。
+このリポジトリの `samples/LinkSample` は、下のチュートリアルとまったく同じように設定された小さな Unity プロジェクトです:
+`Assets/Content` の下のテクスチャ・スプライトアトラス・プレハブ・シーン・オーディオと、それを登録してロードするブートストラップ
+スクリプト。
 
-## 五つの概念
+## 全体像
 
-| 概念 | 何か |
+```
+ エディターで                                     実行時に (プレイヤー、または Play Mode)
+ ─────────────────────────────────────────────   ─────────────────────────────────────────────────────
+ Assets/Content/Icons/sword.png                  1. 起動時にフォルダーを一度登録
+        │                                            ContentService.RegisterDirectory(".../MainContent")
+        │  プロファイル "Main"                    2. 名前でスコープにロード
+        ▼                                            this.Scope().LoadAsync<Sprite>("Icons/sword[sword]")
+ カタログ  "Icons/sword" → エンジン id            3. スコープが終わる → アセットが解放される
+        │
+        │  ビルド
+        ▼
+ StreamingAssets/MainContent/  (コンテンツディレクトリ: ビルド済みアセット + カタログ)
+```
+
+| 用語 | 何か |
 |---|---|
-| **コンテンツディレクトリ** | エンジンがアセットから作るフォルダ（`BuildPipeline.BuildContentDirectory`）。ランタイムで登録し、そこからロードします。ひとつのビルドターゲット向けに作られます。 |
-| **カタログ** | ビルドがディレクトリに入れる `ContentCatalog` アセット: 名前と、それが指すエンジン id の一覧。ひとつのディレクトリが複数のカタログ（*カテゴリ* ごとにひとつ）を持てます。 |
-| **名前** | ロードに使うもの: ソースルートからの相対パスから拡張子を除いたもの — `Icons/sword`。サブアセットは `Icons/sword[sword]`、シーンは `Scenes/Arena`。 |
-| **スコープ** | ロードしたすべてのものの所有者。スコープはツリー（Root → Scene → GameObject → Explicit）をなし、自動で終わります。 |
-| **リンク** | 名前を保持するシリアライズフィールド（`ContentLinkSprite icon;`）。インスペクターで設定し、所有者を渡してロードします。 |
+| **ソースルート** | アセットをビルドするフォルダー。既定は `Assets/Content`。 |
+| **名前** | ロードに使うもの: ソースルートの下のアセットのパスから拡張子を除いたもの — `Icons/sword`。 |
+| **カタログ** | すべての名前とその裏のエンジン id を並べた `ContentCatalog` アセット。ウィンドウが書き、手では編集しません。ビルドがコンテンツディレクトリに入れます。 |
+| **プロファイル** | コンテンツディレクトリひとつのビルド設定: ソースルート、出力フォルダー、カタログ、アーカイブ形式。 |
+| **コンテンツディレクトリ** | ビルドの出力フォルダー。実行時に登録し、名前でロードします。 |
+| **スコープ** | ロードしたものの所有者。スコープが終わると、それがロードしたものはすべて解放されます。 |
+| **リンク・参照** | 名前（リンク）やアセットの GUID（参照）を保持するシリアライズされたフィールド。インスペクターで設定します。 |
 
-## クイックスタート
+## チュートリアル: 最初のコンテンツディレクトリ
 
-**1. ソースルートの下にアセットを置きます** — 既定は `Assets/Content`:
+プロファイルひとつ、カタログひとつ、ビルド一回をたどります: プレイヤーに同梱して出荷するコンテンツです。
+
+### ステップ 1 — アセットをソースルートの下に置く
+
+`Assets/Content` フォルダーを作り、コンテンツを入れます。サブフォルダーは自由に分けてかまいません:
 
 ```
-Assets/Content/Icons/sword.png        →  "Icons/sword"            (Texture2D)
-                                         "Icons/sword[sword]"     (その Sprite サブアセット)
-Assets/Content/Prefabs/Cat.prefab     →  "Prefabs/Cat"
-Assets/Content/Scenes/Arena.unity     →  "Scenes/Arena"
+Assets/Content/Icons/sword.png        (Texture Type: Sprite)
+Assets/Content/Prefabs/Cat.prefab
+Assets/Content/Audio/click.wav
+Assets/Content/Scenes/Arena.unity
 ```
 
-**2. ビルドします** — *Window > ContentLink > Build Window*。初回はウィンドウに `Main` プロファイルが表示されます:
-ソースルート `Assets/Content`、ルート全体を覆うカテゴリひとつ、出力 `Assets/StreamingAssets/MainContent`、アーカイブ `None`
-（フラットファイル）。**Build 'Main'** を押してください。（*Window > ContentLink > Build Content Directory* はウィンドウを
-開かずにアクティブなプロファイルをビルドします。）
+ファイルごとに名前が付きます — `Assets/Content` の下のパスから拡張子を除いたものです:
 
-`StreamingAssets` はプレイヤーの中に同梱されるので、下のコードはそのフォルダを見つけます。ダウンロードパイプラインなら
-`Archive` を `Packed` に、出力を `Assets/` の外にして、アーカイブを自分で配布してください — [コンテンツのビルド](#コンテンツのビルド) 参照。
+| ファイル | 名前 | ロードされるもの |
+|---|---|---|
+| `Icons/sword.png` | `Icons/sword` | `Texture2D` |
+| — そのスプライト `sword` | `Icons/sword[sword]` | `Sprite` |
+| `Prefabs/Cat.prefab` | `Prefabs/Cat` | プレハブ（`GameObject`） |
+| `Audio/click.wav` | `Audio/click` | `AudioClip` |
+| `Scenes/Arena.unity` | `Scenes/Arena` | シーン — `LoadSceneAsync` でロード |
 
-**3. 起動時にディレクトリを一度登録します** — 何かをロードする前に:
+これらのファイルが使うアセット — マテリアルのテクスチャ、プレハブのメッシュ — は自動的に一緒にビルドされます。名前でロード
+するものだけがルートの下にあればかまいません。
+
+### ステップ 2 — ビルドウィンドウを開く
+
+*Window > ContentLink > Build Window*。初めて開くと、ウィンドウにはプロファイル `Main` がひとつあります:
+
+| フィールド | 値 | 意味 |
+|---|---|---|
+| Name | `Main` | プロファイルの名前 |
+| Name style | `PathWithoutExtension` | 拡張子なしの名前（`Icons/sword`）— [名前のスタイル](#名前のスタイル) 参照 |
+| Source root | `Assets/Content` | アセットをビルドするフォルダー |
+| Output path | `Assets/StreamingAssets/MainContent` | ビルドを書く場所 — `StreamingAssets` はプレイヤーに同梱されます |
+| Categories | 一行: *(whole root)* | ルート全体がカタログひとつに — `Assets/ContentCatalog.asset` に作られる |
+| Archive | `None` | フラットなファイル — [アーカイブ形式](#アーカイブ形式) 参照 |
+| Compression | `Uncompressed` | アーカイブにだけ効く |
+| Target | `NoTarget` | いまアクティブなプラットフォーム向けにビルド |
+
+設定は `ProjectSettings/ContentLinkBuild.asset` に保存されます。このファイルをコミットしてください。
+
+### ステップ 3 — カタログを作る
+
+ウィンドウ下部の **Update catalogs** を押します。`Assets/Content` を走査して `Assets/ContentCatalog.asset` を書きます。
+Project ウィンドウでそのアセットを選ぶと、インスペクターにすべての名前が並びます。
+
+- カタログアセットをコミットしてください。インスペクターのフィールドがこれを読み、名前が有効かどうかを示します。
+- 手では編集しません。**Update catalogs** とビルドが毎回書き直します。
+- ソースルートの **外** に置いてください — ルートの下のカタログは拒否されます。
+
+ビルドのたびに **Update catalogs** を押す必要はありません: ビルドがカタログを自分で更新します。アセットを追加・移動した
+あと、インスペクターに新しい名前をすぐ認識させたいときに押してください。
+
+### ステップ 4 — ディレクトリを登録してロードする
+
+アプリの起動時、何かをロードする前に、コンテンツディレクトリを一度登録します。最初のシーンの `Boot` コンポーネントで
+十分です:
 
 ```csharp
 using System.IO;
@@ -122,20 +176,17 @@ using xpTURN.ContentLink;
 
 public class Boot : MonoBehaviour
 {
-    async void Awake()
+    void Awake()
     {
         var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
-
-        // Archive = None（フラットファイル · 移行された Main プロファイル）または Engine（content0.archive ひとつ）:
-        ContentService.RegisterDirectory(path);
-
-        // Archive = Packed（新しいプロファイルの既定）: アーカイブ数個 + archives.json
-        // await ContentService.RegisterPackedDirectoryAsync(path);
+        ContentService.RegisterDirectory(path);   // Archive = None または Engine
+        // Archive = Packed:  await ContentService.RegisterPackedDirectoryAsync(path);  （async メソッドの中で）
     }
 }
 ```
 
-**4. スコープにロードします。** 解放するものはありません。スプライトは GameObject とともに消えます。
+それから名前でロードします。`this.Scope()` はこの GameObject のスコープです: GameObject が破棄されるとスプライトは解放
+されます。
 
 ```csharp
 using UnityEngine;
@@ -145,121 +196,240 @@ using xpTURN.ContentLink;
 public class ItemView : MonoBehaviour
 {
     public Image image;
+
     async void Start() => image.sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 }
 ```
 
-**5. あるいはシリアライズリンクを使い**、インスペクターでアセットを選びます:
+あるいはインスペクターでアセットを選ばせます — フィールドに `Assets/Content/Icons/sword.png` をドロップしてください:
 
 ```csharp
-public ContentLinkSprite icon;                       // Assets/Content/Icons/sword.png をドロップすると → "Icons/sword" + スプライト "sword"
-async void Start() => image.sprite = await icon.LoadAsync(this);   // this = この GameObject のスコープ（手順 4 と同じ）。別のスコープを渡してもよい
+public class ItemView : MonoBehaviour
+{
+    public Image image;
+    public ContentLinkSprite icon;   // インスペクターが "Icons/sword" + スプライト "sword" を保存する
+
+    async void Start() => image.sprite = await icon.LoadAsync(this);
+}
 ```
 
-エディターでは手順 2 を丸ごと飛ばせます。[エディターシミュレーション](#エディターシミュレーション)（既定でオン）が有効なら、
-プロファイルの出力フォルダを登録した時点で Play Mode はそのディレクトリを **プロジェクトから** 提供します — 追加・編集・削除した
-アセットがそのまま見え、フォルダが存在しなくても構いません。ビルドは出荷するときに。
+Play を押します。**ビルドなしで** 動きます: エディターでは、プロファイルの出力フォルダーを登録すると、そのプロファイルを
+プロジェクトが肩代わりします（[エディターシミュレーション](#エディターシミュレーション)）。アセットを追加・編集・削除して
+もう一度 Play を押せば、そのまま見えます。
 
-## 名前
+### ステップ 5 — ビルドする
 
-- 名前は **プロファイルのソースルートからの相対** アセットパスから拡張子を除いたものです: `Icons/sword`。
-  カテゴリは名前を変えません — `Icons/sword` はどのカタログにあっても `Icons/sword` です。
-- **サブアセット** は `<メイン>[<サブ>]`: `sword.png` の中のスプライト `sword` は `Icons/sword[sword]`、スプライトシート
-  `sheet.png` は `Icons/sheet[run_01]`、`Icons/sheet[run_02]`、…
-- **リンク** はスプライト名を分けて持ちます: `("Icons/sheet", "run_01")` は `Icons/sheet[run_01]` をロードします。スプライト名
-  なしで完全な名前を書いても、同じキーとしてロードされます。
-- **シーン** もアセットと同じように名付けられます: `Scenes/Arena`。アセットとシーンはひとつの名前空間を共有します。
-- 名前は **プロファイル内で一意** です。同じ名前になる二つのアセット（カテゴリの重なり、二つのフォルダの同名）は、両方の
-  パスをコンソールに出してビルドを失敗させます。
-- インスペクター描画は名前の状態を色で示します: 空なら無色、まだどのカタログも知らない名前は **琥珀色**（ビルドするか
-  *Update Content Catalog* を実行）、フィールドが保持できないものに解決される名前は **赤**。リンクの名前行は
-  スプライトを `Icons/sheet[run_01]` と表示し、そこに入力した名前はカタログにあれば二つのフィールドに分けて保存されます。
+**Build 'Main'** を押します。ウィンドウの *Last build* に結果が出て、`Assets/StreamingAssets/MainContent` にコンテンツ
+ディレクトリ — エンジンのファイルとカタログ — ができます。
 
-## コンテンツのビルド
+それからいつもどおりプレイヤーをビルドします（*File > Build Profiles*）。`StreamingAssets` がプレイヤーに入り、`Boot` が
+そのフォルダーを見つけます。
 
-### プロファイル
+- コンテンツが変わったなら **プレイヤーをビルドする前に毎回コンテンツをビルド** してください。プレイヤーは最後の
+  コンテンツビルドが書いたものを載せます。
+- **コンテンツディレクトリはひとつのプラットフォーム向けにビルドされます** — エディターでアクティブなプラットフォームです。
+  プラットフォームを切り替えたら、コンテンツをビルドし直してください。
 
-**プロファイル** はコンテンツディレクトリひとつを記述します。`ProjectSettings/ContentLinkBuild.asset`（`ContentBuildSettings`）に
-保存され、ビルドウィンドウで編集します。ひとつのプロファイルが **アクティブ** です: メニュー項目と旧来の静的 API はそれに作用します。
+### ステップ 6 — エディターでビルドを確かめる（任意）
 
-| フィールド | 既定値（新しいプロファイル） | 意味 |
+*Window > ContentLink > Editor Simulation* をオフにして Play を押すと、エディターがプレイヤーと同じようにビルド済みの
+フォルダーをロードします。オンに戻せば、ビルドなしで作業する状態に戻ります。
+
+これでひと回りです: アセットをルートの下に置き、名前でロードし、出荷前にビルドします。
+
+## カタログの設定
+
+### 名前
+
+- 名前はソースルートの下のアセットのパスから拡張子を除いたものです: `Assets/Content/Icons/sword.png` → `Icons/sword`。
+- **スプライト** は `<ファイル>[<スプライト>]`: `Icons/sword[sword]`。スプライトシート `sheet.png` は `Icons/sheet[run_01]`、
+  `Icons/sheet[run_02]`、… を与えます。
+- ルートの下の **スプライトアトラス**（Sprite Atlas V2）は、それがパックするスプライトごとに、アトラス経由の名前をもうひとつ
+  付けます: `Atlas/UI[icon]`。スプライト自身の名前とアトラスの名前は同じスプライトをロードします。
+- **シーン** はアセットと同じように名前が付き（`Scenes/Arena`）、`LoadSceneAsync` でロードします。
+- 名前は **プロファイルの中で一意** です。同じ名前になる二つのアセット — 同じフォルダーの `sword.png` と `sword.prefab` —
+  は、両方のファイルを示してビルドが失敗します。
+- 名前は大文字と小文字を区別し、ファイルの綴りをそのまま使います。ハングル・かな・アクセント付きの名前も、どのマシンでも
+  同じように動きます。
+
+### 名前のスタイル
+
+プロファイルの **Name style** が、名前に拡張子を残すかを決めます:
+
+| Name style | `Icons/sword.png` | 並んだ `sword.png` と `sword.prefab` |
 |---|---|---|
-| `Name` | — | 一意。アクティブプロファイルとコマンドラインはこの名前で選ぶ |
-| `SourceRoot` | `Assets/Content` | 名前の基準になるフォルダ |
-| `OutputPath` | `Build/Content/<Name>` | ディレクトリの書き出し先。既定は `Assets/` の外 — 下記参照 |
-| `Catalogs` | ルート全体のカテゴリひとつ | カテゴリ = ルートのサブフォルダ + それが埋めるカタログアセット |
-| `Archive` | `Packed` | `None`（フラット） · `Engine`（エンジンの単一アーカイブ） · `Packed`（サイズ分割アーカイブ） |
-| `MaxArchiveMB` | `20` | `Packed`: アーカイブを閉じるサイズ — ファイルひとつ分の前後 |
-| `Compression` | `LZ4` | `Uncompressed` · `LZ4` · `LZMA` — アーカイブにのみ適用。フラットビルドはつねに非圧縮 |
-| `CleanBuildCache` | オフ | エンジンオプション: ビルドキャッシュを無視 |
-| `DisableWriteTypeTree` | オフ | より小さい出力 — **まったく同じエンジンバージョンでのみ** ロードできる（`SerializeUnityVersion` は自動で付く） |
-| `FailBuildWhenErrorsLogged` | オン | ビルド中に記録されたエラーはビルドを失敗させる |
-| `Target` | `NoTarget` | `NoTarget` = アクティブなビルドターゲットなら何でも。それ以外は別のターゲットでのビルドを拒否 |
-| `PostProcessors` | なし | `IContentBuildPostProcess` 実装の型名、実行順 |
+| `PathWithoutExtension`（既定） | `Icons/sword` | 拒否 — どちらも `Icons/sword` |
+| `PathWithExtension` | `Icons/sword.png` | 許可 — `Icons/sword.png` と `Icons/sword.prefab` |
 
-**カテゴリ。** サブフォルダ（`Icons`、`Prefabs`、`Levels/Forest`、ルート全体なら `""`）を追加すると、ビルドはそのフォルダの
-アセットを専用のカタログに入れます。プロファイルのすべてのカタログは **ひとつの** ディレクトリに入るので、ランタイムはひとつの
-名前空間を見ます。重なるカテゴリ、自分のルートの下に置かれたカタログ、重複する名前は、何かを書く前に拒否されます。
-パス文字（`/ \ : * ? " < > |` — 名前はアーカイブ名や既定パスに入ります）を含むプロファイル名、末尾に区切り文字が付いた
-ソースルート、ソースルートの中にある、あるいはルートを含む出力フォルダも同様です。新しいカテゴリのカタログアセットは初回ビルド時に
-`Assets/ContentCatalogs/<プロファイル>.<カテゴリ>.asset` に作られ（フォルダがなければフォルダも）、既存のカタログをフィールドに
-指定することもできます。
+**早めに決めてください。** 変えると、次のカタログ更新でルートのすべての名前が変わります: 古い名前を持つリンク・コード・
+データはロードできなくなります。`ContentRef` フィールドは GUID を持つので影響を受けません。プロファイルとカタログが食い
+違っている間、ウィンドウが注意を表示します。
 
-**出力フォルダ。** フォルダは何かを書く前に検査されます: 空のフォルダか、以前のコンテンツビルド（`BuildManifestHash.txt` が
-ある）だけを受け入れ、ほかのものが入ったフォルダには手を付けずビルドを失敗させます。空にするのはエンジンが走る直前なので、それより
-前の段階 — 検証、カタログ — で失敗したビルドは、以前の出力をそのまま残します。
-`Assets/` の中の出力（例えば `StreamingAssets`）は Unity がインポートし、ビルド後にリフレッシュされます。`Assets/` の外の出力は
-そうならず、別途配布するコンテンツにはそちらが向いています。
+### カテゴリ: ひとつのディレクトリに複数のカタログ
 
-**ビルドターゲット。** コンテンツディレクトリはエディターの **アクティブなビルドターゲット** 向けに作られ、別のターゲットでは
-ロードできないことがあります。ウィンドウ、ログ、最後のビルドの要約は、つねにどのターゲット向けのビルドかを示します。
+既定ではルート全体がカタログひとつに入ります。大きなプロジェクトは、ルートをサブフォルダーで分け、フォルダーごとに専用の
+カタログファイルを持たせられます — ファイルが小さくなり、別のフォルダーで作業する人どうしが同じカタログに触れません。
 
-**静的ビルダーからの移行。** スクリプトで `ContentDirectoryBuilder.SourceRoot` / `CatalogPath` / `OutputPath` を設定していた
-プロジェクトはそのまま動きます: 設定のないプロジェクトはその既定値から作った `Main` プロファイル（`Assets/Content` →
-`Assets/StreamingAssets/MainContent`、フラット、非圧縮）を受け取り、静的プロパティはアクティブプロファイルのビューとして残ります。
-セッターで値を入れるとエディターセッションの間だけプロファイルを上書きし、ウィンドウがそのことを知らせます。
+ビルドウィンドウの **Categories** で:
 
-### アーカイブモードと登録
+1. *(whole root)* の行を **−** で消します。カタログひとつで足りるなら残します。
+2. **Add category** にルートのサブフォルダー — `Characters` — を書いて **Add** を押します。`UI` と `Levels` も同じように。
+3. **Catalog** 欄は空のままにします: カタログは最初のビルドかカタログ更新のときに
+   `Assets/ContentCatalogs/<プロファイル>.<カテゴリ>.asset` に作られます（ウィンドウにパスが出ます）。あるいは既存の
+   `ContentCatalog` を選びます（*Assets > Create > xpTURN > ContentLink > Content Catalog*）。
 
-| `Archive` | 書き出されるもの | 登録 |
-|---|---|---|
-| `None` | エンジンのフラットファイル（`*.cf`、`*.resS`、マニフェスト） | `ContentService.RegisterDirectory(path)` |
-| `Engine` | `content0.archive` ひとつ（エンジンの `UseArchive`） | `ContentService.RegisterDirectory(path)` |
-| `Packed` | `<プロファイル>.manifest-<ハッシュ>.archive`、`<プロファイル>.<ビット列>-<ハッシュ>.archive`、… + `archives.json` | `await ContentService.RegisterPackedDirectoryAsync(path)` |
+```
+プロファイル "Main"            ソースルート Assets/Content
+  カテゴリ  Characters    →    Assets/ContentCatalogs/Main.Characters.asset
+  カテゴリ  UI            →    Assets/ContentCatalogs/Main.UI.asset
+  カテゴリ  Levels        →    Assets/ContentCatalogs/Main.Levels.asset
+```
 
-`Packed` は配布用です: 単一アーカイブはダウンロード単位として悪く、エンジンにはサイズオプションがないので、パッケージがフラット
-ビルドを自分でパックします。既定の規則は **ハッシュ接頭辞トライ** です: マニフェストとそのハッシュファイルは小さな専用アーカイブに、
-上限より大きいファイルは単独のアーカイブに、残りはキーの MD5 のビットでバケットに分け、上限に収まらないバケットだけを次のビットで
-分割します。キーは、シリアライズファイルならマニフェスト ID（エンジンがアセットの同一性から導き、内容が変わっても保たれる）、
-`.resS`/`.resource` ならファイル名です。そのため編集したアセットは自分のアーカイブの中で変わり、追加・削除はアーカイブひとつ
-（バケットが分割・結合される場合は隣のひとつも）だけに触れ、ほかのアーカイブは名前もバイトもそのままです — パッチパイプラインが
-望む性質です。（`.resS` は名前がキーなので、テクスチャを編集するとピクセルデータはあるアーカイブから別のアーカイブへ移ります。）
-アーカイブ名はビット経路 + ファイル一覧のハッシュ（`Main.0110-a3f9c2e1.archive`）なので、同じ名前が異なる内容を意味することは
-ありません。**同じ入力はつねにバイト単位まで同じにパックされます。** アーカイブ数は単純詰めより約 1.5 倍になります（リーフは上限の
-0.6 倍前後）— 上限近くにしたければ `MaxArchiveMB` を上げてください。上限は *入力* バイト基準です — LZ4 ならディスク上のアーカイブは
-その半分ほどになります。`archives.json` はアーカイブごとにサイズ・入力サイズ・CRC・中のファイル一覧を記録します: パッチャーはまず
-これを取得し、持っていない名前をダウンロードし、消えた名前を削除します。CRC はエンジンがアーカイブの内容に対して報告する値であり、
-ディスク上のファイルの CRC32 ではないので（実測）、ダウンロードの検証はサイズか自前のハッシュで行ってください。
+- **カテゴリは名前を変えません。** `Assets/Content/UI/logo.png` はどのカタログに入っても `UI/logo` です。
+- プロファイルのすべてのカタログは **ひとつの** コンテンツディレクトリに入ります: 一度登録すれば、すべての名前をロード
+  できます。
+- カテゴリは重なってはいけません: *(whole root)* の行とサブフォルダーの行は一緒に使えず、`UI` と `UI/Icons` も一緒には
+  使えません。
+- どのカテゴリにも入らないルートの下のアセットは **ビルドされません** — ビルドがその数とともに警告を出します。
 
-**分割規則のカスタマイズ。** Editor アセンブリで `IContentArchivePartitioner` を実装し、プロファイルの `Partitioner` で選びます
-（コマンドラインでは `-contentlink.partitioner <型名>`、`trie`、`sequential`）。実装はファイルとサイズ、マニフェストファイル、
-パース済みマニフェスト、ビルドされたロードブル（カタログとディスク上のファイル付き）を受け取り、アーカイブ一覧（名前 + ファイル）を
-返します。組み込みの `SequentialFillPartitioner` は素朴なソート詰めで、局所性と引き換えに少なく満杯のアーカイブを得るためのものです。
-パッカーはどの答えも検査し（すべてのファイルがちょうど一度 · 空のアーカイブなし · 平易で一意な名前）、ファイル順を変えてもう一度
-呼び、答えが違えばビルドを失敗させます。組み込み実装のように名前に内容ハッシュを入れてください。そうしないとキャッシュされた
-ダウンロードが古くなります。実装を切り替えたり `MaxArchiveMB` を変えたりすると再分割されます — 一度だけの大きなダウンロードです。
+### 複数のプロファイル: 別々に登録するコンテンツディレクトリ
 
-ランタイムの `RegisterPackedDirectoryAsync` はすべてのアーカイブをひとつの名前空間にマウントし、マウントパスをフラット
-ディレクトリのように登録します。`UnregisterDirectory` がアンマウントし直します。フォルダに `archives.json` がない、索引が
-アーカイブをひとつも挙げていない、あるいはいずれかのアーカイブのディスク上のサイズが索引と異なる場合は、エラーとともに `-1` を
-返し、何もマウントしません。アーカイブがマウントできない場合は、どれかを示す例外を投げます。
+プロファイルごとにコンテンツディレクトリをひとつビルドし、それぞれ別に登録します。コンテンツを別々に出荷・ダウンロードする
+ときに複数使います — 本編と DLC パック、あるいは [ロケール](#ローカライズされたコンテンツ)。
 
-ダウンロードで端末に届いたコンテンツは、登録する前に検査する価値があります。`archives.json` はアーカイブごとの `Bytes` と `Crc` を
-記録しています: `RegisterPackedDirectoryAsync` はディスク上のサイズが索引と異なるアーカイブを、何かをマウントする前に拒否しますが、
-同じ長さの破損は `Crc` の比較でしか捕まらず、それは呼び出し側の仕事です — エンジンは破損したコンテンツファイルで失敗する代わりに
-ブロックするので、先に検証してください。
+| プロファイル | ソースルート | 出力パス | Archive |
+|---|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` | `Packed` |
+| `Dlc1` | `Assets/Dlc1` | `Build/Content/Dlc1` | `Packed` |
 
-### 後処理
+追加するには **New profile** に名前を書いて **Add** を押します。新しいプロファイルは、出力パス `Build/Content/<名前>`、LZ4
+圧縮の `Packed` アーカイブ、`Assets/ContentCatalogs/<名前>.asset` のカタログひとつで始まります。**Set active** は
+*Window > ContentLink* のメニュー項目がビルドするプロファイルを選びます。
+
+- ソースルートは互いの中に入れず、**並べて** 置いてください。
+- あるルートの下のアセットが別のルートの下のアセットを参照すると、その **コピー** が自分のディレクトリに入ります。共有する
+  アセットはルートをまたいで参照せず、名前でロードしてください。
+
+## ビルド
+
+### ビルドウィンドウ
+
+| フィールド | 何を入れるか |
+|---|---|
+| **Content version** | 任意。すべての Packed ビルドに刻まれるラベル — ダウンロード時に本編とそのロケールを対にするのに使います |
+| **Name** | プロファイルの名前。`Packed` プロファイルは英字・数字・`.`・`-`・`_` だけ（アーカイブの名前になります） |
+| **Name style** | [名前のスタイル](#名前のスタイル) 参照 |
+| **Source root** | ビルドするフォルダー（**…** で選ぶ） |
+| **Output path** | ビルドを書く場所（**…** で選ぶ）— [出力の置き場所](#出力の置き場所) 参照 |
+| **Target** | `NoTarget` はアクティブなプラットフォーム向けにビルド。別の値なら、ほかのプラットフォームではビルドを拒否 |
+| **Categories** | サブフォルダーとそのカタログ — [カテゴリ](#カテゴリ-ひとつのディレクトリに複数のカタログ) 参照 |
+| **Archive** | `None`・`Engine`・`Packed` — [アーカイブ形式](#アーカイブ形式) 参照 |
+| **Max archive MB** | `Packed` のみ: アーカイブひとつに入るコンテンツのおおよその量（既定 20） |
+| **Compression** | `Uncompressed`・`LZ4`・`LZMA` — アーカイブのみ。`LZ4` が無難な既定 |
+| **Clean build cache** | エンジンのビルドキャッシュを無視してすべてビルドし直す |
+| **Disable type trees** | 出力は小さくなるが、**まったく同じ Unity バージョンでしか** ロードできない |
+| **Fail when errors are logged** | 既定でオン: ビルド中にエラーがログされるとビルドが失敗 |
+| **Partitioner** | `Packed` のみ: ファイルをアーカイブにまとめる方法（既定のままにしてください） |
+| **Post-processors** | ビルドのあとに走るステップ — [ビルドのあと](#ビルドのあと) 参照 |
+
+下部: **Update catalogs**（カタログだけ書く）、**Build '\<プロファイル\>'**、**Build all**。問題は何かをビルドする前にそれらの
+ボタンの上に並び、カテゴリの問題はその行の下に出ます。
+
+### アーカイブ形式
+
+| Archive | 出力の見た目 | 登録 | 使いどころ |
+|---|---|---|---|
+| `None` | エンジンのフラットなファイル | `ContentService.RegisterDirectory(path)` | コンテンツをプレイヤーに同梱し、いちばん単純にしたいとき |
+| `Engine` | `content0.archive` ひとつ | `ContentService.RegisterDirectory(path)` | プレイヤーの中に圧縮ファイルひとつで |
+| `Packed` | *Max archive MB* ほどのアーカイブ数個 + `archives.json`・`archives.hash` | `await ContentService.RegisterPackedDirectoryAsync(path)` | コンテンツをダウンロードするとき、または圧縮しつつパッチ用に分けたいとき |
+
+`Packed` ビルドは **決定論的** です: 同じ入力はバイト単位で同じアーカイブにまとまり、小さな変更が触れるのはアーカイブの
+いくつかだけ — 残りは名前とバイトをそのまま保つので、パッチは小さくなります。*Max archive MB* は圧縮前のコンテンツ量を数え
+ます。LZ4 ならディスク上のファイルはその半分ほどになります。
+
+### 出力の置き場所
+
+| 出力パス | どうなるか |
+|---|---|
+| `Assets/StreamingAssets/` の下 | フォルダーがプレイヤーに同梱されます。`Application.streamingAssetsPath/<フォルダー>` を登録 |
+| `Assets/` の外（例: `Build/Content/Main`） | インポートされず、プレイヤーにも入りません — サーバーに上げる（[CDN](#cdn-からコンテンツをダウンロードする)）か自分でコピー |
+
+出力フォルダーは空か、以前のコンテンツビルドでなければなりません: ほかのものが入ったフォルダーには手を付けず、ビルドが
+失敗します。エンジンが走る前に失敗したビルドは、以前の出力をそのまま残します。
+
+### 設定の例
+
+**すべてアプリの中に** — いちばん単純:
+
+| フィールド | 値 |
+|---|---|
+| Output path | `Assets/StreamingAssets/MainContent` |
+| Archive | `None`（ファイルを小さくしたいなら `Packed` + `LZ4`） |
+
+```csharp
+var path = Path.Combine(Application.streamingAssetsPath, "MainContent");
+ContentService.RegisterDirectory(path);                      // Archive = None
+// await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
+```
+
+**CDN からダウンロード** — アプリをビルドし直さずに更新:
+
+| フィールド | 値 |
+|---|---|
+| Output path | `Build/Content/Main` |
+| Archive | `Packed`、Compression `LZ4`、Max archive MB `20` |
+
+ビルドのたびに出力フォルダーをアップロードし、起動時にダウンロードします — [CDN からコンテンツをダウンロードする](#cdn-からコンテンツをダウンロードする) 参照。
+
+**本編とダウンロードするパック** — [複数のプロファイル](#複数のプロファイル-別々に登録するコンテンツディレクトリ) のように、それぞれ
+プロファイルひとつずつ。
+
+### よくあるビルドエラー
+
+| メッセージ | 直し方 |
+|---|---|
+| `source root '…' is not a folder` | フォルダーを作るか、*Source root* を直してください |
+| `duplicate name '…': … / …` | 二つのファイルの一方の名前を変えるか、プロファイルを `PathWithExtension` に |
+| `'…' is a ContentCatalog under the source root` | カタログアセットをルートの外へ移してください |
+| `categories '…' and '…' overlap` | *(whole root)* の行か、内側のサブフォルダーの行を消してください |
+| `output folder '…' is neither empty nor a previous content build` | *Output path* を空のフォルダーにするか、フォルダーを空にしてください |
+| `… asset(s) under '…' belong to no category`（警告） | そのフォルダーのカテゴリを追加してください — それらのアセットはビルドされていません |
+| `'…' is a V1 sprite atlas under the source root` | アトラスを Sprite Atlas V2 に移してください — [知っておくこと](#知っておくこと) 参照 |
+| `profile is for … but the active build target is …` | プラットフォームを切り替えるか、*Target* を `NoTarget` に |
+
+### コマンドラインでビルドする
+
+CI ではバッチモードでプロファイルをビルドします:
+
+```
+Unity -batchmode -nographics -quit -projectPath <project> -buildTarget Android -logFile build.log \
+      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
+      -contentlink.profile Main
+```
+
+| オプション（`-contentlink.<キー> <値>`） | 値 |
+|---|---|
+| `profile` | プロファイル名、またはすべてのプロファイルなら `all`。省略するとアクティブなプロファイル |
+| `output`、`source` | この実行のパスを上書き |
+| `archive` | `None`・`Engine`・`Packed` |
+| `compression` | `Uncompressed`・`LZ4`・`LZMA` |
+| `maxArchiveMB` | 1 以上の整数 |
+| `contentVersion` | この実行の Packed ビルドに刻むコンテンツバージョン |
+
+上書きはその実行にだけ効き、設定ファイルは変わりません。ビルドの失敗、知らないオプションやプロファイルでは終了コード
+**1** で終わります。ほかのエディターでプロジェクトを先に閉じてください: バッチモードにはプロジェクトのロックが必要です。
+
+`xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` は同じオプションを受け取り、カタログだけを書きます — CI が
+プレイヤービルドの前に最新のカタログだけを必要とするときに使います。このリポジトリでは `tools/build-content.sh` が両方の
+呼び出しを包みます。
+
+エディタースクリプトからは `ContentBuildRunner.Build(profile)` と `ContentBuildRunner.BuildAll()` が同じことをし、
+`ContentBuildResult` を返します。
+
+### ビルドのあと
+
+ポストプロセッサーは、それを追加したプロファイルのビルドのたびに、ビルドのあとで走ります — 出力をアップロードしたり
+コピーしたりする場所です。Editor アセンブリに置いてください:
 
 ```csharp
 using xpTURN.ContentLink.Editor;
@@ -268,343 +438,281 @@ public sealed class UploadStep : IContentBuildPostProcess
 {
     public void OnBuilt(ContentBuildResult r)
     {
-        // r.ProfileName, r.Target, r.OutputPath, r.Files（ソート済み）, r.Archives, r.Manifest, r.BuiltNames, r.Milliseconds
+        // r.ProfileName, r.Target, r.OutputPath, r.Files, r.Archives, r.Milliseconds
+        UnityEngine.Debug.Log($"{r.ProfileName}: {r.Files.Length} files in {r.OutputPath}");
     }
 }
 ```
 
-実装はウィンドウで選び（`TypeCache` で見つけます）、そこで順序を決めます。順序はプロファイルに保存され、それが実行順です。
-見つからない型や例外を投げるステップは **ビルドを失敗させ**、確認できるよう出力は残します。ビルドのほかの段階が投げても同じ
-ように報告されます: 結果が理由を持ち、ウィンドウ・ログ・コマンドラインのすべてがそれを示します。ステップはパッキングの後に走るので、
-`r.Archives` は最終状態です。
+それからビルドウィンドウの **Post-processors** に追加します。複数あれば、そこに並んだ順に走ります。例外を投げたステップは
+ビルドを失敗させ、出力をそのまま残します。
 
-### メニュー項目とスクリプティング
+## ロード
 
-| どこで | 何を |
-|---|---|
-| *Window > ContentLink > Build Window* | プロファイルの編集 · ひとつ/全部のビルド · メッセージと最後の結果 |
-| *… > Build Content Directory* | アクティブなプロファイルをビルド |
-| *… > Update Content Catalog* | ビルドせずにアクティブなプロファイルのカタログだけ書き直す（リンクが琥珀色から無色に） |
-| `ContentBuildRunner.Build(profile)` / `BuildAll()` | コードから同じこと · `ContentBuildResult` を返す |
+### まず登録
 
-### コマンドライン
+すべてのコンテンツディレクトリを、起動時に一度、**最初のロードの前に** 登録します:
 
-```
-Unity -batchmode -nographics -quit -projectPath <project> -buildTarget StandaloneOSX -logFile <log> \
-      -executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.Build \
-      -contentlink.profile Main -contentlink.output Build/Content/Main -contentlink.compression LZ4
+```csharp
+int dir = ContentService.RegisterDirectory(path);                      // Archive = None または Engine
+// int dir = await ContentService.RegisterPackedDirectoryAsync(path);  // Archive = Packed
 ```
 
-`tools/build-content.sh` がこの呼び出しを包みます（先にプロジェクトロックを検査 · 終了コードを伝搬 · ログの `[ContentLink …]` 行を
-出力）:
-
-```
-tools/build-content.sh -p samples/LinkSample -contentlink.profile Main
-tools/build-content.sh -p <project> -t Win64 -contentlink.profile all      # -t は -buildTarget に渡る (Win64, OSXUniversal, Linux64, Android, iOS, …)
-```
-
-| キー（`-contentlink.<key> <value>`） | 値 |
-|---|---|
-| `profile` | プロファイル名、または `all`（大文字小文字を問わない · 全部 · 最初の失敗で止まる）。省略 = アクティブなプロファイル |
-| `source`, `output` | パス |
-| `archive` | `None` · `Engine` · `Packed` |
-| `maxArchiveMB` | 1 以上の整数 |
-| `compression` | `Uncompressed` · `LZ4` · `LZMA` |
-| `cleanBuildCache`, `disableWriteTypeTree`, `failBuildWhenErrorsLogged` | `true` · `false` |
-| `postProcessors` | カンマ区切りの型名 |
-
-上書きは指定したプロファイルを **メモリ上でだけ** 変えます — コマンドラインが設定ファイルを書くことはありません（`profile all` は
-上書きを受け付けません）。ビルド失敗、未知のキー、存在しないプロファイルは終了コード **1** です。プロジェクトが別のエディター
-インスタンスで開かれていてはいけません: バッチモードはプロジェクトロックを必要とします。
-
-**カタログのみ。** `-executeMethod xpTURN.ContentLink.Editor.ContentBuildCLI.UpdateCatalogs` は同じ引数を取りますが、
-プロファイルのカタログを書き直すだけです — ビルドも出力フォルダもありません — *Update Content Catalog* のコマンドライン版です
-（`tools/build-content.sh -c -contentlink.profile Main`）。CI がカタログアセットだけ最新にすればよいとき（プレイヤービルド前の
-リンク検証）や、ディレクトリを別のパイプラインがビルドするときに使います。ビルドはすでにカタログを毎回書き直すので、ビルド側で
-追加で有効にするものはありません。`profile all` はプロファイルごとに更新し、最初の失敗で止まります。`source` の上書きはカタログの
-基準ルートになります。終了コードは上記と同じです。
-
-## コンテンツのロード
+どちらもディレクトリ id を返します（フォルダーが使えなければ `-1` とエラーのログひとつ）。同じフォルダーを二度登録すると
+拒否されます。`ContentService.UnregisterDirectory(dir)` で外します — そのディレクトリのアセットをまだ保持していれば拒否
+されます。
 
 ### スコープ
 
-| スコープ | 作り方 | 終わるとき | 親 |
-|---|---|---|---|
-| Root | 自動（`ContentScope.Root`） | `Application.quitting` | — |
-| Scene | `ContentScope.ForScene(scene)` | `SceneManager.sceneUnloaded` | Root |
-| GameObject | `gameObject.Scope()` / `component.Scope()` | `OnDestroy` | そのシーン |
-| Explicit | `parent.CreateChild("Stage")` | 自分の `Dispose()`、なければ親が終わるとき | 任意 |
+すべてのロードは **スコープ** に入ります。スコープが終わると、それがロードしたものは解放されます。
 
-**GameObject スコープ** — いちばんふつうの場合。アセットはオブジェクトとともに消えます:
-
-```csharp
-public class ItemView : MonoBehaviour
-{
-    public Image image;
-
-    async void Start()
-    {
-        var scope = this.Scope();                                   // この GameObject のスコープ（gameObject.Scope() でも同じ）
-        image.sprite = await scope.LoadAsync<Sprite>("Icons/sword[sword]");
-    }                                                               // OnDestroy で解放 — ほかに書くことはない
-}
-```
-
-**Scene スコープ** — シーンが生きている間だけ生きるべきアセット:
+| スコープ | 得かた | 終わるとき |
+|---|---|---|
+| GameObject | `this.Scope()` / `gameObject.Scope()` | GameObject が破棄されたとき |
+| Scene | `ContentScope.ForScene(scene)` | シーンがアンロードされたとき |
+| Explicit | `parent.CreateChild("Stage3")` | `Dispose()` を呼んだとき — または親が終わったとき |
+| Root | `ContentScope.Root` | アプリが終了したとき |
 
 ```csharp
-var scope  = ContentScope.ForScene(gameObject.scene);               // シーンごとにひとつ · 最初に使うとき作られる
-var skybox = await scope.LoadAsync<Material>("Materials/Sky");      // シーンがアンロードされたら解放
-```
+// GameObject — 日常的なケース
+var sprite = await this.Scope().LoadAsync<Sprite>("Icons/sword[sword]");
 
-**Explicit スコープ** — ステージ、画面、ポップアップ: 終わるときは自分で決め、遅くとも親が終わるときに終わります:
+// Scene — シーンが生きている間
+var sky = await ContentScope.ForScene(gameObject.scene).LoadAsync<Material>("Materials/Sky");
 
-```csharp
-var stage = ContentScope.Root.CreateChild("Stage3");                // または this.Scope().CreateChild("Popup")
-await stage.LoadAsync<AudioClip>("Wav/descent");
+// Explicit — ステージ・画面・ポップアップ: いつ終えるかは自分で決める
+var stage = ContentScope.Root.CreateChild("Stage3");
+await stage.LoadAsync<AudioClip>("Audio/boss");
 await stage.LoadAsync<GameObject>("Prefabs/Boss");
 // ... ステージが進む ...
-stage.Dispose();                                                    // 保持していたものを全部返す
+stage.Dispose();   // ステージがロードしたものがすべて戻る
+
+// Root — アプリ全体の間
+var font = await ContentScope.Root.LoadAsync<Font>("Fonts/Main");
 ```
 
-**Root スコープ** — アプリが生きている間:
+どのスコープでも:
 
 ```csharp
-var atlas = await ContentScope.Root.LoadAsync<Texture2D>("UI/Atlas");   // Application.quitting で解放
+var mat  = scope.Load<Material>("Materials/Steel");   // 同期
+bool has = scope.Contains("Icons/sword");             // ここにロード済み: もう一度ロードしてもタダ
+scope.Release("Icons/sword");                         // 任意: 早めに返す
 ```
 
-**すべてのスコープで:**
+- ひとつのスコープに同じ名前を二度ロードしても、保持はひとつです — 毎フレームロードしてもかまいません。
+- 複数のスコープが同じ名前をロードできます: アセットは一度だけロードされ、最後のスコープが手放したときに解放されます。
+- 別のスコープにアセットを渡すには `source.ShareTo(target, name)` か `target.Adopt(asset)` を使ってください。
+
+### インスペクターのフィールド: リンク
+
+**リンク** は名前を保持します。インスペクターで、ソースルートの下のアセットをドロップしてください:
 
 ```csharp
-var mat   = scope.Load<Material>("Materials/Steel");                // 同期（エンジンのロードを待つ）
-bool held = scope.Contains("Icons/sword");                          // true: もう一度ロードしてもコストはない
-scope.Release("Icons/sword");                                       // 任意: 早めに返す
-var token = scope.DisposedToken;                                    // スコープが終わるとキャンセル — 自分の await に渡す
-```
+public ContentLinkSprite icon;              // ContentLinkGameObject、ContentLinkTexture2D もある
+public ContentLink<AudioClip> music;        // どんなアセット型でも
 
-- **重複排除。** ひとつのキーはスコープごとに最大一度だけ保持されます。同じキーを繰り返し（毎フレームでも）ロードしても増えません。
-- **リークの合図。** シーンのアンロードや終了が回収した明示的スコープは、パス（`Root/Field/ForgottenPopup`）付きで警告を
-  残します。`ContentService.CaptureStackTrace = true` なら作られた場所も付きます。親が Dispose されたり所有 GameObject が
-  破棄されたりして終わるのは正常な寿命で、警告しません。
-- **過剰保持の警告。** `ContentScope.DefaultWarnThreshold`（または `scope.WarnThreshold`）を超える数のアセットを保持すると
-  警告します — スコープの失敗の形はリークではなく、持ちすぎです。
-- **一度もアクティブになっていないオブジェクト** は `OnDestroy` を受けません。そのスコープはシーンがアンロードされるとき回収されます。
-- **移動したオブジェクト**（`MoveGameObjectToScene`、`DontDestroyOnLoad`）はアセットを保ちます: 元のシーンがアンロードされると、
-  スコープは今いるシーンへ引き渡されます。
-- **スコープ間。** `source.ShareTo(target, key)` は `target` に自分の参照を与え、`target.Adopt(asset)` はすでに保持している
-  アセットを受け取ります。この二つなしに生のアセットを別のシステムへ渡さないでください。
-- スコープはアセットを解放するだけで、GameObject を破棄することはありません。
+image.sprite = await icon.LoadAsync(this);  // この GameObject のスコープへ
+var clip = music.Load(this);                // 同期
 
-### シリアライズリンク
-
-```csharp
-public ContentLinkSprite icon;                               // ContentLinkGameObject, ContentLinkTexture2D もある
-public class ContentLinkAudio : ContentLink<AudioClip> { }   // ほかの型は派生する — 描画はこれらも描く
-
-image.sprite = await icon.LoadAsync(this);                   // 所有者は必須（null は ArgumentNullException）— Component/GameObject ならその GameObject スコープ、ContentScope ならそのスコープ
-image.sprite = await icon.LoadAsync(stage);                  // 例: 明示的スコープに入れる
-var clip = music.Load(this);                                 // 同期
-
-// 装備の交換: 古いものを早めに返す（任意）
+// アイテムの交換: 古いものを返し、新しいものをロード
 icon.Release();
-icon.SetName(table[itemId].IconName);
+icon.SetName("Icons/shield", "shield");
 image.sprite = await icon.LoadAsync(this);
-
-icon.SetName("Icons/sheet", "run_01");                       // スプライト: メイン名とスプライト名を分けて
-other.SetName(icon.Name, icon.SubObjectName);                // リンクのコピー: Name はメイン名だけ
-
-icon.IsValid; icon.Asset; icon.IsLoading; icon.Scope; icon.Name; icon.SubObjectName; icon.RuntimeKeyIsValid();
 ```
 
-### GUID によるシリアライズ参照
+フィールドの色が状態を示します: 通常 — 問題なし、**琥珀色** — まだカタログにない（**Update catalogs** を押してください）、
+**赤** — その名前がフィールドに入らないものをロードする。
+
+### インスペクターのフィールド: GUID による参照
+
+**参照** は名前の代わりにアセットの GUID を保持します: ファイルを移動・改名しても動き続けます。
 
 ```csharp
-public ContentRef<Sprite> icon;                          // ContentRef<GameObject>, ContentRef<Enemy>（プレハブ上のコンポーネント）…
+public ContentRef<Sprite> icon;
 public ContentSceneRef level;
 
-image.sprite = await this.Scope().LoadAsync(icon);       // 名前と同じくスコープが所有する
-this.Scope().Release(icon);                              // 早めに返す（任意）
-var enemy = await stage.InstantiateAsync(enemyRef);      // GameObject を返す
+image.sprite = await this.Scope().LoadAsync(icon);
 var scene = await this.Scope().LoadSceneAsync(level);
-
-icon.IsSet; icon.RuntimeKeyIsValid(); ContentService.TryGetName(icon, out var name);
 ```
 
-- 参照はパスではなくアセットの **GUID**（とスプライト名）を持ちます: ファイルを移動・改名しても、カタログを更新すれば
-  そのまま動きます。フィールドは Addressables の `AssetReference` と同じです（`m_AssetGUID`, `m_SubObjectName`）。
-- ビルドがカタログエントリごとに GUID を記録し、ランタイムは参照をその **カタログ名** に解決して名前でロードします。
-  そのため同じアセットの参照ロードと名前ロードは **スロットひとつ · スコープキーひとつ** です: `Release(icon)` は
-  `LoadAsync<Sprite>("Icons/sword")` も返し、その逆も同じです。
-- 参照はロードではなくキーだけを持ちます — コピーしても問題なく、ロードはスコープを通します。フィールドごとに個別に
-  解放したいなら、名前を一度取得してリンクを使います: `ContentService.TryGetName(icon, out var name)` →
-  `new ContentLink<Sprite>(name)`。
-- サブアセットは **スプライト、名前で** です（Addressables と同じ）。スライス名を変えると参照は切れます。
-- `RuntimeKeyIsValid()` は `ContentLink` と同じく「登録済みカタログ（またはエディターシミュレーション）がロードできる」
-  の意味です — Addressables の「GUID が入っている」は `IsSet` です。
-- **インスペクターでは。** アセットを選ぶと GUID が保存され、2 行目に解決される名前が読み取り専用で表示されます。
-  赤: その GUID のアセットがない、スプライト名が消えた（スライスの改名）、フィールドの型と違う。黄: まだカタログにない、
-  どのコンテンツルートの外にもある（ルートの下へ移しても GUID は保たれる）、スプライトアトラス。ビルドに載せられない
-  選択はリンクと同じく拒否し、フィールドにすでにある値は拒否せず表示だけします。
+同じアセットの参照と名前は同じオブジェクトをロードします: `Release(icon)` は `LoadAsync<Sprite>("Icons/sword")` が
+ロードしたものも解放します。
 
-### インスタンス
+### プレハブのインスタンス
 
 ```csharp
-var go = await scope.InstantiateAsync("Prefabs/Cat", parent);
+var cat = await this.Scope().InstantiateAsync("Prefabs/Cat", parent);
 ```
 
-プレハブ参照は `scope` ではなく **インスタンス** のものです（`scope` は自分が先に終わったとき要求をキャンセルするだけ）。
-インスタンスを破棄すると返ります。`Object.Instantiate(instance)` で作った複製は `Awake` で参照を引き継ぐので、元が先に
-破棄されてもテクスチャを保ちます。スポナークラスは要りません: 参照はテーブルのスロットひとつなので、インスタンスごとにひとつでも
-安上がりです。
+プレハブはインスタンスが生きている間ロードされたままで、インスタンスを破棄すると解放されます。`Object.Instantiate(cat)` で
+作った複製もプレハブを保持するので、スポナークラスは要りません。
 
 ### シーン
 
-ソースルートの下のシーンはシーンエントリ（`Scenes/Arena`）になり、依存物とともにディレクトリにビルドされます。シーンは参照
-カウントされません: 寿命はシーンインスタンスそのものです。ContentLink は名前を解決し、（誰がロードしたかを問わず）開いている
-コンテンツシーンをすべて追跡してシーンが開いている間はディレクトリを登録解除できないようにし、スコープにシーンを所有させます。
-
 ```csharp
-// 所有: スコープが終わるとアンロード（additive のみ）
+// スコープが所有: スコープが終わるとアンロード (additive)
 var arena = await this.Scope().LoadSceneAsync("Scenes/Arena");
-scope.ReleaseScene(arena);                                 // 任意: 早めにアンロード
+this.Scope().ReleaseScene(arena);   // 任意: 早めにアンロード
 
-// シリアライズ · 所有者必須 — ContentLink<T> と同じ規則
+// インスペクターのフィールドから
 public ContentSceneLink level;
 var scene = await level.LoadAsync(this);
-await level.UnloadAsync();                                 // 任意 · いつ呼んでも安全
 
-// 非所有 · どのモードでも（Single はほかのシーンをすべて閉じる）。SceneManager.UnloadSceneAsync でアンロード。
+// 所有者なし、どのモードでも — SceneManager.UnloadSceneAsync で自分でアンロード
 var menu = await ContentService.LoadSceneAsync("Scenes/Menu", LoadSceneMode.Single);
 ```
 
-- Single モードのシーンは所有できません（所有者も閉じてしまうので）。Single ロードは呼び出し側も破棄します: MonoBehaviour から
-  await するときは `destroyCancellationToken` を渡してください。
-- 所有スコープが終わるときそのシーンが最後に残ったシーンなら、シーンは残り、警告が記録されます。アプリ終了時には何もアンロード
-  しません。
-- キャンセルは待機を止めます。additive シーンはエンジンのロード完了後にアンロードし直されます。
-- スコープは自分のロードが作ったインスタンスだけを所有します: `SceneManager` で自分が開いたシーンは、スコープが同じシーンを
-  ロードしてもあなたのもののままで、失敗したスコープのロードがそれを取ることはありません。
-- `ContentService.LoadedSceneCount` / `SnapshotScenes(list)` が開いているものを示します。
+### Resources フォルダー
 
-### 生ハンドル
-
-寿命を自分で管理するコード（プール、ストリーミングシステム）向け:
+`res:` で始まる名前は、プレイヤーの `Resources` フォルダーからロードします — 同じスコープとフィールドを通るので、
+プロジェクトを `Resources.Load` から呼び出しひとつずつ移せます:
 
 ```csharp
-AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");   // 同期は Acquire<T>
-h.Asset; h.IsValid; h.Status; h.Key;
-var h2 = h.Share();          // 二つ目の参照
-h.Dispose();                 // 返す — あるいはスコープに渡す:
-scope.Attach(h2);            // これでスコープが所有
-
-if (ContentService.TryGetLoadableObjectId("Icons/sword", out var id))   // id ベースのロード用のエンジン id
-    h = await ContentService.AcquireAsync<Texture2D>(id);
+var boot  = this.Scope().Load<TextAsset>("res:Config/boot");                 // Resources/Config/boot.txt
+var logo  = await this.Scope().LoadAsync<Sprite>("res:UI/logo[logo]");       // スプライト: [その名前]
+var enemy = await this.Scope().InstantiateAsync("res:Prefabs/Enemy");
 ```
 
-`ContentService.Contains(name)` / `ContainsScene(name)` は、登録済みディレクトリがその名前を持つかを教えます。同じ呼び出しは `ContentRef<T>` / `ContentSceneRef` も受け取り、`Acquire` / `AcquireAsync` も `ContentRef<T>` を受け取ります。
+プレハブとそれが使うアセットは、`ContentService.SweepResources()` でしかメモリから出ていきません — ロード画面のように
+引っかかりがかまわない場所で呼んでください。
 
-## Release はいつ呼ぶか
+### 生のハンドル
+
+寿命を自分で管理するコード（プール・ストリーミング）のために:
+
+```csharp
+AssetHandle<Texture2D> h = await ContentService.AcquireAsync<Texture2D>("Icons/sword");
+var tex = h.Asset;
+h.Dispose();   // 返す — またはスコープに渡す: scope.Attach(h)
+```
+
+## 解放
+
+ほとんどのコードは `Release` を呼びません:
 
 | 状況 | すること |
 |---|---|
-| コンポーネント · ポップアップ · ステージ · シーンコンテンツ | 何もしない。合うスコープにロードする。 |
-| アセットの多いステージ/画面 | 明示的スコープひとつ、ステージが終わったら `Dispose()`。 |
-| セルを再利用するスクロールリスト | セルごとに子スコープ、セルを再バインドするとき Dispose。 |
-| 装備/スキンの交換 | 新しいものをロードする前に `Release(key)` または `ContentLink.Release()`。 |
-| 別のシステムにアセットを渡す | `ShareTo(target, key)` または `target.Adopt(asset)`。スコープ間で生のアセットを渡さないこと。 |
+| コンポーネント・ポップアップ・ステージ・シーンのコンテンツ | なし — 合うスコープにロード |
+| アセットの多いステージや画面 | Explicit スコープひとつ、ステージが終わったら `Dispose()` |
+| セルを再利用するスクロールリスト | セルごとに子スコープひとつ、セルを再利用するときに Dispose |
+| 装備・スキンの交換 | 新しいものをロードする前に `Release(name)` か `link.Release()` |
+| 別のシステムにアセットを渡す | `ShareTo(target, name)` か `target.Adopt(asset)` |
 
-## 解放はどう起きるか
+**仕組み。** スコープが終わると — GameObject の破棄、シーンのアンロード、`Dispose()` の呼び出し、アプリの終了 — それが
+ロードしたものをすべて手放します。誰も保持していないアセットは **フレームごとに一度、フレームの終わりに** 解放されます。
+あなたのコードがすべて走ったあとで、コードの途中では起きません。ひとつのフレームの中で手放してまたロードしても、何も
+ロードし直されません。
 
-ロードしたアセットがエンジンに戻るまでは三段階です: **スコープが自分の終わりに気づき** → **保持していた参照をすべて手放し** →
-**カウントが 0 になったアセットをフレームの終わりに一度で返します。**
+**終え忘れたスコープ。** シーンのアンロードやアプリの終了まで開いたままの Explicit スコープは代わりに終えられ、そのパスと
+ともに警告として残ります（`Root/Field/ForgottenPopup`）。どこで作ったかを見るには `ContentService.CaptureStackTrace = true`
+にしてください。
 
-### 1. スコープはどうやって自分の終わりを知るか
+## CDN からコンテンツをダウンロードする
 
-| スコープ | 合図 | 内側で起きること |
+`Packed` プロファイルの出力は、キャッシュフォルダーにダウンロードしてそこから登録できます。
+
+**1. ビルドしてアップロードする。** 出力パスが `Assets/` の外にある `Packed` プロファイルを使います。ビルドのたびに出力
+フォルダー全体 — アーカイブ、`archives.json`、`archives.hash` — を、プラットフォームとアプリのバージョンごとにひとつの URL へ
+アップロードします。アーカイブの名前には中身のハッシュが入っているので永久にキャッシュしてかまいません。`archives.json` と
+`archives.hash` は CDN でキャッシュ時間を短くしてください。
+
+**2. 起動時に確認・ダウンロード・登録:**
+
+```csharp
+var options = new ContentRemoteOptions
+{
+    BuiltInDirectory = Path.Combine(Application.streamingAssetsPath, "MainContent"),   // 任意: アプリが同梱するコピー
+    RetryCount = 3,
+    Timeout = 30,
+};
+var remote = await ContentRemote.CheckAsync("Main", $"https://cdn.example.com/content/{platform}/Main", options);
+
+if (remote.BytesToDownload > 0)
+    ShowDownloadSize(remote.BytesToDownload);
+
+if (await remote.DownloadAsync())   // 進捗は remote.Status をポーリング
+{
+    await ContentService.RegisterPackedDirectoryAsync(remote.CacheDirectory);
+    remote.CleanCache();            // 新しいビルドがもう使わないアーカイブを削除
+}
+else
+    Debug.LogError(remote.Error);
+```
+
+- キャッシュにないアーカイブだけをダウンロードします。中断したダウンロードは再開し、MD5 が合わないファイルは決して使われ
+  ません。
+- オフラインなら、キャッシュが最後にダウンロードしたもの、次に `BuiltInDirectory` に戻ります。どちらを使ったかは
+  `remote.Source`、その理由は `remote.Error` が教えてくれます。
+- アプリがすでに同梱しているアーカイブ（`BuiltInDirectory`）は、ダウンロードせずにコピーします。
+- あるプロファイルのキャッシュフォルダー **か** 同梱フォルダーのどちらかだけを登録してください。両方は不可です: エンジンが
+  同じビルドの二つ目のディレクトリを拒否します。
+- フォルダーを登録したままダウンロードしても安全です。次にそのフォルダーを登録したときに反映されます。
+- エディターでシミュレーションがオンなら、確認はリクエストなしにプロジェクトから答えます。実際のダウンロードを試すには
+  シミュレーションをオフにしてください。
+
+| オプション | 既定 | 意味 |
 |---|---|---|
-| **GameObject** | そのオブジェクトの `OnDestroy` | 最初の `gameObject.Scope()` 呼び出しで隠しコンポーネント `ContentScopeOwner` が付きます。その `OnDestroy` がスコープを Dispose します。一度もアクティブになっていないオブジェクトは `OnDestroy` を受けないので、そのスコープはシーンのアンロード時に **シーンスコープ** が子として回収します。 |
-| **Scene** | `SceneManager.sceneUnloaded` | `ContentScope.ForScene(scene)` がシーンハンドルをキーにスコープを作ります。`sceneUnloaded` でそのスコープを Dispose します。子の GameObject スコープのうち **別のシーンへ移動した** オブジェクトのもの（`MoveGameObjectToScene` · `DontDestroyOnLoad` — 所有オブジェクトの `scene` がもうこのシーンでない）は解放せず、今いるシーンの下に付け替えます。 |
-| **Root** | `Application.quitting` | `ContentService.Shutdown()` が Root を Dispose し、ツリー全体がカスケードします。Root を自分で `Dispose()` してもエラーログが残るだけです。 |
-| **Explicit** | 自分の `Dispose()` | 呼ばなければ親の終わりがカスケードして終わります — その親がシーンか Root なら、パスと作成時のスタック付きの **リーク警告** が記録されます。明示的な親や破棄された所有 GameObject を通じて終わるのは正常な寿命で、警告しません。 |
+| `CacheRoot` | `persistentDataPath/ContentLink` | キャッシュの置き場所: `<CacheRoot>/<profile>` |
+| `BuiltInDirectory` | なし | アプリが同梱する Packed ビルド |
+| `Timeout` | `0`（なし） | 新しいバイトが来ないままこの秒数が過ぎると、リクエストをやり直す |
+| `RetryCount` | `0` | リクエストごとのリトライ回数 |
+| `VerifyCachedFiles` | `false` | すでにキャッシュされたファイルの MD5 も検査 |
+| `WebRequestOverride`、`TransformUrl` | なし | すべてのリクエスト（ヘッダー）や URL（署名）を調整 |
 
-複製（`Object.Instantiate`）は `ContentScopeOwner` がシリアライズしたキー一覧を引き継ぎ、`Awake` で **自分の参照** を取ります
-（元がまだ保持していれば共有、すでに消えていれば再ロード）。非アクティブで作られた複製は `Awake` が遅れ、最初にアクティブになるとき
-取ります。
+## ローカライズされたコンテンツ
 
-### 2. スコープが終わるときにすること — 順に
+ロケールは、言語が変えるファイルだけを同じパスに入れた二つ目のプロファイルです。本編のあとに登録すると、両方が持つ名前は
+ロケールのファイルが答え、ほかの名前は本編のままです。
 
-1. `IsDisposed = true`、`DisposedToken` がキャンセル — そのスコープで進行中だったロードはキャンセルされます。
-2. 子スコープを逆順に終わらせます（上の引き渡し規則付き）。
-3. 名前で保持した参照（`LoadAsync`/`Load`）と `Attach` したハンドルをすべて手放します → 各アセットのカウントが下がります。
-4. スコープが所有するシーンをアンロードします（アプリ終了時は除く — エンジンが自分で片付けます）。
-5. シーンか Root が回収した明示的スコープは警告を記録します。
+| プロファイル | ソースルート | 出力パス |
+|---|---|---|
+| `Main` | `Assets/Content` | `Assets/StreamingAssets/MainContent` |
+| `Main.ko` | `Assets/Content.ko` | `Assets/StreamingAssets/MainContent.ko` |
 
-### 3. カウントが 0 になった後
+`Assets/Content.ko/Icons/flag.png` が `Assets/Content/Icons/flag.png` の代わりになります — どちらも `Icons/flag` です。
+ロケールのルートは本編のルートの **隣に** 置き、二つのプロファイルの名前のスタイルをそろえてください。
 
-アセットごとにスロットがひとつあり（同じ名前はどのスコープからでも同じスロット）、スロットがカウントを持ちます。0 になっても
-スロットは **その場では解放されず**、フレーム番号とともに待ち行列に入ります。実際の解放は `ContentService.Collect()` が行い、
-パッケージがプレイヤーループの `PostLateUpdate` の末尾に挿し込むので **フレームごとに一度**、あなたのコードがすべて走った後です。
+```csharp
+static string Dir(string name) => Path.Combine(Application.streamingAssetsPath, name);
 
-待ち行列の各スロットについて `Collect()` は次のいずれかをします:
+ContentService.RegisterDirectory(Dir("MainContent"));      // 本編を先に
+ContentService.RegisterDirectory(Dir("MainContent.ko"));   // 次にロケール、最初のロードの前に
 
-- その間に誰かが再取得してカウントが 0 でなくなった → 行列から外すだけ（**同一フレーム内の解放 → 再取得は再ロードしません**）;
-- まだロード中 → ロードが終わるまで触れない;
-- 0 になってから `ReleaseDelayFrames` フレーム経っていない → 次のフレームでもう一度見る;
-- それ以外 → エンジンの `Loadable.Release()` を呼び、スロットを空にする。スロットの世代番号が進むので、遅れて完了したロードが
-  空のスロットに触れることはありません。
+var flag = await this.Scope().LoadAsync<Sprite>("Icons/flag");   // 韓国語の旗
+```
 
-`ContentService.AutoCollect = false` ならプレイヤーループのフックは何もせず、`Collect()` を自分で呼びます。
+**実行中に言語を切り替える。** ロケールが変えるものはひとつのスコープにロードし、切り替えるときにまとめて手放せるように
+します:
 
-### ディレクトリと終了
+```csharp
+ContentScope localized = ContentScope.Root.CreateChild("Localized");
+int locale = -1;
 
-`ContentService.UnregisterDirectory(dir)` は、そのディレクトリのアセットがまだ保持されているか、そのディレクトリのシーンが
-開いている間は拒否します — エンジンがすべての `Loadable` の解放とすべてのシーンのアンロードを先に要求するからです。`force: true` は
-残ったアセット参照を無効化し（開いているシーンは決して対象外）、それらを保持していたスコープはその後、生きている参照だけを見ます —
-`Count`、`DumpTree`、`Release(key)` は死んだ参照を黙って捨てます。パックディレクトリは登録解除時にアーカイブをアンマウントします。
-`ContentService.Shutdown()`（`Application.quitting` でも実行）はスコープツリーを Dispose し、残った生ハンドルを報告し、すべてを
-登録解除します。
+bool SwitchLocale(string code)   // "ko"、"ja"、… — 本編だけなら null
+{
+    localized.Dispose();                                    // 古いロケールのアセットを手放す
+    if (locale >= 0 && !ContentService.UnregisterDirectory(locale))
+        return false;                                       // まだどこかが保持している — エラーが何かを教える
+    locale = code == null ? -1 : ContentService.RegisterDirectory(Dir("MainContent." + code));
+    localized = ContentScope.Root.CreateChild("Localized");
+    return true;                                            // ロードし直す: 名前はもう新しい言語で答える
+}
+```
+
+Unity の Localization パッケージを使うなら、文字列の翻訳はそちらに任せ、`LocalizationSettings.SelectedLocaleChanged` から
+`SwitchLocale` を呼んでください。
 
 ## エディターシミュレーション
 
-エディターではプロジェクトがコンテンツディレクトリの代わりを務めます。Play Mode で `RegisterDirectory`（または
-`RegisterPackedDirectoryAsync`）に渡したパスがどれかの **プロファイルの出力フォルダ** なら、エンジンには何も登録されず、名前は
-プロファイルのソースルートをいまディスクにあるとおりに走査して（カテゴリで絞って）答え、アセットはプロジェクトからロードされます。
-テクスチャを編集して Play を押せば編集が見え、ファイルを消せばロードは失敗し、追加すればロードされます。リポジトリをクローンして
-すぐ Play を押しても構いません — ビルドは要りません。
+*Window > ContentLink > Editor Simulation*（既定でオン）。Play Mode でプロファイルの出力フォルダーを登録すると、その
+プロファイルを **プロジェクトが肩代わり** します: 追加・編集・削除したアセットがそのまま見え、ビルドするものはありません。
+フォルダーが存在しなくてもかまいません。
 
-```
-Window > ContentLink > Editor Simulation     トグル（既定でオン · プロジェクトごと）
-```
-
-Addressables の *Use Asset Database* プレイモードに相当します: 制作上の便宜であって、ビルドの代替ではありません。ビルドが
-同じように振る舞うか確かめるにはオフにしてください — するとエディターもプレイヤーとまったく同じように、ビルド済みディレクトリを
-本当に登録します。
-
-- **何も書きません。** 索引（名前 → パス）はメモリ上にあり、ディレクトリの登録時か Play の開始時に作られ、Play 終了時に捨てられます。
-- **プロファイルの出力フォルダだけ** をこのように肩代わりします。それ以外のパス（ダウンロードした複製 · 即席のビルド）は本当に
-  登録され、そのようなディレクトリのルートの下では、まだどのカタログも知らない名前だけをプロジェクトから解決します（元の
-  シミュレーション）。両方にある名前は本物のカタログが答えます。
-- **登録は依然として必要です。** 忘れた `RegisterDirectory` はプレイヤーと同じくエディターでも失敗し、同じフォルダの二重登録は
-  拒否され、ソースルートが存在しないプロファイルは例外を投げます。
-- **トグルはディレクトリの登録時に読みます。** Play 中にオフにしても、すでにプロジェクトが肩代わりしていたディレクトリは次の Play
-  までそのまま動き、本物のディレクトリの下の新しい名前だけが止まります。Play 終了時の要約とリセットは、その瞬間のトグルの状態に
-  かかわらず走ります。
-- **解放されたアセットはアンロードされません。** 参照カウントはそのままですが、エディターがオブジェクトを生かしておくので、制作中の
-  メモリの読みはビルドより高くなります。アンロードの挙動はトグルをオフにして確かめてください。プロジェクトが肩代わりしたアセットを
-  保持していても、ディレクトリの登録解除は妨げられません。
-- **Play 中の編集はその場で見えます**（再インポートがロード済みオブジェクトを更新します）。削除したアセットは、それを保持している
-  ハンドルの下でオブジェクトが破棄され、新しいロードはエラーとともに失敗します。
-- **アーカイブは動きません。** `Packed` と `Engine` の出力もほかと同じくプロジェクトが肩代わりするので、マウントとアーカイブの挙動は
-  トグルをオフにして確かめます。
-- **シミュレーションされたシーン** は `EditorSceneManager.LoadSceneAsyncInPlayMode` で開きます。要求したスコープが依然として
-  アンロードしますが、どのディレクトリにも属しません。
-- **重複する名前は拒否されます** — ビルダーが拒否するのと同じように。エディターでだけ動く名前はありません。
-
-そのように肩代わりした登録ごとに、どのプロファイルとルートが答えるかの一行が記録されます。Play Mode を出るとき、シミュレーションが
-解決した名前 — ロードしたもの、または `RuntimeKeyIsValid` / `Contains` で確認しただけのもの — のうち、そのプロファイルの
-カタログがまだ知らないものを一行で残します — 出荷前にビルドが必要なリンクです。`ContentService.SnapshotSimulated(list)` はプレイ中に
-プロジェクトが肩代わりした名前をすべて報告します。`ContentService.TryGetLoadableObjectId(name, out id)` もプロジェクトが
-肩代わりする名前に答えます。
+- プレイヤーと同じく、登録は必要です。
+- ディスクには何も書きません。
+- エディターでは解放したアセットがメモリに残ります — メモリと解放の動きは、シミュレーションをオフにして確かめてください。
+- アーカイブは使いません。実際のビルド・アーカイブ・ダウンロードを試すには、シミュレーションをオフにしてください。
+- Play Mode が終わると、ロードしたのにまだどのカタログにもない名前をコンソールが知らせます: 出荷前にビルドしてください。
 
 ## 診断
 
@@ -616,88 +724,55 @@ Addressables の *Use Asset Database* プレイモードに相当します: 制�
       Hold [Explicit] 1 (peak 1) : Icons/sword
       Boss [GameObject] 1 (peak 1) : Icons/shield
   ```
-  子はスコープが保持している順に並び、それは作成順ではありません: スコープを取り除くと最後の兄弟がその位置に入るので、ツリーの
-  大きさによらず取り除くコストは同じです。
 
-- `ContentService.Snapshot(list)` — 生きているすべての参照（`CaptureStackTrace` がオンならスタックトレース付き）
-- `ContentService.SnapshotScenes(list)` / `LoadedSceneCount` — 開いているコンテンツシーン
-- `ContentService.SnapshotSimulated(list)` — エディターシミュレーションが解決した名前
-- `ContentService.LiveAssetCount` — 現在保持しているアセット数
-- ビルドウィンドウはエディターセッションの最後のビルド（プロファイル · ターゲット · ファイル数 · 時間 · エラー）を表示し、ログには
-  ビルドごとに `[ContentLink] built …` の一行が残ります
+- `ContentService.Snapshot(list)` — いま保持しているすべての参照: その名前、取ったフレーム、そして取った場所
+  （`ContentService.CaptureStackTrace = true` のとき）
+- `ContentService.LiveAssetCount` — 保持しているアセットの数
+- `ContentScope.DefaultWarnThreshold` — ひとつのスコープがこれより多いアセットを保持したら警告
+- ビルドウィンドウが最後のビルドを表示し、コンソールにはビルドごとに `[ContentLink] built …` が一行残ります
 
-## AssetLink · Addressables からの移行
+## Addressables・Resources からの移行
 
-| 以前 | ContentLink |
+| Addressables | ContentLink |
 |---|---|
-| `AssetLink.LoadAssetAsync()` + `ReleaseAsset()` | `ContentLink.LoadAsync(owner)` · `Release()` は任意 |
-| `AssetLinkSpawner.SpawnAsync()` + `DoAutoRelease` | `scope.InstantiateAsync()` |
-| `AddressablesTracker.ReportUnreferencedHandles()`（GC ベース） | シーンアンロード/終了時のスコープ警告（決定論的） |
-| Auto Regist Folder Pattern | ビルドプロファイルとカテゴリ |
-| `AssetRef`（GUID） | `ContentRef<T>` / `ContentSceneRef` |
-| `AssetReference` / `AssetReferenceSprite` フィールド | `ContentRef<T>` フィールド — 型を変えるだけでデータが残る（下記） |
-| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` · `this.Scope().Release(ref)` は任意 |
-| `ref.RuntimeKeyIsValid()`（「値があるか」） | `ref.IsSet` |
+| グループとバンドル | プロファイルとカテゴリ、`Packed` アーカイブ |
+| `Addressables.LoadAssetAsync` + `Release` | `scope.LoadAsync` — 解放は自動 |
+| `AssetReference` / `AssetReferenceSprite` フィールド | `ContentRef<T>` — フィールドの型を変えるだけで、保存された GUID が引き継がれる |
+| `ref.LoadAssetAsync()` + `ref.ReleaseAsset()` | `this.Scope().LoadAsync(ref)` |
+| `InstantiateAsync` + `ReleaseInstance` | `scope.InstantiateAsync` — インスタンスを破棄 |
 | *Use Asset Database* プレイモード | エディターシミュレーション |
-| Addressables のグループ / バンドル | プロファイル / カテゴリ · `Packed` アーカイブ |
+| `CheckForCatalogUpdates` / `UpdateCatalogs` | `ContentRemote.CheckAsync` |
+| `GetDownloadSizeAsync` / `DownloadDependenciesAsync` | `remote.BytesToDownload` / `remote.DownloadAsync()` |
+| `ClearDependencyCacheAsync` | `ContentRemote.ClearCache(profile)` / `remote.CleanCache()` |
 
-**`AssetReference` フィールドから。** フィールドの型を `ContentRef<T>` に変えると、シリアライズされた GUID とスプライト名が
-残ります。アセットはコンテンツルートの下に置く必要があります（移しても GUID は保たれる）。Addressables は三つの形で記録し、
-そのまま解決されるのはひとつです:
+`AssetReference` から引き継いだ `ContentRef<T>` は、アセットがコンテンツルートの下になければなりません（そこへ移しても
+GUID は保たれます）。
 
-| Addressables で選んだもの | 保存された値 | ContentLink では |
-|---|---|---|
-| スプライト | テクスチャの GUID + スプライト名 | 解決される |
-| `AssetReferenceSprite` に落としたテクスチャ | テクスチャの GUID、スプライト名なし | スプライトではなくテクスチャ: フィールドは赤 — スプライトを選び直す |
-| Addressable スプライトアトラスが持つスプライト | アトラスの GUID + スプライト名 | 非対応（アトラス経由のスプライトはカタログにない）: 黄 — テクスチャからスプライトを選ぶ |
-
-## 注意と制限
-
-- メインスレッド専用。キャンセルトークンもメインスレッドから。
-- エンジンのロードはキャンセルできません。キャンセルされた要求は参照をただちに返し、ロードは完了後に次の `Collect()` で解放されます。
-- エンジンが例外を投げたロードは、同期・非同期どちらの経路でもほかの失敗と同じように報告されます — 無効なハンドルとログ — 何も
-  保持されたままにはなりません。
-- プロジェクトが肩代わりした Play Mode のコンテンツ（エディターシミュレーション）は Unity が参照カウントしません。解放の挙動は
-  シミュレーションをオフにし、ビルドして登録したコンテンツディレクトリで確かめてください。
-- 非アクティブで作られた複製は、最初にアクティブになるときに参照を取ります。
-- シーンは参照カウントされません。同じシーンを additive で二度ロードするとインスタンスが二つでき、それぞれ追跡・アンロードされます。
-  シーンには `ShareTo` / `Adopt` がありません。
-- コンテンツディレクトリはひとつのビルドターゲット向けで、別のターゲットではロードできないことがあります。
-- `Packed` のアーカイブサイズは圧縮後のファイルではなく入力バイトの上限です。ハッシュ接頭辞トライは単純詰めより約 1.5 倍の
-  アーカイブを作り、上限近くを行き来するアーカイブはビルドごとに分割・結合されることがあり、`MaxArchiveMB` や分割実装を変えると
-  出力は再分割されます。
-- ビルドにはプロジェクトロックが必要です: コマンドラインビルドの前に、ほかのエディターインスタンスでプロジェクトを閉じてください。
-- 参照と名前はアセットのスコープキーを共有します: どちらで解放しても両方が外れます。二つのフィールドを別々に解放するなら
-  `ContentLink` か子スコープを使ってください。
-- リンクの `Name` はメイン名で、スプライトリンクのスプライト名は `SubObjectName` です。`SetName(name)` はスプライト名を
-  空にするので、リンクは `SetName(a.Name, a.SubObjectName)` でコピーしてください — それを失った `ContentLink<Object>` は
-  エラーなしでテクスチャをロードします。
-- サブアセットはスプライトだけを名前で参照します。ほかのサブアセット（モデルファイル内のメッシュ）とスプライトアトラスを
-  経由するスプライトは参照できません。
-- 同じファイルが二つの名前でビルドされた場合 — ベースディレクトリと後のパッチの間で移動 — 参照は最後に登録された
-  ディレクトリの名前に解決され、古い名前のリンクは別のコピーをロードします: メモリにコピーが二つあります。
-
-## リポジトリ構成とテスト
-
-| パス | 何か |
+| Resources | ContentLink |
 |---|---|
-| `com.xpTURN.ContentLink/` | パッケージ（`Runtime`、`Editor`、`Tests~/Verify`、`README`、`CHANGELOG`） |
-| `samples/LinkSample/` | パッケージを `file:` で使う Unity 6.6 プロジェクト — `Assets/Content` の下にテクスチャ · スプライトアトラス · プレハブ · シーン · オーディオ |
-| `tests/LinkTests/` | Unity Test Runner プロジェクト: EditMode（ビルダー · 設定 · パッカー · ウィンドウモデル）と PlayMode（寿命 · シーン · パック登録 · アロケーション）のスイート |
-| `tools/run-all-tests.sh` | 全部を実行: dotnet ハーネス → EditMode → PlayMode（`--player` でスタンドアロンプレイヤーの実行を追加） |
-| `tools/build-content.sh` | コマンドラインのコンテンツビルド |
-| `docs/IMP/` | 設計・実装の記録（韓国語） |
-| `.github/` | CI（`workflows/check.yml`）: push と pull request ごとに dotnet ハーネス · `.meta` サイドカー検査 · バージョンマニフェスト検査。Unity のスイートはライセンス済みエディターが必要なのでローカルに留める |
+| `Resources.Load<TextAsset>("Config/boot")` | `scope.Load<TextAsset>("res:Config/boot")` |
+| `Resources.Load<Sprite>("UI/logo")` | `scope.Load<Sprite>("res:UI/logo[logo]")` |
+| `Resources.UnloadAsset(asset)` | なし — スコープが解放 |
+| `Resources.UnloadUnusedAssets()` | `ContentService.SweepResources()` |
 
-`Tests~/Verify` は、文書化された Unity 6.6 API のスタブと Loadable の参照規則を強制する偽エンジンに対してパッケージをコンパイルし、
-寿命・ビルド・パッキングのシナリオを実行します（.NET 8 SDK で `dotnet run`）。Unity のスイートはテスト自身がビルドしたコンテンツ
-ディレクトリに対して、エディターとスタンドアロンプレイヤーで走ります。Unity 6000.6.0f1 で検証済みです。
+## 知っておくこと
 
-```
-tools/run-all-tests.sh                 # ハーネス + EditMode + PlayMode
-tools/run-all-tests.sh --dotnet-only   # ハーネスのみ（数秒）
-tools/run-all-tests.sh --player        # StandaloneOSX プレイヤーでの PlayMode も
-```
+- **メインスレッド専用。** ロード・登録・キャンセルはメインスレッドで。
+- **ビルドひとつにプラットフォームひとつ。** あるプラットフォーム向けにビルドしたコンテンツディレクトリは、別の
+  プラットフォームではロードできないことがあります。
+- **スプライトアトラス** には *Project Settings > Editor > Sprite Packer > Mode* が Sprite Atlas V2 であることが必要です。
+  旧（V1）の `.spriteatlas` ファイルはコンテンツルートの下で拒否されます — V2 に移してください。
+- サブアセットとしてロードできるのは **スプライトだけ** です。モデルファイルの中のメッシュは単独ではロードできません。
+- **シーンは共有されません。** シーンを二度ロードするとインスタンスが二つでき、それぞれ別にアンロードされます。
+- **非アクティブな複製。** 非アクティブで作った複製は、初めて起きるまで何も保持しません。元が先に破棄されうるなら、
+  `Instantiate` の直後に `clone.Scope()` を呼んでください。
+- **参照と名前は同じ枠を使います。** 一方を解放すると、もう一方も解放されます。二つのフィールドを別々に解放したいなら、
+  リンクか子スコープを使ってください。
+- **コンテンツルートと `Resources` フォルダーは離しておいてください。** 両方に入ったファイルは、二つの名前で二度ビルド
+  されます。
+- **コンテンツシーンのロード中に Play Mode を止めないでください** — 6000.6 のエディターは、ContentLink の有無に関係なく
+  その場合にクラッシュすることがあります。
+- **エディターでは `Resources.UnloadAsset` は何もアンロードしません。** `res:` アセットの解放はプレイヤーで確かめてください。
 
 ## ライセンス
 

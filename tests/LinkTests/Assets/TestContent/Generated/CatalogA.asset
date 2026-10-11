@@ -51,3 +51,4 @@ MonoBehaviour:
     sub: 
   m_Scenes: []
   m_SourceRoot: Assets/TestContent/A
+  m_NameStyle: 0

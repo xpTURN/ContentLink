@@ -14,6 +14,7 @@ namespace xpTURN.ContentLink.Editor
     public sealed class ContentBuildWindow : EditorWindow
     {
         const string k_Menu = "Window/ContentLink/Build Window";
+        const string k_SubFolderControl = "ContentLink.CategorySubFolder.";
 
         ContentBuildWindowModel m_Model;
         Vector2 m_Scroll;
@@ -24,6 +25,8 @@ namespace xpTURN.ContentLink.Editor
 
         static GUIStyle s_Bad;
         static GUIStyle Bad => s_Bad ??= new GUIStyle(EditorStyles.label) { normal = { textColor = new Color(1f, 0.5f, 0.5f) } };
+        static GUIStyle s_Placeholder;
+        static GUIStyle Placeholder => s_Placeholder ??= new GUIStyle(EditorStyles.label) { normal = { textColor = Color.gray }, hover = { textColor = Color.gray } };
 
         [MenuItem(k_Menu)]
         public static void Open() => GetWindow<ContentBuildWindow>("Content Build");
@@ -71,6 +74,10 @@ namespace xpTURN.ContentLink.Editor
 
         void DrawProfiles()
         {
+            var version = EditorGUILayout.DelayedTextField(
+                new GUIContent("Content version", "Stamped into every packed index this project builds — the value a base and its locales are paired by. \"\" = none. -contentlink.contentVersion overrides it for one CLI run."),
+                m_Model.Settings.ContentVersion);
+            if (version != m_Model.Settings.ContentVersion) m_Model.SetContentVersion(version);
             EditorGUILayout.LabelField("Profiles", EditorStyles.boldLabel);
             var profiles = m_Model.Profiles;
             var names = new string[profiles.Count];
@@ -113,6 +120,9 @@ namespace xpTURN.ContentLink.Editor
             var name = EditorGUILayout.DelayedTextField("Name", p.Name);
             if (name != p.Name) Notice(m_Model.Rename(name));
             PathField("Source root", p.SourceRoot, v => m_Model.Edit(x => x.SourceRoot = v, "Source root"));
+            var style = (ContentNameStyle)EditorGUILayout.EnumPopup(
+                new GUIContent("Name style", "PathWithoutExtension: Icons/sword · PathWithExtension: Icons/sword.png — the names change on the next catalog update"), p.NameStyle);
+            if (style != p.NameStyle) m_Model.Edit(x => x.NameStyle = style, "Name style");
             PathField("Output path", p.OutputPath, v => m_Model.Edit(x => x.OutputPath = v, "Output path"));
             var target = (BuildTarget)EditorGUILayout.EnumPopup(new GUIContent("Target", "NoTarget: whatever target is active. Anything else refuses to build on another target."), p.Target);
             if (target != p.Target) m_Model.Edit(x => x.Target = target, "Target");
@@ -141,8 +151,8 @@ namespace xpTURN.ContentLink.Editor
         /// <summary>Paths inside the project are kept relative, as the settings file expects them; anything else stays absolute.</summary>
         static string ProjectRelative(string absolute)
         {
-            var project = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/').TrimEnd('/') + "/";
-            var full = Path.GetFullPath(absolute).Replace('\\', '/');
+            var project = ContentLinkEditorUtility.Composed(Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/').TrimEnd('/') + "/");
+            var full = ContentLinkEditorUtility.Composed(Path.GetFullPath(absolute).Replace('\\', '/'));   // the panel and the project may spell a folder in either form
             return full.StartsWith(project, StringComparison.Ordinal) ? full.Substring(project.Length).TrimEnd('/') : full;
         }
 
@@ -153,13 +163,25 @@ namespace xpTURN.ContentLink.Editor
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Categories  (sub-folder of the source root · \"\" = whole root · build order is by catalog path)", EditorStyles.boldLabel);
             var catalogs = p.Catalogs ?? Array.Empty<ContentBuildSettings.CatalogEntry>();
+            var errors = m_Model.CategoryErrors;
+            if (catalogs.Length > 0)
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUI.LabelField(EditorGUILayout.GetControlRect(false), "Sub-folder", EditorStyles.miniLabel);
+                    EditorGUI.LabelField(EditorGUILayout.GetControlRect(false, GUILayout.Width(200)), "Catalog", EditorStyles.miniLabel);
+                    GUILayoutUtility.GetRect(GUIContent.none, GUI.skin.button, GUILayout.Width(22));
+                }
             for (int i = 0; i < catalogs.Length; ++i)
             {
                 int index = i;
                 var entry = catalogs[i];
                 using (new EditorGUILayout.HorizontalScope())
                 {
+                    var control = k_SubFolderControl + index;
+                    GUI.SetNextControlName(control);
                     var sub = EditorGUILayout.DelayedTextField(entry.SubFolder ?? "");
+                    if (string.IsNullOrEmpty(entry.SubFolder) && Event.current.type == EventType.Repaint && GUI.GetNameOfFocusedControl() != control)
+                        GUI.Label(GUILayoutUtility.GetLastRect(), "(whole root)", Placeholder);
                     if (sub != entry.SubFolder) m_Model.Edit(x => x.Catalogs[index].SubFolder = ContentBuildSettings.NormalizeSubFolder(sub), "Category sub-folder");
                     var current = entry.Catalog.isSet ? entry.Catalog.asset : null;
                     var picked = (ContentCatalog)EditorGUILayout.ObjectField(current, typeof(ContentCatalog), false, GUILayout.Width(200));
@@ -172,6 +194,8 @@ namespace xpTURN.ContentLink.Editor
                 }
                 if (!entry.Catalog.isSet)
                     EditorGUILayout.LabelField(" ", $"created on the first build at {entry.CreateAt}", EditorStyles.miniLabel);
+                foreach (var (row, error) in errors)
+                    if (row == index) EditorGUILayout.HelpBox(error, MessageType.Error);
             }
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -244,8 +268,9 @@ namespace xpTURN.ContentLink.Editor
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    bool ok = ContentBuildWindowModel.IsResolved(list[i]);
-                    EditorGUILayout.LabelField(ok ? list[i] : list[i] + "   (not found — the build fails)", ok ? EditorStyles.label : Bad);
+                    bool empty = string.IsNullOrEmpty(list[i]);   // skipped by validation and the run alike
+                    bool ok = empty || ContentBuildWindowModel.IsResolved(list[i]);
+                    EditorGUILayout.LabelField(empty ? "(empty — skipped)" : ok ? list[i] : list[i] + "   (not found — the build fails)", ok ? EditorStyles.label : Bad);
                     using (new EditorGUI.DisabledScope(i == 0))
                         if (GUILayout.Button("▲", GUILayout.Width(22))) { m_Model.MovePostProcessor(i, -1); GUIUtility.ExitGUI(); }
                     using (new EditorGUI.DisabledScope(i == list.Length - 1))
@@ -273,7 +298,9 @@ namespace xpTURN.ContentLink.Editor
         void DrawMessages()
         {
             EditorGUILayout.Space();
-            foreach (var e in m_Model.Errors) EditorGUILayout.HelpBox(e, MessageType.Error);
+            foreach (var e in m_Model.ProfileErrors) EditorGUILayout.HelpBox(e, MessageType.Error);
+            int categoryErrors = m_Model.Errors.Count - m_Model.ProfileErrors.Count;
+            if (categoryErrors > 0) EditorGUILayout.HelpBox($"{categoryErrors} category error{(categoryErrors == 1 ? "" : "s")} — see the rows above", MessageType.Error);
             foreach (var n in m_Model.Notes) EditorGUILayout.HelpBox(n, MessageType.Info);
             if (!string.IsNullOrEmpty(m_Notice)) EditorGUILayout.HelpBox(m_Notice, m_NoticeType);
         }

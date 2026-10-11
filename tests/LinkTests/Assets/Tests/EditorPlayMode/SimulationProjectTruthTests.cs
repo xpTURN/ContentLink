@@ -197,5 +197,29 @@ namespace xpTURN.ContentLink.Tests.EditorPlay
             Assert.That(ContentLinkSimulation.TryGetPath("Icons/single", out _, out _), Is.False, "the exit must drop the overlay whatever the toggle says");
             ContentLinkSimulation.Enabled = true;
         }
+
+        /// <summary>T30: a profile that names with the extension, served from the project, answers every name its build has.</summary>
+        [Test, Timeout(30000)]
+        public async Task E8_AProfileThatKeepsTheExtension_IsServedWithTheNamesItsBuildHas()
+        {
+            var baked = AssetDatabase.LoadAssetAtPath<ContentCatalog>($"{k_Generated}/CatalogE.asset");
+            Assert.That(baked, Is.Not.Null, "catalog E (the EditMode suite builds it)");
+            var p = Profile("SimE", TestContent.Dir("E"));
+            p.SourceRoot = "Assets/TestContent/E";
+            p.NameStyle = ContentNameStyle.PathWithExtension;
+            p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = $"{k_Generated}/Truth_SimE.asset" } };   // never created: the project answers every name
+            ContentBuildSettings.instance.MarkDirty();
+            int engineBefore = EngineDirectories;
+
+            LogAssert.Expect(LogType.Log, new Regex("is served from the project — profile 'SimE'"));
+            m_Dir = ContentService.RegisterDirectory(TestContent.Dir("E"));
+            Assert.That(EngineDirectories, Is.EqualTo(engineBefore), "the registration must not reach the engine");
+            foreach (var e in baked.Entries) Assert.That(ContentService.Contains(e.name), Is.True, $"'{e.name}' — a name of the build");
+            foreach (var e in baked.Scenes) Assert.That(ContentService.ContainsScene(e.name), Is.True, $"scene '{e.name}' — a name of the build");
+
+            var handle = await ContentService.AcquireAsync<Texture2D>("Icons/sword.png");
+            try { Assert.That(handle.IsValid && AssetDatabase.GetAssetPath(handle.Asset) == "Assets/TestContent/E/Icons/sword.png", Is.True, "served from the project"); }
+            finally { if (handle.IsValid) handle.Dispose(); }
+        }
     }
 }

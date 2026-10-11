@@ -49,6 +49,16 @@ namespace xpTURN.ContentLink.Tests.Editor
             }
         }
 
+        /// <summary>Every file in one archive whose name holds spaces — a plain file name that a URL does not carry as is.</summary>
+        public sealed class SpacedNamePartitioner : IContentArchivePartitioner
+        {
+            public IReadOnlyList<ArchiveGroup> Partition(ArchivePartitionInput input)
+            {
+                var files = new List<string>(input.Files); files.Sort(System.StringComparer.Ordinal);
+                return new[] { new ArchiveGroup($"{input.ProfileName} all {ArchiveNaming.ListHash(files)}{ArchiveNaming.Extension}", files) };
+            }
+        }
+
         readonly List<string> m_TempFolders = new();
 
         [SetUp]
@@ -202,6 +212,36 @@ namespace xpTURN.ContentLink.Tests.Editor
                 Assert.That(ArchivePartitionValidator.Validate(input, groups, errors, null), Is.False, $"'{name}' must be rejected here too");
                 Assert.That(errors, Has.Some.Contains(name));
             }
+        }
+
+        /// <summary>T8: the real packer writes index v2 — target, engine, type trees, layout · every archive's MD5 · the hash of the index's bytes.</summary>
+        [Test]
+        public void K8_IndexV2_RecordsTheTargetEngineAndEveryArchivesMd5()
+        {
+            var p = Profile("PackedV2", "Icons", "Prefabs");
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            p.Compression = ContentBuildSettings.CompressionKind.LZ4;
+            p.CleanBuildCache = true;
+            var r = ContentBuildRunner.Build(p, showProgress: false);
+            Assert.That(r.Succeeded, Is.True, string.Join("\n", r.Errors));
+            var index = ContentArchives.ReadIndex(p.OutputPath);
+            Assert.That(index, Is.Not.Null);
+            Assert.That(index.Version, Is.EqualTo(ContentArchives.IndexVersion));
+            Assert.That(index.Target, Is.EqualTo(EditorUserBuildSettings.activeBuildTarget.ToString()));
+            Assert.That(index.UnityVersion, Is.EqualTo(Application.unityVersion));
+            Assert.That(index.TypeTrees, Is.True);
+            Assert.That(index.CatalogLayout, Is.EqualTo(ContentCatalog.Layout));
+            foreach (var a in index.Archives) Assert.That(a.Md5, Is.EqualTo(Md5Hex(File.ReadAllBytes(Path.Combine(p.OutputPath, a.File)))), a.File);
+            var bytes = File.ReadAllBytes(Path.Combine(p.OutputPath, ContentArchives.IndexFile));
+            Assert.That(File.ReadAllText(Path.Combine(p.OutputPath, ContentArchives.HashFile)), Is.EqualTo(Md5Hex(bytes)), "the hash file is the MD5 of the index's bytes");
+        }
+
+        static string Md5Hex(byte[] bytes)
+        {
+            using var md5 = MD5.Create();
+            var sb = new System.Text.StringBuilder();
+            foreach (var b in md5.ComputeHash(bytes)) sb.Append(b.ToString("x2"));
+            return sb.ToString();
         }
 
         [Test]
@@ -435,6 +475,52 @@ namespace xpTURN.ContentLink.Tests.Editor
             var rt = ContentBuildRunner.Build(p, showProgress: false);
             Assert.That(rt.Succeeded, Is.False);
             Assert.That(rt.Errors, Has.Some.Contains("threw InvalidOperationException: boom"));
+        }
+
+        static void DeleteOutput(string folder)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) AssetDatabase.DeleteAsset(folder);
+            else if (Directory.Exists(folder)) { Directory.Delete(folder, true); if (File.Exists(folder + ".meta")) File.Delete(folder + ".meta"); }
+        }
+
+        [Test]
+        public void K9_AnArchiveNameAUrlDoesNotCarry_FailsThePack_AndNothingIsPacked()
+        {
+            var p = Profile("SpacedNames", "Icons");
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            p.Partitioner = ContentBuildWindowModel.NameOf(typeof(SpacedNamePartitioner));
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("build of 'SpacedNames' failed"));
+                var r = ContentBuildRunner.Build(p, showProgress: false);
+                int archives = Directory.Exists(p.OutputPath) ? Directory.GetFiles(p.OutputPath, "*" + ArchiveNaming.Extension).Length : 0;
+                bool index = File.Exists(Path.Combine(p.OutputPath, ContentArchives.IndexFile));
+                Debug.Log($"[ContentLink.Tests] K9: succeeded={r.Succeeded} archives={archives} index={index} errors={string.Join(" | ", r.Errors)}");
+                Assert.That(r.Succeeded, Is.False, "an archive name with a space must fail the build");
+                Assert.That(r.Errors, Has.Some.Contains("does not carry as is"));
+                Assert.That(archives, Is.EqualTo(0), "no archive is written");
+                Assert.That(index, Is.False, "no index is written");
+            }
+            finally { DeleteOutput(p.OutputPath); }
+        }
+
+        [Test]
+        public void K10_APackedProfileNamedWithACharacterAnArchiveCannotCarry_IsRefusedBeforeAnythingIsWritten()
+        {
+            var p = Profile("Stage#1", "Icons");
+            p.OutputPath = $"{ContentBuildRunnerTests.OutputFolder}/K10";
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            DeleteOutput(p.OutputPath);
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("build of 'Stage#1' failed"));
+                var r = ContentBuildRunner.Build(p, showProgress: false);
+                Debug.Log($"[ContentLink.Tests] K10: succeeded={r.Succeeded} output={Directory.Exists(p.OutputPath)} errors={string.Join(" | ", r.Errors)}");
+                Assert.That(r.Succeeded, Is.False, "a packed profile named after a URL character must not build");
+                Assert.That(r.Errors, Has.Some.Contains("archive name cannot carry"));
+                Assert.That(Directory.Exists(p.OutputPath), Is.False, "nothing is written");
+            }
+            finally { DeleteOutput(p.OutputPath); }
         }
     }
 }

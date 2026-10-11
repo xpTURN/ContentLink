@@ -45,7 +45,7 @@ for root in "${ROOTS[@]}"; do
       git ls-files --error-unmatch "${dir}.meta" >/dev/null 2>&1 || missing+="${dir}/"$'\n'
       dir="$(dirname "${dir}")"
     done
-  done < <(git ls-files -- "${root}")
+  done < <(git -c core.quotepath=off ls-files -- "${root}")
 done
 
 missing="$(printf '%s' "${missing}" | sort -u)"

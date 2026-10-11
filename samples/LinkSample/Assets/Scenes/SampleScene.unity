@@ -454,8 +454,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::xpTURN.ContentLink.Samples.ShowcaseBootstrap
   m_Directory: MainContent
   m_Showcases:
-  - Prefabs/LinkShowcase
-  - Prefabs/RefShowcase
+  - Prefabs/LinkShowcase.prefab
+  - Prefabs/RefShowcase.prefab
   m_Spacing: 9
 --- !u!4 &1843207773
 Transform:

@@ -292,5 +292,237 @@ namespace xpTURN.ContentLink.Tests.Editor
                 AssetDatabase.Refresh();
             }
         }
+
+        /// <summary>
+        /// T27: the catalogs record the profile's name style, and a rewrite says so — once — only when it changes the
+        /// style of a catalog that holds names: the old names stop resolving.
+        /// </summary>
+        [Test]
+        public void R10_TheCatalogsRecordTheProfilesNameStyle_AndOnlyASwitchWarns()
+        {
+            var p = Profile("Style", "");
+            var warnings = new List<string>();
+            void Listen(string message, string stack, LogType type) { if (type == LogType.Warning && message.Contains("the names change from")) warnings.Add(message); }
+            Application.logMessageReceived += Listen;
+            try
+            {
+                var errors = new List<string>();
+                int Update(ContentNameStyle style)
+                {
+                    p.NameStyle = style;
+                    int before = warnings.Count;
+                    Assert.That(ContentBuildRunner.UpdateCatalogs(p, errors), Is.True, string.Join("\n", errors));
+                    return warnings.Count - before;
+                }
+                int first = Update(ContentNameStyle.PathWithoutExtension);
+                int switched = Update(ContentNameStyle.PathWithExtension);
+                var catalog = AssetDatabase.LoadAssetAtPath<ContentCatalog>(p.Catalogs[0].ResolvePath());
+                var recorded = catalog.NameStyle;
+                bool named = false;
+                foreach (var e in catalog.Entries) named |= e.name == "Icons/single.png";
+                int same = Update(ContentNameStyle.PathWithExtension);
+                int back = Update(ContentNameStyle.PathWithoutExtension);
+                Assert.That(recorded, Is.EqualTo(ContentNameStyle.PathWithExtension), "the catalog records the profile's style");
+                Assert.That(named, Is.True, "and its names are made with it");
+                Assert.That(new[] { first, switched, same, back }, Is.EqualTo(new[] { 0, 1, 0, 1 }), "warnings: the first write · a switch · the same style again · back");
+            }
+            finally { Application.logMessageReceived -= Listen; }
+        }
+
+        static string Names(ContentCatalog c)
+        {
+            var names = new List<string>();
+            foreach (var e in c.Entries) names.Add(e.name);
+            return string.Join(",", names);
+        }
+
+        /// <summary>
+        /// Two categories on one catalog stop the build at validation, so the catalog and the previous build stay.
+        /// The engine refuses one root asset given twice as well, but only after the catalog stage has rewritten the catalog
+        /// and the output folder has been cleared (measured on 6000.6).
+        /// </summary>
+        [Test]
+        public void R11_TwoCategoriesOnOneCatalog_AreRefusedBeforeAnythingIsWritten()
+        {
+            var p = Profile("Twice", "Icons", "Prefabs");
+            var first = ContentBuildRunner.Build(p, showProgress: false);
+            Assert.That(first.Succeeded, Is.True, string.Join("\n", first.Errors));
+            var hash = Path.Combine(p.OutputPath, ContentBuildManifest.HashFile);
+            int files = Directory.GetFileSystemEntries(p.OutputPath).Length;
+            var catalog = p.Catalogs[0].Catalog.asset;
+            var before = Names(catalog);
+            Assume.That(before.Length, Is.GreaterThan(0));
+            p.Catalogs[1].Catalog.asset = catalog;   // the second category picks the first one's catalog
+
+            LogAssert.Expect(LogType.Error, new Regex("build of 'Twice' failed"));
+            var second = ContentBuildRunner.Build(p, showProgress: false);
+            Debug.Log($"[ContentLink.Tests] R11: succeeded={second.Succeeded} output {files}→{Directory.GetFileSystemEntries(p.OutputPath).Length} catalog [{before}]→[{Names(catalog)}] errors={string.Join(" | ", second.Errors)}");
+            Assert.That(second.Succeeded, Is.False);
+            Assert.That(second.Errors, Has.Some.Contains("write the same catalog"));
+            Assert.That(Names(catalog), Is.EqualTo(before), "the catalog keeps its names");
+            Assert.That(File.Exists(hash), Is.True, "the previous build's manifest stays");
+            Assert.That(Directory.GetFileSystemEntries(p.OutputPath).Length, Is.EqualTo(files), "the previous output stays");
+        }
+
+        /// <summary>
+        /// The static ContentDirectoryBuilder.Build guards its output folder as the runner does and removes what an archived build
+        /// leaves that the engine does not — archives.json, archives.hash, and an archive's .meta (the engine takes the archive, not its .meta;
+        /// measured on 6000.6) — and nothing else: a folder it shares with other files keeps them. In a folder that is no content build the
+        /// engine would remove another tool's files of its kinds; that folder is refused.
+        /// </summary>
+        [Test]
+        public void R14_TheStaticBuild_RemovesAPackedBuildsLeftovers_KeepsTheRest_AndRefusesAStrangerFolder()
+        {
+            var p = Profile("LegacyOver", "");
+            p.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            var r = ContentBuildRunner.Build(p, showProgress: false);
+            Assert.That(r.Succeeded, Is.True, string.Join("\n", r.Errors));
+            Assume.That(File.Exists(Path.Combine(p.OutputPath, ContentArchives.IndexFile)), Is.True);
+            var archives = Directory.GetFiles(p.OutputPath, "*.archive");
+            Assume.That(archives.Length, Is.GreaterThan(0));
+            Assume.That(File.Exists(archives[0] + ".meta"), Is.True, "the runner refreshed the imported output");
+            var keep = Path.Combine(p.OutputPath, "keep.txt");
+            var audio = Path.Combine(p.OutputPath, "Audio");
+            File.WriteAllText(keep, "another tool's file");
+            Directory.CreateDirectory(audio);
+            File.WriteAllText(Path.Combine(audio, "bank.bytes"), "another tool's folder");
+
+            var catalog = $"{k_Generated}/Legacy_{System.Guid.NewGuid():N}.asset";
+            m_TempCatalogs.Add(catalog);
+            ContentDirectoryBuilder.SourceRoot = RootA;
+            ContentDirectoryBuilder.CatalogPath = catalog;
+            ContentDirectoryBuilder.OutputPath = p.OutputPath;
+            try
+            {
+                var report = ContentDirectoryBuilder.Build();
+                Assert.That(report, Is.Not.Null);
+                Assert.That(report.summary.result, Is.EqualTo(UnityEditor.Build.Reporting.BuildResult.Succeeded));
+                Assert.That(File.Exists(Path.Combine(p.OutputPath, ContentArchives.IndexFile)), Is.False, "the packed build's index goes first");
+                Assert.That(File.Exists(Path.Combine(p.OutputPath, ContentArchives.HashFile)), Is.False, "… and its hash");
+                foreach (var a in archives)
+                {
+                    Assert.That(File.Exists(a), Is.False, "the archive is gone");
+                    Assert.That(File.Exists(a + ".meta"), Is.False, "… with its .meta — the next refresh has nothing to warn of");
+                }
+                Assert.That(File.Exists(keep), Is.True, "another tool's file stays, as it always did");
+                Assert.That(File.Exists(Path.Combine(audio, "bank.bytes")), Is.True, "… and its folder");
+            }
+            finally
+            {
+                File.Delete(keep);
+                if (File.Exists(keep + ".meta")) File.Delete(keep + ".meta");
+                Directory.Delete(audio, true);
+                if (File.Exists(audio + ".meta")) File.Delete(audio + ".meta");
+            }
+
+            var stranger = $"{OutputFolder}/LegacyStranger";
+            Directory.CreateDirectory(stranger);
+            File.WriteAllText(Path.Combine(stranger, "keep.txt"), "not a content build");
+            File.WriteAllText(Path.Combine(stranger, "mine.archive"), "another tool's archive");
+            ContentDirectoryBuilder.OutputPath = stranger;
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("refusing to clear it"));
+                Assert.That(ContentDirectoryBuilder.Build(), Is.Null, "refused");
+                Assert.That(File.Exists(Path.Combine(stranger, "keep.txt")), Is.True);
+                Assert.That(File.Exists(Path.Combine(stranger, "mine.archive")), Is.True, "the engine never ran in it");
+            }
+            finally
+            {
+                Directory.Delete(stranger, true);
+                if (File.Exists(stranger + ".meta")) File.Delete(stranger + ".meta");
+            }
+        }
+
+        /// <summary>
+        /// The clear keeps the marker for the engine to write anew in place — but the engine cannot write a read-only one and
+        /// fails the build ('Failed to write …BuildManifestHash.txt' — measured on 6000.6), so such a marker goes with the rest.
+        /// Windows cannot delete a read-only file either; the clear names it there.
+        /// </summary>
+        [Test]
+        public void R15_AReadOnlyMarker_GoesWithTheClear_AndTheBuildSucceeds()
+        {
+            Assume.That(Application.platform, Is.Not.EqualTo(RuntimePlatform.WindowsEditor));
+            var p = Profile("ReadOnlyMarker", "");
+            var first = ContentBuildRunner.Build(p, showProgress: false);
+            Assert.That(first.Succeeded, Is.True, string.Join("\n", first.Errors));
+            var marker = Path.Combine(p.OutputPath, ContentBuildManifest.HashFile);
+            File.SetAttributes(marker, FileAttributes.ReadOnly);
+            Assume.That((File.GetAttributes(marker) & FileAttributes.ReadOnly) != 0, Is.True);
+            try
+            {
+                var second = ContentBuildRunner.Build(p, showProgress: false);
+                Assert.That(second.Succeeded, Is.True, string.Join("\n", second.Errors));
+                Assert.That((File.GetAttributes(marker) & FileAttributes.ReadOnly) == 0, Is.True, "the engine wrote a new marker");
+            }
+            finally
+            {
+                if (File.Exists(marker)) File.SetAttributes(marker, FileAttributes.Normal);
+            }
+        }
+
+        /// <summary>A catalogs-only update refuses one catalog picked for two categories of a profile, and writes nothing.</summary>
+        [Test]
+        public void R12a_ACatalogsOnlyUpdate_RefusesOneCatalogPickedTwice()
+        {
+            var p = Profile("PickedTwice", "Icons", "Prefabs");
+            var errors = new List<string>();
+            Assert.That(ContentBuildRunner.UpdateCatalogs(p, errors), Is.True, string.Join("\n", errors));
+            var catalog = p.Catalogs[0].Catalog.asset;
+            var before = Names(catalog);
+            Assume.That(before.Length, Is.GreaterThan(0));
+
+            p.Catalogs[1].Catalog.asset = catalog;
+            errors.Clear();
+            var paths = new List<string>();
+            bool ok = ContentBuildRunner.UpdateCatalogs(p, errors, paths);
+            Debug.Log($"[ContentLink.Tests] R12a: ok={ok} paths={paths.Count} catalog [{before}]→[{Names(catalog)}] errors={string.Join(" | ", errors)}");
+            Assert.That(ok, Is.False);
+            Assert.That(errors, Has.Some.Contains("write the same catalog"));
+            Assert.That(paths, Is.Empty);
+            Assert.That(Names(catalog), Is.EqualTo(before), "the catalog keeps its names");
+        }
+
+        /// <summary>Another profile's category whose CreateAt names the catalog in another case is refused — the AssetDatabase would find the same asset — and nothing is written.</summary>
+        [Test]
+        public void R12b_ACatalogsOnlyUpdate_RefusesAnotherProfilesCategoryOnTheCatalog_InAnotherCase()
+        {
+            var p = Profile("CaseBase", "Icons");
+            var errors = new List<string>();
+            Assert.That(ContentBuildRunner.UpdateCatalogs(p, errors), Is.True, string.Join("\n", errors));
+            var catalog = p.Catalogs[0].Catalog.asset;
+            var before = Names(catalog);
+            Assume.That(before.Length, Is.GreaterThan(0));
+
+            var q = Profile("CaseOther", "Prefabs");
+            var path = AssetDatabase.GetAssetPath(catalog);
+            q.Catalogs[0].CreateAt = Path.GetDirectoryName(path).Replace('\\', '/') + "/" + Path.GetFileNameWithoutExtension(path).ToUpperInvariant() + ".asset";
+            Assume.That(AssetDatabase.LoadAssetAtPath<ContentCatalog>(q.Catalogs[0].CreateAt), Is.SameAs(catalog), "the AssetDatabase finds the catalog by the other case");
+            errors.Clear();
+            bool ok = ContentBuildRunner.UpdateCatalogs(q, errors);
+            Debug.Log($"[ContentLink.Tests] R12b: ok={ok} createAt={q.Catalogs[0].CreateAt} catalog [{before}]→[{Names(catalog)}] errors={string.Join(" | ", errors)}");
+            Assert.That(ok, Is.False);
+            Assert.That(errors, Has.Some.Contains("also written by profile 'CaseBase'"));
+            Assert.That(Names(catalog), Is.EqualTo(before), "the catalog keeps its names");
+        }
+
+        /// <summary>A category whose picked catalog was deleted and which has no path to create one at is refused by validation, and the window cannot build.</summary>
+        [Test]
+        public void R13_ACategoryWhoseCatalogWasDeleted_AndHasNoPath_IsRefusedByValidation()
+        {
+            var p = Profile("Gone", "Icons");
+            var errors = new List<string>();
+            Assert.That(ContentBuildRunner.UpdateCatalogs(p, errors), Is.True, string.Join("\n", errors));
+            var path = p.Catalogs[0].ResolvePath();
+            p.Catalogs[0].CreateAt = "";   // a category made by picking a catalog
+            Assert.That(ContentBuildSettings.instance.Validate(p), Is.Empty, "a picked catalog with no CreateAt is a catalog");
+            AssetDatabase.DeleteAsset(path);
+            var model = new ContentBuildWindowModel();
+            model.Select(p.Name);
+            var validation = ContentBuildSettings.instance.Validate(p);
+            Debug.Log($"[ContentLink.Tests] R13: resolve='{p.Catalogs[0].ResolvePath()}' canBuild={model.CanBuild} errors={string.Join(" | ", validation)}");
+            Assert.That(validation, Has.Some.Contains("has no catalog"));
+            Assert.That(model.CanBuild, Is.False);
+        }
     }
 }

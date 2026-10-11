@@ -1,9 +1,9 @@
 {
   "name": "com.xpturn.contentlink",
   "displayName": "xpTURN.ContentLink",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "unity": "6000.6",
-  "description": "Scope-owned asset loading for Unity 6.6 content directories. Assets are loaded by name and owned by a GameObject, scene or explicit scope, so a forgotten release cannot leak forever. Includes serialized links, owned instances, content scenes, a build pipeline (profiles, window, split archives, CLI) and a no-build editor simulation.",
+  "description": "Scope-owned asset loading for Unity 6.6 content directories. Assets are loaded by name and owned by a GameObject, scene or explicit scope, so a forgotten release cannot leak forever. Includes serialized links, owned instances, content scenes, a build pipeline (profiles, window, split archives, CLI), downloads from a CDN into a verified cache, and a no-build editor simulation.",
   "license": "Apache-2.0",
   "documentationUrl": "https://github.com/xpTURN/ContentLink/blob/main/README.md",
   "changelogUrl": "https://github.com/xpTURN/ContentLink/blob/main/com.xpTURN.ContentLink/CHANGELOG.md",
@@ -15,6 +15,10 @@
     "loadable",
     "memory leak"
   ],
+  "dependencies": {
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  },
   "author": {
     "name": "xpTURN",
     "email": "xpturn@gmail.com",

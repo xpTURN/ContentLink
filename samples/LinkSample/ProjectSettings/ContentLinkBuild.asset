@@ -16,6 +16,7 @@ MonoBehaviour:
   m_Profiles:
   - Name: Main
     SourceRoot: Assets/Content
+    NameStyle: 1
     OutputPath: Assets/StreamingAssets/MainContent
     Catalogs:
     - Catalog: {fileID: 11400000, guid: a279a4ba8b1f74dbcb1f26db36e79d5e, type: 2}
@@ -29,4 +30,6 @@ MonoBehaviour:
     FailBuildWhenErrorsLogged: 1
     Target: 2
     PostProcessors: []
+    Partitioner: 
   m_ActiveName: Main
+  m_ContentVersion: 

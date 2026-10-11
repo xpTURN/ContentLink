@@ -4,8 +4,8 @@ namespace xpTURN.ContentLink.Samples
 {
     /// <summary>
     /// What a showcase draws once its fields are loaded: two sprites side by side, a quad with the material under them,
-    /// and an audio source playing the clip. A field that did not load is simply missing from the picture, and the log
-    /// line says which one.
+    /// and an audio source playing the clip (LinkShowcase adds a badge above the sprites). A field that did not load is
+    /// simply missing from the picture, and the log line says which one.
     /// </summary>
     static class ShowcaseView
     {
@@ -32,6 +32,12 @@ namespace xpTURN.ContentLink.Samples
             }
 
             Debug.Log($"[LinkSample] {title}: iconA={NameOf(iconA)} iconB={NameOf(iconB)} clip={NameOf(clip)} material={NameOf(material)} · live assets {ContentService.LiveAssetCount}");
+        }
+
+        public static void ShowBadge(Transform root, string title, Sprite badge)
+        {
+            AddSprite(root, "Badge", badge, new Vector3(0f, 4.9f, 0f));
+            Debug.Log($"[LinkSample] {title}: badge={NameOf(badge)} (res: — a Resources folder)");
         }
 
         static void AddSprite(Transform root, string name, Sprite sprite, Vector3 position)

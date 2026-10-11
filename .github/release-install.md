@@ -1,6 +1,7 @@
 ## Install
 
-Unity **6000.6** or later (the `Unity.Loading` content directory API). No other dependencies.
+Unity **6000.6** or later (the `Unity.Loading` content directory API). No other packages — the engine's built-in
+UnityWebRequest and JSONSerialize modules it uses are declared.
 
 *Window > Package Manager > + > Add package from git URL...*
 

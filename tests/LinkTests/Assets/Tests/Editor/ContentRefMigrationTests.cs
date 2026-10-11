@@ -1,6 +1,7 @@
 using System.IO;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.U2D;
 using UnityEngine;
 using UnityEngine.U2D;
 using xpTURN.ContentLink.Editor;
@@ -11,21 +12,16 @@ namespace xpTURN.ContentLink.Tests.Editor
     /// Values carried over from Addressables' AssetReferenceSprite, as the inspector shows them.
     /// Addressables' drawer writes three shapes: a texture GUID + sprite name when a sprite is picked, a texture GUID and no
     /// sprite name when the texture is dropped, and an atlas GUID + sprite name when an Addressable atlas holds the sprite.
-    /// Only the first resolves; the other two are shown with what to do, never rejected. The two fields carry over
-    /// from the class to the struct because both serialize them under the same names.
+    /// The first and the third resolve — the third through the name the build gives every sprite an atlas under a content root
+    /// packs; the second is shown with what to do, never rejected. The two fields carry over from the class to the
+    /// struct because both serialize them under the same names.
     /// </summary>
     [Category("EditorUtility")]
     public class ContentRefMigrationTests
     {
         const string k_RootA = "Assets/TestContent/A";
         const string k_Generated = "Assets/TestContent/Generated";
-
-        // An empty .spriteatlasv2 — the smallest file the SpriteAtlas importer accepts.
-        const string k_EmptyAtlas =
-            "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!612988286 &1\nSpriteAtlasAsset:\n  m_ObjectHideFlags: 0\n" +
-            "  m_CorrespondingSourceObject: {fileID: 0}\n  m_PrefabInstance: {fileID: 0}\n  m_PrefabAsset: {fileID: 0}\n  m_Name: \n" +
-            "  serializedVersion: 2\n  m_MasterAtlas: {fileID: 0}\n  m_ImporterData:\n    packables: []\n  m_IsVariant: 0\n" +
-            "  m_ScriptablePacker: {fileID: 0}\n";
+        const string k_TempFolder = "Assets/TestContent/A/SimTemp";   // gitignored, like the simulation fixtures: the atlas must lie under the root
 
         string m_SourceRoot, m_CatalogPath, m_TempCatalog, m_TempAtlas;
 
@@ -36,7 +32,7 @@ namespace xpTURN.ContentLink.Tests.Editor
             m_CatalogPath = ContentDirectoryBuilder.CatalogPath;
             if (!AssetDatabase.IsValidFolder(k_Generated)) AssetDatabase.CreateFolder("Assets/TestContent", "Generated");
             m_TempCatalog = $"{k_Generated}/MigrationTest_{System.Guid.NewGuid():N}.asset";
-            m_TempAtlas = $"{k_Generated}/MigrationTest_{System.Guid.NewGuid():N}.spriteatlasv2";
+            m_TempAtlas = $"{k_TempFolder}/MigrationAtlas_{System.Guid.NewGuid():N}.spriteatlasv2";
         }
 
         [TearDown]
@@ -52,6 +48,14 @@ namespace xpTURN.ContentLink.Tests.Editor
         [Test]
         public void M1_TheThreeShapesAddressablesWrites()
         {
+            // An atlas that packs the texture, made before the catalog so the catalog names its sprite too
+            if (!AssetDatabase.IsValidFolder(k_TempFolder)) AssetDatabase.CreateFolder(k_RootA, "SimTemp");
+            var packed = new SpriteAtlasAsset();
+            packed.Add(new Object[] { AssetDatabase.LoadAssetAtPath<Texture2D>($"{k_RootA}/Icons/single.png") });
+            SpriteAtlasAsset.Save(packed, m_TempAtlas);
+            AssetDatabase.ImportAsset(m_TempAtlas, ImportAssetOptions.ForceSynchronousImport);
+            Assert.That(AssetDatabase.GetMainAssetTypeAtPath(m_TempAtlas), Is.EqualTo(typeof(SpriteAtlas)), "the fixture did not import as a sprite atlas");
+
             ContentDirectoryBuilder.SourceRoot = k_RootA;
             ContentDirectoryBuilder.CatalogPath = m_TempCatalog;
             Assert.That(ContentDirectoryBuilder.UpdateCatalog(), Is.True);
@@ -66,13 +70,14 @@ namespace xpTURN.ContentLink.Tests.Editor
             Assert.That(ContentLinkEditorUtility.ValidateRef(textureGuid, "", typeof(Sprite), false, out tip), Is.EqualTo(NameStatus.TypeMismatch));
             Assert.That(tip, Does.Contain("pick the sprite itself"));
 
-            // 3 — an Addressable atlas held the sprite: the atlas GUID + the sprite name. Amber: unsupported.
-            File.WriteAllText(m_TempAtlas, k_EmptyAtlas);
-            AssetDatabase.ImportAsset(m_TempAtlas);
-            Assert.That(AssetDatabase.GetMainAssetTypeAtPath(m_TempAtlas), Is.EqualTo(typeof(SpriteAtlas)), "the fixture did not import as a sprite atlas");
+            // 3 — an Addressable atlas held the sprite: the atlas GUID + the sprite name. Resolves through the atlas's name for it.
             var atlasGuid = AssetDatabase.AssetPathToGUID(m_TempAtlas);
-            Assert.That(ContentLinkEditorUtility.ValidateRef(atlasGuid, "single", typeof(Sprite), false, out tip), Is.EqualTo(NameStatus.NotInCatalog));
-            Assert.That(tip, Does.Contain("sprite atlas"), "the atlas answer comes before 'no sub-asset of that name' — the atlas has none either");
+            Assert.That(ContentLinkEditorUtility.ValidateRef(atlasGuid, "single", typeof(Sprite), false, out tip), Is.EqualTo(NameStatus.Ok), tip);
+            Assert.That(ContentLinkEditorUtility.NameForRef(atlasGuid, "single"), Is.EqualTo($"SimTemp/{Path.GetFileNameWithoutExtension(m_TempAtlas)}[single]"));
+            Assert.That(ContentLinkEditorUtility.ResolveRefAsset(atlasGuid, "single"), Is.SameAs(ContentLinkEditorUtility.ResolveRefAsset(textureGuid, "single")),
+                "the atlas's name loads the texture's own sprite");
+            Assert.That(ContentLinkEditorUtility.ValidateRef(atlasGuid, "nope", typeof(Sprite), false, out tip), Is.EqualTo(NameStatus.Missing));
+            Assert.That(tip, Does.Contain("packs no sprite named"), "a sprite name the atlas does not pack is a renamed or removed sprite");
         }
     }
 }

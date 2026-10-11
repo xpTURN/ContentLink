@@ -80,6 +80,7 @@ namespace xpTURN.ContentLink.Editor
 
         void DrawObjectField(Rect rect, SerializedProperty guidProp, SerializedProperty subProp, Type assetType, bool mixed)
         {
+            if (AtlasDrop.Handle(rect, assetType, guidProp, subProp, reference: true)) return;
             var current = mixed ? null : ContentLinkEditorUtility.ResolveRefAsset(guidProp.stringValue, subProp != null ? subProp.stringValue : "");
 
             EditorGUI.BeginChangeCheck();

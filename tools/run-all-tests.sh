@@ -26,10 +26,15 @@
 #   tools/run-all-tests.sh --player        # also run PlayMode in a StandaloneOSX player (builds a player: minutes)
 #   tools/run-all-tests.sh -h | --help
 #
+# One -only option at most. --dotnet-only and --editmode-only stand alone; --unity-only, like no -only option,
+# takes --no-playmode and --player. Any other mix is refused (exit 2), whatever the order.
+#
 # Environment variables:
 #   UNITY_PATH        Override the Unity executable path (default: Hub 6000.6.0f1)
 #
-# Exit code: non-zero if anything fails (CI friendly).
+# Exit code: non-zero if anything fails (CI friendly). A suite that ran no tests fails, and so does a fixture whose
+# one-time teardown failed, an inconclusive test, or a skipped one that is not on the expected list (EXPECTED_SKIPS in
+# the summary below).
 
 set -uo pipefail
 
@@ -53,21 +58,33 @@ RUN_DOTNET=1
 RUN_EDITMODE=1
 RUN_PLAYMODE=1
 RUN_PLAYER=0
+ONLY=""        # the -only option given, if any
+ONLY2=""       # a second one: refused
+MODIFIER=""    # --no-playmode or --player, if given
 
 usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dotnet-only)   RUN_EDITMODE=0; RUN_PLAYMODE=0; RUN_PLAYER=0 ;;
-    --unity-only)    RUN_DOTNET=0 ;;
-    --editmode-only) RUN_DOTNET=0; RUN_PLAYMODE=0; RUN_PLAYER=0 ;;
-    --no-playmode)   RUN_PLAYMODE=0 ;;
-    --player)        RUN_PLAYER=1 ;;
+    --dotnet-only|--unity-only|--editmode-only)
+      if [[ -z "${ONLY}" ]]; then ONLY="$1"; elif [[ "$1" != "${ONLY}" ]]; then ONLY2="$1"; fi ;;
+    --no-playmode)   RUN_PLAYMODE=0; MODIFIER="$1" ;;
+    --player)        RUN_PLAYER=1; MODIFIER="$1" ;;
     -h|--help)       usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
   shift
 done
+# Applied after the loop, so the order of the options does not matter.
+[[ -z "${ONLY2}" ]] || { echo "${ONLY} and ${ONLY2} cannot be combined" >&2; usage; exit 2; }
+if [[ -n "${MODIFIER}" && ( "${ONLY}" == --dotnet-only || "${ONLY}" == --editmode-only ) ]]; then
+  echo "${ONLY} and ${MODIFIER} cannot be combined" >&2; usage; exit 2
+fi
+case "${ONLY}" in
+  --dotnet-only)   RUN_EDITMODE=0; RUN_PLAYMODE=0; RUN_PLAYER=0 ;;
+  --unity-only)    RUN_DOTNET=0 ;;
+  --editmode-only) RUN_DOTNET=0; RUN_PLAYMODE=0; RUN_PLAYER=0 ;;
+esac
 
 # ── Colors (only when writing to a tty) ──────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -179,7 +196,7 @@ print_summary() {
   [[ "${RUN_PLAYER}"   -eq 1 ]] && expected+=("Unity: linktests-player")
 
   EXPECTED_SUITES="$(printf '%s\n' ${expected[@]+"${expected[@]}"})" \
-  RESULTS_DIR="${RESULTS_DIR}" python3 - <<'PY'
+  RESULTS_DIR="${RESULTS_DIR}" DOTNET_RC="${DOTNET_RC}" UNITY_RC="${UNITY_RC}" python3 - <<'PY'
 import glob, os, re, sys
 import xml.etree.ElementTree as ET
 
@@ -195,6 +212,25 @@ RST = "\033[0m"  if tty else ""
 
 rows = []          # (suite, total, passed, failed, skipped)
 failures = []      # (suite, test_fullname)
+unexpected = []    # (suite, test_fullname, result, reason): skipped or inconclusive, not on EXPECTED_SKIPS
+teardown = []      # (suite, fixture_fullname, message): a one-time teardown that failed
+
+# Tests a suite skips on purpose — each says why in its Ignore message. Any other skipped test, and any inconclusive
+# one, fails the run: a broken condition or a missing fixture makes tests skip, and a skipped test proves nothing.
+EXPECTED_SKIPS = {
+    "Unity: linktests-playmode": {   # the editor cannot show these; the player run checks them
+        "xpTURN.ContentLink.Tests.AtlasSpriteTests.AS18_TheAtlasName_LoadsTheSpriteOnThePage",
+        "xpTURN.ContentLink.Tests.ResourcesSourceTests.T22_Release_UnloadsInAPlayer_SameObject_SamePath_TheSwitch",
+        "xpTURN.ContentLink.Tests.ResourcesSourceTests.T23_APrefab_LeavesWithTheSweep",
+        "xpTURN.ContentLink.Tests.ResourcesSourceTests.T28_ASweepKeepsADeferral_AndTheSwitchOffLeavesItToTheSweep",
+    },
+    "Unity: linktests-player": {     # editor-only fixtures leave one ignored test each in a player
+        "xpTURN.ContentLink.Tests.SimulationProbeTests.EditorOnly",
+        "xpTURN.ContentLink.Tests.SimulationProjectTruthTests.EditorOnly",
+        "xpTURN.ContentLink.Tests.SimulationTests.EditorOnly",
+        "xpTURN.ContentLink.Tests.SimulationTruthProbeTests.EditorOnly",
+    },
+}
 
 # Suites the runner said it would produce. Empty when nothing was asked for.
 expected = [x.strip() for x in os.environ.get("EXPECTED_SUITES", "").split("\n") if x.strip()]
@@ -235,6 +271,15 @@ for path in sorted(glob.glob(os.path.join(results_dir, "unity-*.xml"))):
     for tc in root.iter("test-case"):
         if tc.get("result") == "Failed":
             failures.append((suite, tc.get("fullname", tc.get("name", "?"))))
+        elif tc.get("result") in ("Skipped", "Inconclusive"):
+            name = tc.get("fullname", tc.get("name", "?"))
+            if tc.get("result") == "Inconclusive" or name not in EXPECTED_SKIPS.get(suite, ()):   # the list takes skips only
+                unexpected.append((suite, name, tc.get("result"), (tc.findtext("reason/message") or "").strip()))
+    # A fixture whose one-time teardown failed (a leak check) says so on its own suite only: its tests passed, the root
+    # counts and the editor's exit code (0) miss it.
+    for ts in root.iter("test-suite"):
+        if ts.get("result") == "Failed" and ts.get("site") == "TearDown":
+            teardown.append((suite, ts.get("fullname", ts.get("name", "?")), (ts.findtext("failure/message") or "").strip()))
 
 if not rows:
     # Exiting 0 here would call a run that produced nothing a success.
@@ -246,6 +291,14 @@ if not rows:
     print(f"{YEL}No test results were collected.{RST}")
     sys.exit(0)
 
+real_failures = [x for x in failures if not x[1].startswith("<parse")]
+parse_errors  = [x for x in failures if x[1].startswith("<parse")]
+# A suite that ran no tests — none passed, none failed: no test at all (an assembly left out by a define constraint,
+# a filter that matches nothing, a harness that printed its final line and no check) or skips alone. A suite whose
+# result did not parse is reported there instead.
+empty = [r[0] for r in rows if r[2] == 0 and r[3] == 0 and r[0] not in {x[0] for x in parse_errors}]
+bad = set(empty) | {x[0] for x in parse_errors + unexpected + teardown}   # rows that fail the gate besides their FAIL count
+
 # Print the table
 name_w = max(len(r[0]) for r in rows + [("SUITE", 0, 0, 0, 0)])
 def fmt(s, t, p, f, k):
@@ -255,7 +308,7 @@ print("  " + "-" * (name_w + 31))
 tot = pas = fai = ski = 0
 for s, t, p, f, k in rows:
     tot += t; pas += p; fai += f; ski += k
-    color = RED if f > 0 else GRN
+    color = RED if f > 0 or s in bad else GRN
     print(f"{color}{fmt(s, t, p, f, k)}{RST}")
 print("  " + "-" * (name_w + 31))
 print(f"{BLD}{fmt('TOTAL', tot, pas, fai, ski)}{RST}")
@@ -271,25 +324,51 @@ if missing:
         print(f"  {RED}✗{RST} {name}")
 
 # Failure list
-real_failures = [x for x in failures if not x[1].startswith("<parse")]
-parse_errors  = [x for x in failures if x[1].startswith("<parse")]
 if real_failures:
     print()
     print(f"{RED}{BLD}Failed tests ({len(real_failures)}):{RST}")
     for suite, name in real_failures:
         print(f"  {RED}✗{RST} [{suite}] {name}")
+if empty:
+    print()
+    print(f"{RED}{BLD}Suites that ran no tests ({len(empty)}):{RST}")
+    for name in empty:
+        print(f"  {RED}✗{RST} {name}")
+if teardown:
+    print()
+    print(f"{RED}{BLD}Fixtures whose one-time teardown failed ({len(teardown)}):{RST}")
+    for suite, name, msg in teardown:
+        print(f"  {RED}✗{RST} [{suite}] {name} — {msg}")
+if unexpected:
+    print()
+    print(f"{RED}{BLD}Inconclusive, or skipped and not on EXPECTED_SKIPS ({len(unexpected)}):{RST}")
+    for suite, name, result, reason in unexpected:
+        print(f"  {RED}✗{RST} [{suite}] {name} — {result}: {reason}")
 if parse_errors:
     print()
     print(f"{YEL}Result parse warnings:{RST}")
     for suite, msg in parse_errors:
         print(f"  {YEL}![{suite}] {msg}{RST}")
 
+# A runner that exited non-zero although nothing failed in its results (a crash after the results were written, an
+# editor error): the script exits 1 for it, so the last line must not say all passed.
+dotnet_rc, unity_rc = os.environ.get("DOTNET_RC", "0"), os.environ.get("UNITY_RC", "0")   # the harness's exit code · a flag for the Unity runs
+runners = ([f"dotnet exited {dotnet_rc}"] if dotnet_rc not in ("", "0") else []) + (["a Unity run exited non-zero"] if unity_rc not in ("", "0") else [])
+inconclusive = sum(1 for x in unexpected if x[2] == "Inconclusive")
+reasons = fai or parse_errors or missing or empty or unexpected or teardown
+
 print()
-if fai == 0 and not parse_errors and not missing:
+if not reasons and not runners:
     print(f"{GRN}{BLD}✔ All passed ({pas}/{tot}){RST}")
     sys.exit(0)
 else:
     suffix = f", {len(missing)} suite(s) missing" if missing else ""
+    suffix += f", {len(empty)} suite(s) ran no tests" if empty else ""
+    suffix += f", {len(parse_errors)} unreadable result(s)" if parse_errors else ""
+    suffix += f", {len(teardown)} fixture teardown failure(s)" if teardown else ""
+    suffix += f", {inconclusive} inconclusive" if inconclusive else ""
+    suffix += f", {len(unexpected) - inconclusive} unexpected skip(s)" if len(unexpected) > inconclusive else ""
+    suffix += f", but {' · '.join(runners)} with nothing failed in its results — see its log" if not reasons else ""
     print(f"{RED}{BLD}✗ {fai} failed / {tot} total{suffix}{RST}")
     sys.exit(1)
 PY

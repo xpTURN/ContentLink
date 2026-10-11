@@ -160,7 +160,7 @@ namespace xpTURN.ContentLink.Tests
             // A hand-edited or badly merged archives.json: structurally fine, but nothing to mount.
             var folder = Path.Combine(Application.temporaryCachePath, "ContentLinkTests", "EmptyIndex");
             Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, ContentArchives.IndexFile), "{\"Version\":1,\"Profile\":\"P\",\"Compression\":\"LZ4\",\"MaxArchiveMB\":20,\"Archives\":[]}");
+            File.WriteAllText(Path.Combine(folder, ContentArchives.IndexFile), "{\"Version\":2,\"Profile\":\"P\",\"Compression\":\"LZ4\",\"MaxArchiveMB\":20,\"Archives\":[]}");
             try
             {
                 LogAssert.Expect(LogType.Error, new Regex("lists no archives"));
@@ -204,6 +204,45 @@ namespace xpTURN.ContentLink.Tests
             {
                 foreach (var h in ArchiveFileInterface.GetMountedArchives(space)) h.Unmount().Complete();
                 Directory.Delete(folder, true);
+            }
+        }
+
+        [Test, Timeout(60000)]
+        public async Task B7_AnIndexThatNamesAFileOutsideItsFolder_IsRefusedBeforeAnythingMounts()
+        {
+            // An index names files of its own folder: the size check, the mount and the registration would all follow a name
+            // that leaves it. One error says why — not a second one saying the index is missing.
+            if (!File.Exists(Path.Combine(Output("Packed2"), ContentArchives.IndexFile)))
+                Assert.Ignore("Runner/Packed2 is missing — run the EditMode test ContentArchivePackerTests.K2 first");
+            var parent = Path.Combine(Application.temporaryCachePath, "ContentLinkTests", "Outside");
+            var folder = Path.Combine(parent, "pk");
+            if (Directory.Exists(parent)) Directory.Delete(parent, true);
+            Directory.CreateDirectory(folder);
+            foreach (var f in Directory.GetFiles(Output("Packed2"))) if (!f.EndsWith(".meta")) File.Copy(f, Path.Combine(folder, Path.GetFileName(f)));
+            var indexPath = Path.Combine(folder, ContentArchives.IndexFile);
+            var index = JsonUtility.FromJson<ContentArchives.Index>(File.ReadAllText(indexPath));
+            var last = index.Archives[index.Archives.Length - 1];
+            File.Move(Path.Combine(folder, last.File), Path.Combine(parent, "outside.archive"));
+            last.File = "../outside.archive";
+            File.WriteAllText(indexPath, JsonUtility.ToJson(index, true));
+            var space = ContentNamespace.GetOrCreateNamespace(ContentArchives.NamespaceFor(folder));
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("is not an archive name"));
+                int dir = -2; string thrown = "";
+                try { dir = await ContentService.RegisterPackedDirectoryAsync(folder); }
+                catch (System.Exception e) { thrown = e.GetType().Name; Debug.Log($"[ContentLink.Tests] B7: RegisterPackedDirectoryAsync threw {thrown}: {e.Message}"); }
+                int mounted = ArchiveFileInterface.GetMountedArchives(space).Length;
+                Debug.Log($"[ContentLink.Tests] B7: dir={dir} mounted={mounted}");
+                if (dir >= 0) ContentService.UnregisterDirectory(dir, force: true);
+                Assert.That(thrown, Is.Empty, $"an index that names a file outside its folder must be refused, not thrown ({thrown})");
+                Assert.That(dir, Is.EqualTo(-1), "an index that names a file outside its folder must be refused with -1");
+                Assert.That(mounted, Is.EqualTo(0), "nothing may be mounted");
+            }
+            finally
+            {
+                foreach (var h in ArchiveFileInterface.GetMountedArchives(space)) h.Unmount().Complete();
+                Directory.Delete(parent, true);
             }
         }
     }

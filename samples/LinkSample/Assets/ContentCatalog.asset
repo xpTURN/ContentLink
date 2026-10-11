@@ -13,193 +13,230 @@ MonoBehaviour:
   m_Name: ContentCatalog
   m_EditorClassIdentifier: xpTURN.ContentLink::xpTURN.ContentLink.ContentCatalog
   m_Entries:
-  - name: Atlas/SampleAtlas
+  - name: Atlas/SampleAtlas.spriteatlasv2
     id: {fileID: 100100200, loadable: 1, guid: cf1b2283d28ff47658f9318abda41f71, type: 3}
     guid: cf1b2283d28ff47658f9318abda41f71
     sub: 
-  - name: Atlas/piece_1_1
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_1_1]'
+    id: {fileID: 21300000, loadable: 1, guid: 84ec5288ebff34354ae8f04e5aec8b3a, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_1_1
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_1_2]'
+    id: {fileID: 21300000, loadable: 1, guid: 0f231b3cbaee54ecda26b68c28f07a39, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_1_2
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_1_3]'
+    id: {fileID: 21300000, loadable: 1, guid: 9185f8b0a6ec2474b94d4212208f279b, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_1_3
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_2_1]'
+    id: {fileID: 21300000, loadable: 1, guid: 21ef6bb2766de4b9ab69ed2269b68915, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_2_1
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_2_2]'
+    id: {fileID: 21300000, loadable: 1, guid: 480930fe4247142129cf7992922043e8, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_2_2
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_2_3]'
+    id: {fileID: 21300000, loadable: 1, guid: b112d1c539ce74c1b9272d82362f616d, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_2_3
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_3_1]'
+    id: {fileID: 21300000, loadable: 1, guid: b5389a2ca524540c2a5549de1092242d, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_3_1
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_3_2]'
+    id: {fileID: 21300000, loadable: 1, guid: 3aaeaeef3bcf84f278d5d59f0ebdf376, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_3_2
+  - name: 'Atlas/SampleAtlas.spriteatlasv2[piece_3_3]'
+    id: {fileID: 21300000, loadable: 1, guid: e5eb4729df125412db1800d337129efa, type: 3}
+    guid: cf1b2283d28ff47658f9318abda41f71
+    sub: piece_3_3
+  - name: Atlas/piece_1_1.jpg
     id: {fileID: 2800000, loadable: 1, guid: 84ec5288ebff34354ae8f04e5aec8b3a, type: 3}
     guid: 84ec5288ebff34354ae8f04e5aec8b3a
     sub: 
-  - name: 'Atlas/piece_1_1[piece_1_1]'
+  - name: 'Atlas/piece_1_1.jpg[piece_1_1]'
     id: {fileID: 21300000, loadable: 1, guid: 84ec5288ebff34354ae8f04e5aec8b3a, type: 3}
     guid: 84ec5288ebff34354ae8f04e5aec8b3a
     sub: piece_1_1
-  - name: Atlas/piece_1_2
+  - name: Atlas/piece_1_2.jpg
     id: {fileID: 2800000, loadable: 1, guid: 0f231b3cbaee54ecda26b68c28f07a39, type: 3}
     guid: 0f231b3cbaee54ecda26b68c28f07a39
     sub: 
-  - name: 'Atlas/piece_1_2[piece_1_2]'
+  - name: 'Atlas/piece_1_2.jpg[piece_1_2]'
     id: {fileID: 21300000, loadable: 1, guid: 0f231b3cbaee54ecda26b68c28f07a39, type: 3}
     guid: 0f231b3cbaee54ecda26b68c28f07a39
     sub: piece_1_2
-  - name: Atlas/piece_1_3
+  - name: Atlas/piece_1_3.jpg
     id: {fileID: 2800000, loadable: 1, guid: 9185f8b0a6ec2474b94d4212208f279b, type: 3}
     guid: 9185f8b0a6ec2474b94d4212208f279b
     sub: 
-  - name: 'Atlas/piece_1_3[piece_1_3]'
+  - name: 'Atlas/piece_1_3.jpg[piece_1_3]'
     id: {fileID: 21300000, loadable: 1, guid: 9185f8b0a6ec2474b94d4212208f279b, type: 3}
     guid: 9185f8b0a6ec2474b94d4212208f279b
     sub: piece_1_3
-  - name: Atlas/piece_2_1
+  - name: Atlas/piece_2_1.jpg
     id: {fileID: 2800000, loadable: 1, guid: 21ef6bb2766de4b9ab69ed2269b68915, type: 3}
     guid: 21ef6bb2766de4b9ab69ed2269b68915
     sub: 
-  - name: 'Atlas/piece_2_1[piece_2_1]'
+  - name: 'Atlas/piece_2_1.jpg[piece_2_1]'
     id: {fileID: 21300000, loadable: 1, guid: 21ef6bb2766de4b9ab69ed2269b68915, type: 3}
     guid: 21ef6bb2766de4b9ab69ed2269b68915
     sub: piece_2_1
-  - name: Atlas/piece_2_2
+  - name: Atlas/piece_2_2.jpg
     id: {fileID: 2800000, loadable: 1, guid: 480930fe4247142129cf7992922043e8, type: 3}
     guid: 480930fe4247142129cf7992922043e8
     sub: 
-  - name: 'Atlas/piece_2_2[piece_2_2]'
+  - name: 'Atlas/piece_2_2.jpg[piece_2_2]'
     id: {fileID: 21300000, loadable: 1, guid: 480930fe4247142129cf7992922043e8, type: 3}
     guid: 480930fe4247142129cf7992922043e8
     sub: piece_2_2
-  - name: Atlas/piece_2_3
+  - name: Atlas/piece_2_3.jpg
     id: {fileID: 2800000, loadable: 1, guid: b112d1c539ce74c1b9272d82362f616d, type: 3}
     guid: b112d1c539ce74c1b9272d82362f616d
     sub: 
-  - name: 'Atlas/piece_2_3[piece_2_3]'
+  - name: 'Atlas/piece_2_3.jpg[piece_2_3]'
     id: {fileID: 21300000, loadable: 1, guid: b112d1c539ce74c1b9272d82362f616d, type: 3}
     guid: b112d1c539ce74c1b9272d82362f616d
     sub: piece_2_3
-  - name: Atlas/piece_3_1
+  - name: Atlas/piece_3_1.jpg
     id: {fileID: 2800000, loadable: 1, guid: b5389a2ca524540c2a5549de1092242d, type: 3}
     guid: b5389a2ca524540c2a5549de1092242d
     sub: 
-  - name: 'Atlas/piece_3_1[piece_3_1]'
+  - name: 'Atlas/piece_3_1.jpg[piece_3_1]'
     id: {fileID: 21300000, loadable: 1, guid: b5389a2ca524540c2a5549de1092242d, type: 3}
     guid: b5389a2ca524540c2a5549de1092242d
     sub: piece_3_1
-  - name: Atlas/piece_3_2
+  - name: Atlas/piece_3_2.jpg
     id: {fileID: 2800000, loadable: 1, guid: 3aaeaeef3bcf84f278d5d59f0ebdf376, type: 3}
     guid: 3aaeaeef3bcf84f278d5d59f0ebdf376
     sub: 
-  - name: 'Atlas/piece_3_2[piece_3_2]'
+  - name: 'Atlas/piece_3_2.jpg[piece_3_2]'
     id: {fileID: 21300000, loadable: 1, guid: 3aaeaeef3bcf84f278d5d59f0ebdf376, type: 3}
     guid: 3aaeaeef3bcf84f278d5d59f0ebdf376
     sub: piece_3_2
-  - name: Atlas/piece_3_3
+  - name: Atlas/piece_3_3.jpg
     id: {fileID: 2800000, loadable: 1, guid: e5eb4729df125412db1800d337129efa, type: 3}
     guid: e5eb4729df125412db1800d337129efa
     sub: 
-  - name: 'Atlas/piece_3_3[piece_3_3]'
+  - name: 'Atlas/piece_3_3.jpg[piece_3_3]'
     id: {fileID: 21300000, loadable: 1, guid: e5eb4729df125412db1800d337129efa, type: 3}
     guid: e5eb4729df125412db1800d337129efa
     sub: piece_3_3
-  - name: Bulk/Blobs/blob00
+  - name: Bulk/Blobs/blob00.bytes
     id: {fileID: 4900000, loadable: 1, guid: 7748b89e56ec048fface8d0da317e46d, type: 3}
     guid: 7748b89e56ec048fface8d0da317e46d
     sub: 
-  - name: Bulk/Blobs/blob01
+  - name: Bulk/Blobs/blob01.bytes
     id: {fileID: 4900000, loadable: 1, guid: 306d794c863744252bc9e58470674395, type: 3}
     guid: 306d794c863744252bc9e58470674395
     sub: 
-  - name: Bulk/Blobs/blob02
+  - name: Bulk/Blobs/blob02.bytes
     id: {fileID: 4900000, loadable: 1, guid: 1ee2dad08308949a6934c021abb2b259, type: 3}
     guid: 1ee2dad08308949a6934c021abb2b259
     sub: 
-  - name: Bulk/Blobs/blob03
+  - name: Bulk/Blobs/blob03.bytes
     id: {fileID: 4900000, loadable: 1, guid: c1f0b79263d2b4c0fa40dbfbef471755, type: 3}
     guid: c1f0b79263d2b4c0fa40dbfbef471755
     sub: 
-  - name: Bulk/Blobs/blob04
+  - name: Bulk/Blobs/blob04.bytes
     id: {fileID: 4900000, loadable: 1, guid: 9056fd75bc7ab4dec9d038818070b75a, type: 3}
     guid: 9056fd75bc7ab4dec9d038818070b75a
     sub: 
-  - name: Bulk/Blobs/blob05
+  - name: Bulk/Blobs/blob05.bytes
     id: {fileID: 4900000, loadable: 1, guid: 4362bae2fd46443eeac0b932dadfb7b7, type: 3}
     guid: 4362bae2fd46443eeac0b932dadfb7b7
     sub: 
-  - name: Bulk/Blobs/blob06
+  - name: Bulk/Blobs/blob06.bytes
     id: {fileID: 4900000, loadable: 1, guid: e73aed9078e46485d9b45127e69c854c, type: 3}
     guid: e73aed9078e46485d9b45127e69c854c
     sub: 
-  - name: Bulk/Blobs/blob07
+  - name: Bulk/Blobs/blob07.bytes
     id: {fileID: 4900000, loadable: 1, guid: 21c5847504c10465a807c6894245bf37, type: 3}
     guid: 21c5847504c10465a807c6894245bf37
     sub: 
-  - name: Bulk/Blobs/blob08
+  - name: Bulk/Blobs/blob08.bytes
     id: {fileID: 4900000, loadable: 1, guid: ecae5e4b3fddd4012aa44c8b1c19be42, type: 3}
     guid: ecae5e4b3fddd4012aa44c8b1c19be42
     sub: 
-  - name: Bulk/Blobs/blob09
+  - name: Bulk/Blobs/blob09.bytes
     id: {fileID: 4900000, loadable: 1, guid: 14171b882cb4143ce835914611fcef7c, type: 3}
     guid: 14171b882cb4143ce835914611fcef7c
     sub: 
-  - name: Bulk/Textures/tex00
+  - name: Bulk/Textures/tex00.png
     id: {fileID: 2800000, loadable: 1, guid: 0ede235aedb5a4bb692277feba2ca49c, type: 3}
     guid: 0ede235aedb5a4bb692277feba2ca49c
     sub: 
-  - name: Bulk/Textures/tex01
+  - name: Bulk/Textures/tex01.png
     id: {fileID: 2800000, loadable: 1, guid: d44e2734da41749a48ba15e19503be16, type: 3}
     guid: d44e2734da41749a48ba15e19503be16
     sub: 
-  - name: Bulk/Textures/tex02
+  - name: Bulk/Textures/tex02.png
     id: {fileID: 2800000, loadable: 1, guid: d767b8865c6e04185b2fcd9d8aa31fe4, type: 3}
     guid: d767b8865c6e04185b2fcd9d8aa31fe4
     sub: 
-  - name: Bulk/Textures/tex03
+  - name: Bulk/Textures/tex03.png
     id: {fileID: 2800000, loadable: 1, guid: 2dd6904231f8b4a908b714487b2a6801, type: 3}
     guid: 2dd6904231f8b4a908b714487b2a6801
     sub: 
-  - name: Bulk/Textures/tex04
+  - name: Bulk/Textures/tex04.png
     id: {fileID: 2800000, loadable: 1, guid: 1b75fe005a3f94a87b3f52b43ba68900, type: 3}
     guid: 1b75fe005a3f94a87b3f52b43ba68900
     sub: 
-  - name: Bulk/Textures/tex05
+  - name: Bulk/Textures/tex05.png
     id: {fileID: 2800000, loadable: 1, guid: f90223ea08e6b4cd6a4261064422aba1, type: 3}
     guid: f90223ea08e6b4cd6a4261064422aba1
     sub: 
-  - name: Bulk/Textures/tex06
+  - name: Bulk/Textures/tex06.png
     id: {fileID: 2800000, loadable: 1, guid: 8c04bf8a1764e426baf0e6a4a587f903, type: 3}
     guid: 8c04bf8a1764e426baf0e6a4a587f903
     sub: 
-  - name: Bulk/Textures/tex07
+  - name: Bulk/Textures/tex07.png
     id: {fileID: 2800000, loadable: 1, guid: d4faa848a366a49cdb02cd2af2040d11, type: 3}
     guid: d4faa848a366a49cdb02cd2af2040d11
     sub: 
-  - name: Materials/Test
+  - name: Materials/Test.mat
     id: {fileID: 2100000, loadable: 1, guid: 3ddeed47717d744969a51b1253ce9ca6, type: 2}
     guid: 3ddeed47717d744969a51b1253ce9ca6
     sub: 
-  - name: Prefabs/LinkShowcase
+  - name: Prefabs/LinkShowcase.prefab
     id: {fileID: 6325623288362972695, loadable: 1, guid: 521bc1a5053c4c9a9d4d20f749b09cac, type: 3}
     guid: 521bc1a5053c4c9a9d4d20f749b09cac
     sub: 
-  - name: Prefabs/RefShowcase
+  - name: Prefabs/RefShowcase.prefab
     id: {fileID: 4258943586033787681, loadable: 1, guid: 8cb1329794b244e799cb9b587cb6c36c, type: 3}
     guid: 8cb1329794b244e799cb9b587cb6c36c
     sub: 
-  - name: Textures/Example3DTexture
+  - name: Textures/Example3DTexture.asset
     id: {fileID: 11700000, loadable: 1, guid: 55a77c0295c5e48b2845f36f031517b7, type: 2}
     guid: 55a77c0295c5e48b2845f36f031517b7
     sub: 
-  - name: Textures/sample
+  - name: Textures/sample.jpg
     id: {fileID: 2800000, loadable: 1, guid: 901221460c3a046f8b3dd3c0aa1631a4, type: 3}
     guid: 901221460c3a046f8b3dd3c0aa1631a4
     sub: 
-  - name: Wav/descent
+  - name: Wav/descent.mp3
     id: {fileID: 8300000, loadable: 1, guid: 2cf6474698fdc4ace8dbd2a4dc26441a, type: 3}
     guid: 2cf6474698fdc4ace8dbd2a4dc26441a
     sub: 
-  - name: Wav/reliable
+  - name: Wav/reliable.mp3
     id: {fileID: 8300000, loadable: 1, guid: d6d80682242154296a0f9ab8fe5a34ab, type: 3}
     guid: d6d80682242154296a0f9ab8fe5a34ab
     sub: 
   m_Scenes:
-  - name: Scenes/AssetLinkSamples
+  - name: Scenes/AssetLinkSamples.unity
     id:
       m_SceneGUID: a148dea2887044ad58ce3c0f5ce6c91a
     guid: a148dea2887044ad58ce3c0f5ce6c91a
-  - name: Scenes/Empty1
+  - name: Scenes/Empty1.unity
     id:
       m_SceneGUID: 8c312b7852ed344d281f4e5d059f69b7
     guid: 8c312b7852ed344d281f4e5d059f69b7
-  - name: Scenes/Empty2
+  - name: Scenes/Empty2.unity
     id:
       m_SceneGUID: 6a69d13e01a764f3aa4035c9b9a6934d
     guid: 6a69d13e01a764f3aa4035c9b9a6934d
   m_SourceRoot: Assets/Content
+  m_NameStyle: 1

@@ -28,6 +28,12 @@ namespace xpTURN.ContentLink.Tests
         readonly string[] m_ThreeKeys = { "Icons/single", "Audio/tone", "Materials/Plain" };   // TestContent/A
         readonly string m_FreshA = "Audio/tone";        // not loaded by Warm: a first AcquireAsync opens the slot and starts the engine load
         readonly string m_FreshB = "Materials/Plain";
+        readonly string m_ResTexture = "res:ContentLinkTests/logo";   // Assets/Tests/Resources/ContentLinkTests
+        readonly string m_ResSheet = "res:ContentLinkTests/sheet";
+        readonly string m_ResSub = "s0";
+        readonly string m_ResMissing = "res:ContentLinkTests/nope";
+        readonly string m_ResS0 = "res:ContentLinkTests/sheet[s0]";
+        readonly string m_ResS1 = "res:ContentLinkTests/sheet[s1]";
         readonly System.Threading.CancellationTokenSource m_Cts = new System.Threading.CancellationTokenSource();
 
         int m_DirA = -1;
@@ -128,6 +134,44 @@ namespace xpTURN.ContentLink.Tests
             AssertNoAlloc(() => { m_Holder.icon.RuntimeKeyIsValid(); });
         }
 
+        [Test, Timeout(10000)]
+        public void G1g_ResourcesNames_HitAndFormatQuestions_DoNotAllocate()
+        {
+            // T25: a res: name on a live slot takes the same dictionary hit as a catalog name, and the questions look
+            // at the name's format only — a path no Resources folder has included.
+            var link = new ContentLink<Sprite>(m_ResSheet, m_ResSub);
+            Assert.That(m_Scope.Load<Texture2D>(m_ResTexture), Is.Not.Null);
+            Assert.That(link.Load(m_Scope), Is.Not.Null);
+            try
+            {
+                AssertNoAlloc(() => { m_Scope.Load<Texture2D>(m_ResTexture); });
+                AssertNoAlloc(() => { m_Scope.Contains(m_ResTexture); });
+                AssertNoAlloc(() => { ContentService.Contains(m_ResMissing); });
+                AssertNoAlloc(() => { var _ = link.Asset; });
+                AssertNoAlloc(() => { link.RuntimeKeyIsValid(); });
+            }
+            finally { link.Release(); }
+        }
+
+        [Test, Timeout(10000)]
+        public void G1h_ResourcesRelease_DoesNotAllocate()
+        {
+            // The release of res: slots runs inside Collect — the sheet's texture waits while its sprites hold
+            // the path, then the path's last slot lets everything go — and allocates nothing.
+            AssetHandle<Texture2D> tex = default; AssetHandle<Sprite> s0 = default, s1 = default;
+            System.Action open = () =>
+            {
+                tex = ContentService.Acquire<Texture2D>(m_ResSheet); s0 = ContentService.Acquire<Sprite>(m_ResS0); s1 = ContentService.Acquire<Sprite>(m_ResS1);
+                tex.Dispose(); s0.Dispose(); s1.Dispose();
+            };
+            int live = ContentService.LiveAssetCount;
+            open(); ContentService.Collect();   // JIT and literals, the open and the release
+            open();
+            Assert.That(ContentService.LiveAssetCount, Is.EqualTo(live + 3), "sanity: three res: slots wait for the Collect");
+            Assert.That(() => { ContentService.Collect(); }, Is.Not.AllocatingGCMemory());
+            Assert.That(ContentService.LiveAssetCount, Is.EqualTo(live), "the Collect released them");
+        }
+
         // ───────────── the measurement artifact, kept as a guard for future test authors (records, never fails) ─────────────
 
         static int AllocBlocks(System.Action action)
@@ -196,6 +240,27 @@ namespace xpTURN.ContentLink.Tests
             Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per Instantiate of an owner with {m_ThreeKeys.Length} keys — {blocks} (engine clone included)");
             foreach (var key in m_ThreeKeys) Assert.That(clone.Scope().Contains(key), Is.True, key);
             Assert.That(clone.Scope().Count, Is.EqualTo(m_ThreeKeys.Length));
+            Object.Destroy(clone); Object.Destroy(first); Object.Destroy(original);
+        }
+
+        [Test, Timeout(10000)]
+        public void G3d_FirstScopeOfATouchedInactiveClone_TakesEveryKey_Recorded()
+        {
+            // A clone created inactive takes the original's keys when its scope opens — at the first Scope() when that
+            // comes before its Awake. Asserts the clone holds every key; records the GC.Alloc blocks of that first Scope() (the clone's
+            // scope and its leases), never fails on the count.
+            var original = new GameObject("G3d");
+            var scope = original.Scope();
+            foreach (var key in m_ThreeKeys) Assert.That(scope.Load<Object>(key), Is.Not.Null);
+            original.SetActive(false);
+            var first = Object.Instantiate(original); first.Scope();   // JIT and literals first
+            var clone = Object.Instantiate(original);
+            ContentScope cloneScope = null;
+            int blocks = AllocBlocks(() => cloneScope = clone.Scope());
+            Debug.Log($"[ContentLink.Tests] GC.Alloc blocks per first Scope() of an inactive clone of an owner with {m_ThreeKeys.Length} keys — {blocks}");
+            foreach (var key in m_ThreeKeys) Assert.That(cloneScope.Contains(key), Is.True, key);
+            Assert.That(cloneScope.Count, Is.EqualTo(m_ThreeKeys.Length));
+            clone.SetActive(true); first.SetActive(true);   // a never-activated clone gets no OnDestroy: activated, it releases its keys when destroyed
             Object.Destroy(clone); Object.Destroy(first); Object.Destroy(original);
         }
 

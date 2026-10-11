@@ -48,7 +48,7 @@ MonoBehaviour:
     m_AssetGUID: 84ec5288ebff34354ae8f04e5aec8b3a
     m_SubObjectName: piece_1_1
   iconB:
-    m_AssetGUID: 480930fe4247142129cf7992922043e8
+    m_AssetGUID: cf1b2283d28ff47658f9318abda41f71
     m_SubObjectName: piece_2_2
   clip:
     m_AssetGUID: 2cf6474698fdc4ace8dbd2a4dc26441a

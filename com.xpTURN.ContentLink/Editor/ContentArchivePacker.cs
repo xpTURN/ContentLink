@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEditor.Build.Content;
 using UnityEngine;
 using Profile = xpTURN.ContentLink.Editor.ContentBuildSettings.Profile;
@@ -190,6 +192,26 @@ namespace xpTURN.ContentLink.Editor
         /// Packs the result's flat files in place: writes the archives and archives.json, removes the loose files
         /// (BuildManifestHash.txt stays, as the engine's own archive mode leaves it), and updates the result.
         /// </summary>
+        static string FileMd5(string path)
+        {
+            using var md5 = MD5.Create();
+            using var stream = File.OpenRead(path);
+            return Hex(md5.ComputeHash(stream));
+        }
+
+        static string BytesMd5(byte[] bytes)
+        {
+            using var md5 = MD5.Create();
+            return Hex(md5.ComputeHash(bytes));
+        }
+
+        static string Hex(byte[] hash)
+        {
+            var sb = new StringBuilder(hash.Length * 2);
+            foreach (var b in hash) sb.Append(b.ToString("x2"));
+            return sb.ToString();
+        }
+
         public static bool Pack(ContentBuildResult result, Profile profile, List<string> errors)
         {
             var output = result.OutputPath;
@@ -231,6 +253,11 @@ namespace xpTURN.ContentLink.Editor
             var index = new ContentArchives.Index
             {
                 Profile = profile.Name,
+                Target = result.Target.ToString(),
+                UnityVersion = Application.unityVersion,
+                TypeTrees = !profile.DisableWriteTypeTree,
+                CatalogLayout = ContentCatalog.Layout,
+                ContentVersion = ContentBuildSettings.EffectiveContentVersion ?? "",
                 Compression = profile.Compression.ToString(),
                 MaxArchiveMB = profile.MaxArchiveMB,
                 Archives = new ContentArchives.Archive[groups.Count],
@@ -264,6 +291,7 @@ namespace xpTURN.ContentLink.Editor
                     Bytes = new FileInfo(archivePath).Length,
                     InputBytes = inputBytes,
                     Crc = crc.ToString("X8"),
+                    Md5 = FileMd5(archivePath),
                     Files = files,
                 };
             }
@@ -278,7 +306,11 @@ namespace xpTURN.ContentLink.Editor
                     File.Delete(path);
                     if (File.Exists(path + ".meta")) File.Delete(path + ".meta");
                 }
-            File.WriteAllText(Path.Combine(output, ContentArchives.IndexFile), JsonUtility.ToJson(index, true));
+            // The index as bytes, and the hash of exactly those bytes: a remote check compares the hash file with the cache's
+            // committed index, so neither may depend on how a text writer encodes.
+            var indexBytes = new UTF8Encoding(false).GetBytes(JsonUtility.ToJson(index, true));
+            File.WriteAllBytes(Path.Combine(output, ContentArchives.IndexFile), indexBytes);
+            File.WriteAllText(Path.Combine(output, ContentArchives.HashFile), BytesMd5(indexBytes), new UTF8Encoding(false));
 
             var all = new List<string>();
             foreach (var f in Directory.GetFiles(output, "*", SearchOption.AllDirectories))

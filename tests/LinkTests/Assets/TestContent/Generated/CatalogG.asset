@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08cd40f84d530471689a91006e6d88f8, type: 3}
+  m_Name: CatalogG
+  m_EditorClassIdentifier: xpTURN.ContentLink::xpTURN.ContentLink.ContentCatalog
+  m_Entries:
+  - name: Icons/flag
+    id: {fileID: 2800000, loadable: 1, guid: 2175379b6ce6438d9c5d398c151ea1cc, type: 3}
+    guid: 2175379b6ce6438d9c5d398c151ea1cc
+    sub: 
+  - name: Icons/only
+    id: {fileID: 2800000, loadable: 1, guid: 1fe9f21059f54c8a9c8ce0e37e977304, type: 3}
+    guid: 1fe9f21059f54c8a9c8ce0e37e977304
+    sub: 
+  - name: Icons/shared
+    id: {fileID: 2800000, loadable: 1, guid: a9faa2f06ac54a38a5e054b36020c2e4, type: 3}
+    guid: a9faa2f06ac54a38a5e054b36020c2e4
+    sub: 
+  m_Scenes:
+  - name: Scenes/Title
+    id:
+      m_SceneGUID: 03163546e0a4403ebb8526f0812bfa9a
+    guid: 03163546e0a4403ebb8526f0812bfa9a
+  m_SourceRoot: Assets/TestContent/G
+  m_NameStyle: 0

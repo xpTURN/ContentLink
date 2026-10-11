@@ -14,6 +14,8 @@ class IconView : MonoBehaviour { public ContentLinkSprite icon = new ContentLink
 class SiblingKiller : MonoBehaviour { public GameObject victim; void OnDestroy() { if (victim != null) Object.Destroy(victim); } }
 class SceneHolder : MonoBehaviour { public ContentSceneLink level = new ContentSceneLink(); }
 class RefEnemy : MonoBehaviour { }
+class AwakeToucher : MonoBehaviour { public static System.Action<GameObject> whenAwake; void Awake() => whenAwake?.Invoke(gameObject); }
+class ScopeToucher : MonoBehaviour { public System.Action whenDestroyed; void OnDestroy() => whenDestroyed?.Invoke(); }
 
 // Drawer fixture stand-in: the field shapes that AssetTypeOf has to unwrap
 class LinkFields
@@ -59,6 +61,90 @@ static class Test
         return cat;
     }
     static int Warn(Action a) { int w = Debug.Warnings; a(); return Debug.Warnings - w; }
+    static long SumBytes(ContentArchives.Index index) { long s = 0; foreach (var a in index.Archives) s += a.Bytes; return s; }
+    static string Md5Of(byte[] bytes) { using var md5 = System.Security.Cryptography.MD5.Create(); var sb = new System.Text.StringBuilder(); foreach (var b in md5.ComputeHash(bytes)) sb.Append(b.ToString("x2")); return sb.ToString(); }
+
+    // One fake project with sprite atlases under Assets/Content — the textures, the atlases, a folder packable,
+    // a variant and a texture outside the root
+    sealed class AtlasFx
+    {
+        public const string R = "Assets/Content";
+        public const string Main = R + "/Atlas/MainAtlas.spriteatlasv2", Zone = R + "/Zone/ZoneAtlas.spriteatlasv2", Fold = R + "/FolderAtlas.spriteatlasv2", Var = R + "/Atlas/MainVariant.spriteatlasv2";
+        public const string GMain = "aa000000000000000000000000000001", GZone = "aa000000000000000000000000000002", GFold = "aa000000000000000000000000000003", GVar = "aa000000000000000000000000000004";
+        public const string GA1 = "bb000000000000000000000000000001", GA2 = "bb000000000000000000000000000002", GSheet = "bb000000000000000000000000000003", GO1 = "bb000000000000000000000000000004";
+        public Texture2D a1t, a2t, sheet, o1t;
+        public Sprite a1, a2, s0, s1, o1, f1, f2;
+        public UnityEngine.U2D.SpriteAtlas main, zone, fold, variant;
+        public UnityEditor.DefaultAsset folder;
+    }
+    static AtlasFx AtlasProject()
+    {
+        Init(typeof(ContentService), "ResetStatics");
+        UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+        ContentDirectoryBuilder.ClearOverrides();
+        FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
+        UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+        UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false;
+        var f = new AtlasFx
+        {
+            a1t = new Texture2D { name = "a1" }, a2t = new Texture2D { name = "a2" }, sheet = new Texture2D { name = "sheet" }, o1t = new Texture2D { name = "o1" },
+            a1 = new Sprite { name = "a1" }, a2 = new Sprite { name = "a2" }, s0 = new Sprite { name = "s0" }, s1 = new Sprite { name = "s1" }, o1 = new Sprite { name = "o1" },
+            f1 = new Sprite { name = "f1" }, f2 = new Sprite { name = "f2" }, folder = new UnityEditor.DefaultAsset { name = "Folder" },
+        };
+        const string R = AtlasFx.R;
+        FakeEngine.AddProjectAsset(R + "/Icons/a1.png", f.a1t, f.a1); FakeEngine.SetGuid(R + "/Icons/a1.png", AtlasFx.GA1);
+        FakeEngine.AddProjectAsset(R + "/Icons/a2.png", f.a2t, f.a2); FakeEngine.SetGuid(R + "/Icons/a2.png", AtlasFx.GA2);
+        FakeEngine.AddProjectAsset(R + "/Icons/sheet.png", f.sheet, f.s0, f.s1); FakeEngine.SetGuid(R + "/Icons/sheet.png", AtlasFx.GSheet);
+        FakeEngine.AddProjectAsset("Assets/Outside/o1.png", f.o1t, f.o1); FakeEngine.SetGuid("Assets/Outside/o1.png", AtlasFx.GO1);
+        FakeEngine.AddProjectAsset(R + "/Folder/f1.png", new Texture2D { name = "f1" }, f.f1);
+        FakeEngine.AddProjectAsset(R + "/Folder/Sub/f2.png", new Texture2D { name = "f2" }, f.f2);
+        FakeEngine.AddProjectAsset(R + "/Folder/Sub/plain.png", new Texture2D { name = "plain" });   // a Default texture: no sprite
+        FakeEngine.AddProjectAsset(R + "/Folder", f.folder);
+        f.main = new UnityEngine.U2D.SpriteAtlas { name = "MainAtlas", Packables = new Object[] { f.a1t, f.sheet, f.s0, f.o1t } }; /* s0 twice: through the sheet and by itself */ f.main.Bound.AddRange(new[] { f.a1, f.s0, f.s1, f.o1 });
+        f.zone = new UnityEngine.U2D.SpriteAtlas { name = "ZoneAtlas", Packables = new Object[] { f.a2t } }; f.zone.Bound.Add(f.a2);
+        f.fold = new UnityEngine.U2D.SpriteAtlas { name = "FolderAtlas", Packables = new Object[] { f.folder } }; f.fold.Bound.AddRange(new[] { f.f1, f.f2 });
+        f.variant = new UnityEngine.U2D.SpriteAtlas { name = "MainVariant", isVariant = true, Packables = new Object[] { f.a1t } };
+        FakeEngine.AddProjectAsset(AtlasFx.Main, f.main); FakeEngine.SetGuid(AtlasFx.Main, AtlasFx.GMain);
+        FakeEngine.AddProjectAsset(AtlasFx.Zone, f.zone); FakeEngine.SetGuid(AtlasFx.Zone, AtlasFx.GZone);
+        FakeEngine.AddProjectAsset(AtlasFx.Fold, f.fold); FakeEngine.SetGuid(AtlasFx.Fold, AtlasFx.GFold);
+        FakeEngine.AddProjectAsset(AtlasFx.Var, f.variant); FakeEngine.SetGuid(AtlasFx.Var, AtlasFx.GVar);
+        ContentLinkEditorUtility.Invalidate();
+        return f;
+    }
+    /// <summary>A builder scan of the fake root, its log counts and last messages.</summary>
+    static (bool ok, System.Collections.Generic.List<ContentDirectoryBuilder.Scanned> items, int errors, int warnings, string error, string warning) ScanFx(string root = AtlasFx.R, ContentNameStyle style = ContentNameStyle.PathWithoutExtension)
+    {
+        ContentLinkEditorUtility.Invalidate();
+        int e0 = Debug.Errors, w0 = Debug.Warnings; Debug.LastError = ""; Debug.LastWarning = "";
+        Debug.Verbose = false;
+        var items = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+        bool ok = ContentDirectoryBuilder.Scan(root, style, items);
+        Debug.Verbose = true;
+        return (ok, items, Debug.Errors - e0, Debug.Warnings - w0, Debug.LastError, Debug.LastWarning);
+    }
+    static bool TryEntry(System.Collections.Generic.IEnumerable<ContentDirectoryBuilder.Scanned> items, string name, out ContentCatalog.Entry entry)
+    {
+        foreach (var i in items) if (!i.IsScene && i.Entry.name == name) { entry = i.Entry; return true; }
+        entry = default;
+        return false;
+    }
+    static bool HasEntry(System.Collections.Generic.IEnumerable<ContentDirectoryBuilder.Scanned> items, string name) => TryEntry(items, name, out _);
+    static string AtlasNames(System.Collections.Generic.IEnumerable<ContentDirectoryBuilder.Scanned> items)
+    {
+        var l = new System.Collections.Generic.List<string>();
+        foreach (var i in items)
+            if (!i.IsScene && !string.IsNullOrEmpty(i.Entry.sub) && UnityEditor.AssetDatabase.GUIDToAssetPath(i.Entry.guid).EndsWith(".spriteatlasv2", StringComparison.Ordinal)) l.Add(i.Entry.name);
+        l.Sort(StringComparer.Ordinal);
+        return string.Join(",", l);
+    }
+    static ContentCatalog CatalogFx(string path = "Assets/Cat/atlas.asset")
+    {
+        var cat = ScriptableObject.CreateInstance<ContentCatalog>();
+        ContentDirectoryBuilder.Write(cat, AtlasFx.R, ContentNameStyle.PathWithoutExtension, ScanFx().items);
+        FakeEngine.AddProjectAsset(path, cat);
+        ContentLinkEditorUtility.Invalidate();
+        return cat;
+    }
 
     const int CAT = 1, SWORD = 2, SHIELD = 3, ICON0 = 100;
     const int SC_ONE = 1001, SC_TWO = 1002, SC_ARENA = 1003, SC_LOOSE = 1099;
@@ -68,6 +154,7 @@ static class Test
     class PpA : IContentBuildPostProcess { public void OnBuilt(ContentBuildResult r) => PpCalls.Add("A:" + r.Files.Length + (r.Succeeded ? ":ok" : ":fail")); }
     class PpB : IContentBuildPostProcess { public void OnBuilt(ContentBuildResult r) => PpCalls.Add("B:" + r.Files.Length + (r.Succeeded ? ":ok" : ":fail")); }
     class PpThrow : IContentBuildPostProcess { public void OnBuilt(ContentBuildResult r) => throw new InvalidOperationException("boom"); }
+    class PpRev55 : IContentBuildPostProcess { public static int Seen = -1; public void OnBuilt(ContentBuildResult r) => Seen = ContentBuildSettings.Revision; }   // the revision the run's stages see
 
     // Partitioners that break one rule each — what the packer's validator and purity check must catch
     static bool IsManifest(ArchivePartitionInput i, string f) { foreach (var m in i.ManifestFiles) if (m == f) return true; return false; }
@@ -85,8 +172,33 @@ static class Test
     static bool Has(System.Collections.Generic.IReadOnlyList<Type> list, Type t) { foreach (var x in list) if (x == t) return true; return false; }
     static bool Any(System.Collections.Generic.IReadOnlyList<string> list, string part) { foreach (var x in list) if (x.Contains(part)) return true; return false; }
 
+    // The Resources folders of sections 38 ~ 40 — every case of the naming rule and of the engine's answers.
+    // editor: editor-only folders answer too, as in the editor; a player has none of them.
+    static void ResourcesProject(bool editor)
+    {
+        FakeEngine.ResourcesSeeEditorOnly = editor;
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/logo.png", new Texture2D { name = "logo" }, new Sprite { name = "logo" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/sheet.png", new Texture2D { name = "sheet" }, new Sprite { name = "s0" }, new Sprite { name = "s1" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/Outer/Resources/inner.png", new Texture2D { name = "inner" }, new Sprite { name = "i0" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/twin.prefab", new GameObject { name = "twin" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/twin.png", new Texture2D { name = "twin" });
+        FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/edonly.png", new Texture2D { name = "edonly" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/Editor/inside.png", new Texture2D { name = "inside" });
+        FakeEngine.AddProjectAsset("Assets/Lower/resources/UI/lower.png", new Texture2D { name = "lower" });
+        FakeEngine.AddProjectAsset("Packages/com.x/Resources/UI/pkg.png", new Texture2D { name = "pkg" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/a[1].png", new Texture2D { name = "a[1]" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/br.png", new Texture2D { name = "br" }, new Sprite { name = "b[1]" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/m[1]x.png", new Texture2D { name = "m[1]x" }, new Sprite { name = "s0" });
+        var hero = new GameObject { name = "hero" }; hero.AddComponent<Transform>();   // a real prefab always has its Transform; the stub's GameObject starts empty
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/hero.prefab", hero);
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/level.unity", new UnityEditor.SceneAsset { name = "level" });
+        FakeEngine.AddProjectAsset("Assets/Resources/UI/model.fbx", new Object { name = "model" }, new Object { name = "mesh" });
+        FakeEngine.AddProjectAsset("Assets/Content/Resources/UI/both.png", new Texture2D { name = "both" });
+    }
+
     static void Main()
     {
+        SynchronizationContext.SetSynchronizationContext(new FakeEngine.RecordingContext());   // an exception escaping an async void is recorded, not rethrown on the thread pool after the run
         var asm = typeof(ContentService).Assembly;
         Init(typeof(ContentService), "ResetStatics");
         Init(typeof(ContentScope), "ResetStatics");
@@ -1534,7 +1646,8 @@ static class Test
             var perr = new System.Collections.Generic.List<string>();
             Check(!ContentBuildRunner.PrepareOutput(stray, perr) && System.IO.File.Exists(System.IO.Path.Combine(stray, "keep.txt")) && perr[0].Contains("refusing"),
                   "neither a previous build nor an empty folder → refused and left untouched");
-            Check(ContentBuildRunner.PrepareOutput(two.OutputPath, perr) && System.IO.Directory.GetFileSystemEntries(two.OutputPath).Length == 0, "a previous content build is emptied");
+            Check(ContentBuildRunner.PrepareOutput(two.OutputPath, perr) && System.IO.Directory.GetFileSystemEntries(two.OutputPath).Length == 1 && System.IO.File.Exists(System.IO.Path.Combine(two.OutputPath, ContentBuildManifest.HashFile)),
+                  "a previous content build is emptied but for its marker, which the engine writes anew");
 
             // Warning for assets outside every category; failures; BuildAll stops at the first failure
             settings.Remove("Eng"); settings.Remove("Pk");
@@ -1694,8 +1807,8 @@ static class Test
             Check(!kv.Succeeded && System.IO.File.Exists(Hash(p)), "⑦ a validation failure leaves the output alone (as before)");
             UnityEditor.BuildPipeline.FailNextBuild = true;
             Debug.Verbose = false; var ke = ContentBuildRunner.Build(p, showProgress: false); Debug.Verbose = true;
-            Check(!ke.Succeeded && ke.Errors.Exists(e => e.Contains("Failed")) && !System.IO.File.Exists(Hash(p)),
-                  "⑧ an engine failure is reported as before, and the output had been cleared for it (the clear still precedes the engine)");
+            Check(!ke.Succeeded && ke.Errors.Exists(e => e.Contains("Failed")) && System.IO.File.Exists(Hash(p)) && System.IO.Directory.GetFileSystemEntries(p.OutputPath).Length == 1,
+                  "⑧ an engine failure is reported as before, and the output had been cleared for it but for the marker (the clear still precedes the engine; the folder stays a previous build)");
             UnityEditor.BuildPipeline.FailNextBuild = false;   // never leak into the next scenario
 
             if (System.IO.Directory.Exists(tmp)) System.IO.Directory.Delete(tmp, true);
@@ -1767,14 +1880,23 @@ static class Test
             var r = ContentBuildRunner.Build(pk2, showProgress: false);
             Check(r.Succeeded, "packed build succeeds (" + string.Join(" | ", r.Errors) + ")");
             Check(r.Archives.Length == 2 && r.Archives[0].StartsWith("Pk2.manifest-") && r.Archives[1].StartsWith("Pk2.all-") && r.Archives[1].EndsWith(".archive")
-                  && string.Join(",", r.Files) == "BuildManifestHash.txt," + r.Archives[1] + "," + r.Archives[0] + ",archives.json",
+                  && string.Join(",", r.Files) == "BuildManifestHash.txt," + r.Archives[1] + "," + r.Archives[0] + ",archives.hash,archives.json",
                   $"output: the manifest archive + one 'all' archive + hash file + archives.json — loose files are gone (files={string.Join(",", r.Files)})");
             var index = ContentArchives.ReadIndex(pk2.OutputPath);
-            Check(index != null && index.Version == 1 && index.Profile == "Pk2" && index.Compression == "LZ4" && index.MaxArchiveMB == 20 && index.Archives.Length == 2
+            Check(index != null && index.Version == 2 && index.Profile == "Pk2" && index.Compression == "LZ4" && index.MaxArchiveMB == 20 && index.Archives.Length == 2
                   && index.Archives[0].File == r.Archives[0] && index.Archives[0].Files.Length == 2 && index.Archives[0].Files[0] == "BuildManifestHash.txt" && index.Archives[0].Files[1] == "abc123.json" && index.Archives[0].InputBytes > 100
                   && index.Archives[1].Files.Length == 3 && index.Archives[1].InputBytes == 6
                   && index.Archives[0].Bytes > 0 && index.Archives[0].Crc.Length == 8,
                   "archives.json: the manifest and its hash file first in their own archive (over the limit, exempt), the three cf files in one archive, with size, input size and CRC recorded");
+            {
+                var jsonBytes = System.IO.File.ReadAllBytes(System.IO.Path.Combine(pk2.OutputPath, ContentArchives.IndexFile));
+                var hashText = System.IO.File.ReadAllText(System.IO.Path.Combine(pk2.OutputPath, ContentArchives.HashFile));
+                bool md5s = index.Archives.Length > 0;
+                foreach (var a in index.Archives) md5s &= a.Md5 == Md5Of(System.IO.File.ReadAllBytes(System.IO.Path.Combine(pk2.OutputPath, a.File)));
+                Check(index.Target == "StandaloneOSX" && index.UnityVersion == Application.unityVersion && index.TypeTrees && index.CatalogLayout == ContentCatalog.Layout && index.ContentVersion == ""
+                      && md5s && hashText == Md5Of(jsonBytes),
+                      "T1 index v2: target, engine, type trees, catalog layout, content version · every archive's Md5 is its file's · archives.hash is the MD5 of archives.json's bytes");
+            }
             Check(FakeEngine.Packed.Count == 2 && FakeEngine.Packed[0].compression == CompressionKindForStub.LZ4 && FakeEngine.Packed[0].path.EndsWith(r.Archives[0])
                   && FakeEngine.Packed[1].aliases.Length == 3 && FakeEngine.Packed[1].aliases[0].EndsWith(".cf"),
                   "the packer calls ArchiveAndCompress with the profile's compression and the aliases are relative names");
@@ -1792,6 +1914,11 @@ static class Test
             foreach (var a in again.Archives) same &= first.TryGetValue(a, out var bytes) && SameBytes(bytes, System.IO.File.ReadAllBytes(System.IO.Path.Combine(pk2.OutputPath, a)));
             Check(same && firstIndex == System.IO.File.ReadAllText(System.IO.Path.Combine(pk2.OutputPath, ContentArchives.IndexFile)),
                   "determinism: the second clean build's archive list, bytes and archives.json equal the first");
+            pk2.DisableWriteTypeTree = true;
+            ContentBuildRunner.Build(pk2, showProgress: false);
+            Check(ContentArchives.ReadIndex(pk2.OutputPath)?.TypeTrees == false, "T1 a profile built without type trees says so in its index");
+            pk2.DisableWriteTypeTree = false;
+            ContentBuildRunner.Build(pk2, showProgress: false);
 
             // Runtime: archives.json → mount everything into one namespace → register the mount path as the directory → unregistering unmounts
             var ns = ContentArchives.NamespaceFor(pk2.OutputPath);
@@ -1813,8 +1940,10 @@ static class Test
             string failMsg = "";
             try { ContentService.RegisterPackedDirectoryAsync(pk2.OutputPath).GetAwaiter().GetResult(); } catch (InvalidOperationException e) { failMsg = e.Message; }
             FakeEngine.FailMount.Clear();
-            Check(failMsg.Contains("'" + index.Archives[1].File + "'") && failMsg.Contains("Failed") && Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space).Length == 0 && !FakeEngine.Registered.Contains(mountPath),
-                  $"mount failure: the exception names the archive, mounted ones are unmounted, nothing registered ({failMsg})");
+            int Mounted24(Unity.IO.Archive.ArchiveHandle[] hs) { int n = 0; foreach (var h in hs) if (h.Status == Unity.IO.Archive.ArchiveStatus.Complete) ++n; return n; }
+            var failedLeft = Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space);
+            Check(failMsg.Contains("'" + index.Archives[1].File + "'") && failMsg.Contains("Failed") && failedLeft.Length == 0 && !FakeEngine.Registered.Contains(mountPath),
+                  $"mount failure: the exception names the archive, everything it mounted is unmounted — the failed handle too — and nothing is registered ({failMsg})");
 
             // Missing index or unknown version → -1 and an error log
             var bogus = System.IO.Path.Combine(tmp, "bogus"); System.IO.Directory.CreateDirectory(bogus);
@@ -1823,14 +1952,18 @@ static class Test
             int none = ContentService.RegisterPackedDirectoryAsync(settings.Active.OutputPath).GetAwaiter().GetResult();
             int ver = ContentService.RegisterPackedDirectoryAsync(bogus).GetAwaiter().GetResult();
             Debug.Verbose = true;
-            Check(none == -1 && ver == -1 && Debug.Errors == errBefore + 3 && FakeEngine.Registered.Count == 0, $"missing archives.json or unknown version → -1 and an error log (errors=+{Debug.Errors - errBefore})");
+            Check(none == -1 && ver == -1 && Debug.Errors == errBefore + 2 && FakeEngine.Registered.Count == 0, $"missing archives.json or unknown version → -1 and an error log (errors=+{Debug.Errors - errBefore})");
 
             // Leftover cleanup: ResetStatics unmounts the previous session's archives after unregistering
             ContentService.RegisterPackedDirectoryAsync(pk2.OutputPath).GetAwaiter().GetResult();
-            Check(Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space).Length == 2 && FakeEngine.Registered.Contains(mountPath), "re-register: two mounted, registered");
+            Check(Mounted24(Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space)) == 2 && FakeEngine.Registered.Contains(mountPath), "re-register: two mounted, registered");
+            int logsR24 = Debug.Logs; Debug.Verbose = false;
             Init(typeof(ContentService), "ResetStatics");
-            Check(Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space).Length == 0 && !FakeEngine.Registered.Contains(mountPath),
+            Debug.Verbose = true;
+            string logR24 = Debug.Logs > logsR24 ? Debug.LastLog : "";
+            Check(Mounted24(Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(space)) == 0 && !FakeEngine.Registered.Contains(mountPath),
                   "ResetStatics: releases the previous session's registrations and unmounts the archives in our namespace");
+            Check(logR24.Contains("unmounted 2 archive(s)"), $"ResetStatics reports the archives it unmounted (actual: \"{logR24}\")");
 
             // Partitioner selection and the packer's guards: the profile names the type; the validator and the purity check refuse a bad answer
             Debug.Verbose = false;
@@ -1940,7 +2073,7 @@ static class Test
             var tmp10 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-f10-" + Guid.NewGuid().ToString("N"));
             var dir10 = System.IO.Path.Combine(tmp10, "packed"); System.IO.Directory.CreateDirectory(dir10);
             var index10 = System.IO.File.Exists(dir10) ? "" : System.IO.Path.Combine(dir10, ContentArchives.IndexFile);
-            System.IO.File.WriteAllText(index10, "{\"Version\":1,\"Profile\":\"P\",\"Compression\":\"LZ4\",\"MaxArchiveMB\":20,\"Archives\":[]}");
+            System.IO.File.WriteAllText(index10, "{\"Version\":2,\"Profile\":\"P\",\"Compression\":\"LZ4\",\"MaxArchiveMB\":20,\"Archives\":[]}");
             var ns10 = ContentArchives.NamespaceFor(dir10);
             int Register10(out string ex) { ex = ""; try { return ContentService.RegisterPackedDirectoryAsync(dir10).GetAwaiter().GetResult(); } catch (Exception e) { ex = e.GetType().Name; return -2; } }
 
@@ -1951,14 +2084,14 @@ static class Test
             Check(Debug.Errors == errs10 + 1 && Debug.LastError.Contains(ContentArchives.IndexFile) && Debug.LastError.Contains("lists no archives"), $"② exactly one error, naming the index and saying it lists no archives (actual: errors=+{Debug.Errors - errs10} last=\"{Debug.LastError}\")");
             Check(!FakeEngine.Namespaces.Contains(ns10) && FakeEngine.Mounts.Count == 0 && FakeEngine.Registered.Count == 0, $"③ nothing is left behind: no namespace, no mount, no registration (actual: namespace={FakeEngine.Namespaces.Contains(ns10)} mounts={FakeEngine.Mounts.Count} registered={FakeEngine.Registered.Count})");
             var read10 = ContentArchives.ReadIndex(dir10);
-            Check(read10 != null && read10.Archives.Length == 0, "④ ReadIndex still hands the (empty) index to whoever inspects the folder — the gate is the registration, not the reader (as before)");
+            Check(read10 != null && read10.Archives.Length == 0, "④ ReadIndex still hands the (empty) index to whoever inspects the folder — an empty list is the registration's to refuse, as before (an archive name outside the rule is the reader's — 46)");
 
             // once the index lists an archive, the same directory registers — the refusal left nothing in the way
             var tex10 = new Texture2D { name = "x" }; FakeEngine.AddProjectAsset("Assets/Content/Icons/x.png", tex10); FakeEngine.Assets[FakeEngine.ObjectIdOf[tex10]] = tex10;
             var cat10 = ScriptableObject.CreateInstance<ContentCatalog>();
             cat10.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/x", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(tex10) } });
             const string arch10 = "P.manifest-0000.archive"; System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir10, arch10), new byte[] { 1 });
-            System.IO.File.WriteAllText(index10, JsonUtility.ToJson(new ContentArchives.Index { Profile = "P", Compression = "LZ4", MaxArchiveMB = 20, Archives = new[] { new ContentArchives.Archive { File = arch10, Bytes = 1, InputBytes = 1, Crc = "00000000", Files = new[] { "BuildManifestHash.txt" } } } }));
+            System.IO.File.WriteAllText(index10, JsonUtility.ToJson(new ContentArchives.Index { Profile = "P", Target = "StandaloneOSX", UnityVersion = Application.unityVersion, Compression = "LZ4", MaxArchiveMB = 20, Archives = new[] { new ContentArchives.Archive { File = arch10, Bytes = 1, InputBytes = 1, Crc = "00000000", Md5 = new string('0', 32), Files = new[] { "BuildManifestHash.txt" } } } }));
             var mount10 = "ns:/" + ns10 + "/" + ContentArchives.MountPrefix + "/";
             FakeEngine.Dirs[mount10] = new ScriptableObject[] { cat10 };
             int again10 = Register10(out var exAgain);
@@ -1967,7 +2100,7 @@ static class Test
             FakeEngine.Namespaces.Clear(); FakeEngine.Mounts.Clear();   // the successful registration made the namespace legitimately; start ⑥ clean
 
             // a hand-edited index with no Archives key at all is the same case: the JSON reader keeps the empty default, not null
-            System.IO.File.WriteAllText(index10, "{\"Version\":1,\"Profile\":\"P\"}");
+            System.IO.File.WriteAllText(index10, "{\"Version\":2,\"Profile\":\"P\"}");
             Debug.Verbose = false; int errsKey = Debug.Errors;
             int rcKey = Register10(out var exKey);
             Debug.Verbose = true;
@@ -2009,6 +2142,13 @@ static class Test
             model.SetSelectedActive();
             Check(settings.ActiveName == "Win2" && model.SelectedIsActive && model.Rename("Win3") == null && settings.ActiveName == "Win3",
                   "activate; renaming the active profile updates the active name too");
+            {
+                int savesCv = UnityEditor.ScriptableSingleton<ContentBuildSettings>.SaveCount, undosCv = UnityEditor.Undo.RecordCalls;
+                model.SetContentVersion("4.2"); model.SetContentVersion("4.2");
+                Check(settings.ContentVersion == "4.2" && UnityEditor.ScriptableSingleton<ContentBuildSettings>.SaveCount == savesCv + 1 && UnityEditor.Undo.RecordCalls == undosCv + 1 && UnityEditor.Undo.LastName == "Content version",
+                      "T6 the window's content version: one Undo record and one save for a change, none for the same value");
+                settings.ContentVersion = "";
+            }
 
             // Categories → validation messages
             Check(ContentBuildWindowModel.DefaultCatalogPath(model.Selected, "Icons/Big") == "Assets/ContentCatalogs/Win3.Icons.Big.asset"
@@ -2133,12 +2273,30 @@ static class Test
                                                  "-contentlink.compression", "LZ4", "-contentlink.maxArchiveMB", "5", "-contentlink.cleanBuildCache", "1", "-contentlink.partitioner", "sequential" });
             Debug.Verbose = true;
             var cliIndex = ContentArchives.ReadIndex(System.IO.Path.Combine(tmp, "cli"));
-            Check(rc == 0 && UnityEditor.BuildPipeline.LastParameters.name == "Two" && two.OutputPath == System.IO.Path.Combine(tmp, "cli") && two.Archive == ContentBuildSettings.ArchiveMode.Packed
-                  && two.MaxArchiveMB == 5 && two.CleanBuildCache && two.Partitioner == ContentBuildWindowModel.NameOf(typeof(ContentArchivePacker.SequentialFillPartitioner))
-                  && cliIndex != null && cliIndex.Archives.Length == 2 && cliIndex.Archives[1].File.StartsWith("Two.seq-")
+            var cliParameters = UnityEditor.BuildPipeline.LastParameters;
+            Check(rc == 0 && cliParameters.name == "Two" && cliParameters.outputPath == System.IO.Path.Combine(tmp, "cli") && (cliParameters.options & UnityEditor.BuildContentOptions.CleanBuildCache) != 0
+                  && cliIndex != null && cliIndex.Archives.Length == 2 && cliIndex.Archives[1].File.StartsWith("Two.seq-") && cliIndex.Compression == "LZ4" && cliIndex.MaxArchiveMB == 5
+                  && two.OutputPath == System.IO.Path.Combine(tmp, "two") && two.Archive == ContentBuildSettings.ArchiveMode.None && two.MaxArchiveMB == 20 && !two.CleanBuildCache && two.Partitioner == ""
                   && UnityEditor.ScriptableSingleton<ContentBuildSettings>.SaveCount == saves && Debug.LastLog.StartsWith("[ContentLink CLI] OK · 'Two'"),
-                  $"Run: overrides (output, Packed, LZ4, 5MB, clean, partitioner alias → type name) land on the in-memory profile; the runner builds sequentially; no save; one summary line (rc={rc})");
+                  $"Run: overrides (output, Packed, LZ4, 5MB, clean, partitioner alias → type name) reach the build — the runner builds sequentially — and the profile is put back after it; no save; one summary line (rc={rc})");
             two.Partitioner = "";
+            {
+                Debug.Verbose = false;
+                int rcCv = ContentBuildCLI.Run(new[] { "-contentlink.profile", "Two", "-contentlink.contentVersion", "3.1", "-contentlink.output", System.IO.Path.Combine(tmp, "cli"), "-contentlink.archive", "packed" });
+                var v31 = ContentArchives.ReadIndex(System.IO.Path.Combine(tmp, "cli"));
+                bool stays = settings.ContentVersion == "" && ContentBuildSettings.ContentVersionOverride == null;
+                bool parsed = ContentBuildCLI.Parse(new[] { "-contentlink.profile", "all", "-contentlink.contentVersion", "9" }, out var oAll, out _) && oAll.Profile == ContentBuildCLI.All && oAll.ContentVersion == "9" && oAll.Overrides.Count == 0;
+                int rcOverride = ContentBuildCLI.Run(new[] { "-contentlink.profile", "all", "-contentlink.maxArchiveMB", "5" });
+                Debug.Verbose = true;
+                Check(rcCv == 0 && v31 != null && v31.ContentVersion == "3.1" && stays && parsed && rcOverride == 1,
+                      $"T6 the CLI's contentVersion is run-level: stamped into the index, never saved, accepted with 'all' — where a profile override is refused (rc={rcCv}/{rcOverride})");
+                settings.ContentVersion = "2.0";
+                Debug.Verbose = false;
+                ContentBuildCLI.Run(new[] { "-contentlink.profile", "Two", "-contentlink.output", System.IO.Path.Combine(tmp, "cli"), "-contentlink.archive", "packed" });
+                Debug.Verbose = true;
+                Check(ContentArchives.ReadIndex(System.IO.Path.Combine(tmp, "cli")).ContentVersion == "2.0", "T6 without the CLI value the setting is stamped");
+                settings.ContentVersion = "";
+            }
             Debug.Verbose = false;
             int rcNone = ContentBuildCLI.Run(new string[0]);
             Debug.Verbose = true;
@@ -2575,8 +2733,8 @@ static class Test
             int rcSrc = ContentBuildCLI.Run(new[] { "-contentlink.source", "Assets/Other" }, catalogsOnly: true);
             Debug.Verbose = true;
             cat = UnityEditor.AssetDatabase.LoadAssetAtPath<ContentCatalog>(ContentDirectoryBuilder.DefaultCatalogPath);
-            Check(rcSrc == 0 && cat.Entries.Count == 1 && cat.SourceRoot == "Assets/Other" && settings.Active.SourceRoot == "Assets/Other",
-                  $"source override: the catalog is rewritten with that root; only the in-memory profile changes (rc={rcSrc})");
+            Check(rcSrc == 0 && cat.Entries.Count == 1 && cat.SourceRoot == "Assets/Other" && settings.Active.SourceRoot == "Assets/Content",
+                  $"source override: the catalog is rewritten with that root; the profile is put back after the run (rc={rcSrc})");
             settings.Active.SourceRoot = "Assets/Content";
 
             // all: updates every profile, stops at the first failure, rejects overrides, unknown profile
@@ -3009,6 +3167,12 @@ static class Test
             for (int i = 0; i < 1000; ++i) { ContentService.TryGetName(texRef31, out _); ContentService.TryGetName(sprRef31, out _); }
             long alloc31 = GC.GetAllocatedBytesForCurrentThread() - a31;
             Check(alloc31 == 0, $"a repeated reference lookup through the simulation is a dictionary lookup, with no AssetDatabase call and no allocation ({alloc31} B over 2000 calls)");
+            FakeEngine.Import(new[] { "Assets/Content/Atlas/Saved.spriteatlasv2" });   // an atlas saved during Play: what the simulation read off the files goes, the GUID → names stay
+            for (int i = 0; i < 10; ++i) { ContentService.TryGetName(texRef31, out _); ContentService.TryGetName(sprRef31, out _); }
+            long a31a = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i) { ContentService.TryGetName(texRef31, out _); ContentService.TryGetName(sprRef31, out _); }
+            long alloc31a = GC.GetAllocatedBytesForCurrentThread() - a31a;
+            Check(alloc31a == 0, $"S31a … and after an atlas saved during Play: the scan's names stay — a nested root's references stay off the slow path ({alloc31a} B over 2000 calls)");
 
             Check(!ContentService.TryGetName(new ContentRef<Texture2D>("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), out _) && !ContentService.TryGetName(new ContentRef<Texture2D>(GX), out _)
                   && !ContentService.TryGetName(new ContentRef<Texture2D>(GH), out _) && !ContentService.TryGetSceneName(new ContentSceneRef(GA), out _),
@@ -3022,6 +3186,12 @@ static class Test
             Check(stale31 && ContentService.TryGetName(texRef31, out var n31Moved) && n31Moved == "UI/a" && hMoved31.IsValid && hMoved31.Asset == texA31,
                   "a file moved during Play: the answer is stale until the project change, then the reference resolves to the new name and loads");
             hMoved31.Dispose(); Tick();
+            ContentService.TryGetSceneName(hallRef31, out _);   // asked before the move: the answer is cached
+            FakeEngine.MoveProjectAsset("Assets/Content/Scenes/Hall.unity", "Assets/Content/Levels/Hall.unity");
+            bool staleScene31 = ContentService.TryGetSceneName(hallRef31, out var n31SceneStale) && n31SceneStale == "Scenes/Hall";
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            bool movedScene31 = ContentService.TryGetSceneName(hallRef31, out var n31SceneMoved);
+            Check(staleScene31 && movedScene31 && n31SceneMoved == "Levels/Hall", $"S31b … a scene moved during Play: its reference follows after the project change ({n31SceneStale} → {n31SceneMoved})");
 
             int simDirB31 = ContentService.RegisterDirectory("Build/Content/RefSimB");
             ContentLinkSimulation.Rebuild();   // both roots scanned: b.png has a name under each
@@ -3109,8 +3279,8 @@ static class Test
             Check(V("", "", typeof(Sprite), false, out _) == NameStatus.Empty
                   && V("99999999999999999999999999999999", "", typeof(Sprite), false, out var tip1) == NameStatus.Missing && tip1.Contains("no asset has the GUID"),
                   "1 empty · 2 an unknown GUID → Missing");
-            Check(V(GAT, "s0", typeof(Sprite), false, out var tip3) == NameStatus.NotInCatalog && tip3.Contains("sprite atlas"),
-                  "3 an atlas GUID + a sprite name → NotInCatalog (atlas), not Missing — the atlas has no such sub-asset either, so the order decides");
+            Check(V(GAT, "s0", typeof(Sprite), false, out var tip3) == NameStatus.Missing && tip3.Contains("packs no sprite named"),
+                  $"3 an atlas GUID + a sprite name it does not pack → Missing (IMP015: an atlas names the sprites it packs — this one packs none): {tip3}");
             Check(V(GS, "renamed", typeof(Sprite), false, out var tip4) == NameStatus.Missing && tip4.Contains("renamed"),
                   "4 a sprite name the file does not have → Missing (renamed slice)");
             Check(V(GM, "body", typeof(Sprite), false, out var tip5) == NameStatus.NotInCatalog && tip5.Contains("not a sprite"),
@@ -3354,6 +3524,8278 @@ static class Test
             ContentLinkEditorUtility.Invalidate();
             UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
         }
+
+        Console.WriteLine("35) the stub's AssetDatabase answers like the editor's (measured on 6000.6) — what the editor-side checks stand on");
+        {
+            FakeEngine.ClearProject();
+            var sword35 = new Texture2D { name = "Sword" };
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/Sword.PNG", sword35);
+            static int Find35(string term, string folder) => UnityEditor.AssetDatabase.FindAssets(term, new[] { folder }).Length;
+            Check(Find35("Sword.PNG", "Assets/Content") == 0 && Find35("Icons/Sword", "Assets/Content") == 0 && Find35("sword", "Assets/Content") == 1 && Find35("SWO", "assets/content") == 1,
+                  "T0 FindAssets matches a case-insensitive part of the file name without its extension: a term with an extension or a path piece finds nothing · the folder filter ignores case");
+            Check(UnityEditor.AssetDatabase.LoadMainAssetAtPath("assets/content/icons/sword.png") == sword35 && UnityEditor.AssetDatabase.GetAssetPath(sword35) == "Assets/Content/Icons/Sword.PNG"
+                  && UnityEditor.AssetDatabase.IsValidFolder("assets/content/icons"),
+                  "T0 path lookups ignore case and answer with the path as registered · IsValidFolder ignores case");
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+        }
+
+        Console.WriteLine("36) the editor utility follows a profile edit, a static override, an undo with no window and a rewritten catalog — no manual Invalidate");
+        {
+            const string G36 = "36363636363636363636363636363636";
+            static void Reset36()
+            {
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+                UnityEditor.EditorUtility.DirtyCountForTests = 0;
+                ContentLinkEditorUtility.Invalidate();
+            }
+            // A profile that is not the active one: the static view follows the active profile, so an edit of that one also reaches
+            // the caches through the static root and would hide a cache that misses the revision or the dirty count.
+            static ContentBuildWindowModel NonActive36(string root)
+            {
+                Reset36();
+                FakeEngine.AddProjectAsset(root + "/Sub/x.png", new Texture2D { name = "x" });
+                FakeEngine.SetGuid(root + "/Sub/x.png", G36);
+                var settings = ContentBuildSettings.instance;
+                var p = settings.Add("P36"); p.SourceRoot = root; p.OutputPath = "Build/P36"; settings.MarkDirty();
+                var model = new ContentBuildWindowModel(); model.Select("P36");
+                return model;
+            }
+            static string Ref36() => ContentLinkEditorUtility.NameForRef(G36, "");
+            static bool Has36(string name) => ContentLinkEditorUtility.ResolveAsset(name) != null;
+
+            var model36 = NonActive36("Assets/R36");
+            string n0 = Ref36(); bool pos0 = Has36("Sub/x"), neg0 = Has36("x");      // a positive and a negative answer, both cached
+            model36.Edit(q => q.SourceRoot = "Assets/R36/Sub", "Source root");
+            string n1 = Ref36(); bool pos1 = Has36("Sub/x"), neg1 = Has36("x");
+            Check(n0 == "Sub/x" && n1 == "x", $"T1 the window moves a non-active profile's root: NameForRef '{n0}' → '{n1}'");
+            Check(pos0 && !neg0 && !pos1 && neg1, $"T2 … and ResolveAsset follows: 'Sub/x' {pos0} → {pos1} · 'x' {neg0} → {neg1}");
+
+            Reset36();
+            FakeEngine.AddProjectAsset("Assets/Content/Sub/x.png", new Texture2D { name = "x" }); FakeEngine.SetGuid("Assets/Content/Sub/x.png", G36);
+            string s0 = Ref36(); int rev3 = ContentBuildSettings.Revision;
+            ContentDirectoryBuilder.SourceRoot = "Assets/Content/Sub";               // a session override moves the roots, the revision stays
+            string s1 = Ref36();
+            Check(s0 == "Sub/x" && s1 == "x" && ContentBuildSettings.Revision == rev3, $"T3 a static override of the root, no revision: NameForRef '{s0}' → '{s1}'");
+
+            Reset36();
+            FakeEngine.AddProjectAsset("Assets/Content/Sub/t4first.png", new Texture2D { name = "t4first" });
+            ContentDirectoryBuilder.SourceRoot = "Assets/Content"; ContentDirectoryBuilder.CatalogPath = "Assets/Cat/c36.asset";
+            ContentDirectoryBuilder.UpdateCatalog();
+            UnityEditor.EditorApplication.RaiseProjectChanged();                     // creating a catalog asset raises it (measured)
+            var v0 = ContentLinkEditorUtility.Validate("Sub/t4first", typeof(Texture2D));
+            FakeEngine.AddProjectAsset("Assets/Content/Sub/t4second.png", new Texture2D { name = "t4second" });
+            UnityEditor.EditorApplication.RaiseProjectChanged();                     // so does a new file
+            var v1 = ContentLinkEditorUtility.Validate("Sub/t4second", typeof(Texture2D));
+            ContentDirectoryBuilder.UpdateCatalog();                                 // rewriting the existing catalog raises nothing (measured)
+            var v2 = ContentLinkEditorUtility.Validate("Sub/t4second", typeof(Texture2D));
+            Check(v0 == NameStatus.Ok && v1 == NameStatus.NotInCatalog && v2 == NameStatus.Ok, $"T4 a catalog-only update of an existing catalog is seen: the new name {v1} → {v2}");
+
+            Reset36();
+            var active5 = ContentBuildSettings.instance.Active;
+            int rev50 = ContentBuildSettings.Revision;
+            bool applied5 = ContentBuildCLI.Apply(active5, new System.Collections.Generic.Dictionary<string, string> { ["compression"] = "LZMA" }, out _);
+            int rev51 = ContentBuildSettings.Revision;
+            bool refused5 = !ContentBuildCLI.Apply(active5, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "nope" }, out _);
+            int rev52 = ContentBuildSettings.Revision;
+            Check(applied5 && rev51 > rev50 && refused5 && rev52 > rev51 && UnityEditor.ScriptableSingleton<ContentBuildSettings>.SaveCount == 0,
+                  $"T5 the CLI's in-memory overrides bump the revision — a refused value too — and save nothing: {rev50} → {rev51} → {rev52}");
+
+            Reset36();
+            var settings6 = ContentBuildSettings.instance;
+            var late6 = settings6.Add("Late36"); late6.SourceRoot = "Assets/Late36"; late6.OutputPath = "Build/Late36";
+            late6.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/late36.asset" } }; settings6.MarkDirty();
+            var model6 = new ContentBuildWindowModel(); model6.Select("Late36");
+            bool before6 = Any(model6.Errors, "not a folder");
+            FakeEngine.Folders.Add("Assets/Late36"); UnityEditor.EditorApplication.RaiseProjectChanged();   // the folder appears; nobody edits the settings
+            bool after6 = Any(model6.Errors, "not a folder");
+            Check(before6 && !after6, $"T6 the window's messages follow the project, not only the settings: 'not a folder' {before6} → {after6}");
+
+            var model7 = NonActive36("Assets/R37");
+            string u0 = Ref36();
+            model7.Edit(q => q.SourceRoot = "Assets/R37/Sub", "Source root");
+            string u1 = Ref36();
+            ContentBuildSettings.instance.Find("P36").SourceRoot = "Assets/R37";      // an undo with no window listening: the profile goes back, no revision
+            UnityEditor.EditorUtility.DirtyCountForTests++;                           // what moves instead is the engine's dirty counter (measured)
+            string u2 = Ref36();
+            Check(u0 == "Sub/x" && u1 == "x" && u2 == "Sub/x", $"T7 an undo with no window: NameForRef '{u0}' → '{u1}' → '{u2}'");
+
+            NonActive36("Assets/R38").Edit(q => q.SourceRoot = "Assets/R38/Sub", "Source root");
+            string root71 = ContentLinkEditorUtility.RootFor("Assets/R38/Sub/x.png");
+            ContentBuildSettings.instance.Find("P36").SourceRoot = "Assets/R38";
+            UnityEditor.EditorUtility.DirtyCountForTests++;
+            string root72 = ContentLinkEditorUtility.RootFor("Assets/R38/Sub/x.png");   // the first question after the undo goes to the root list (as the simulation's do)
+            Check(root71 == "Assets/R38/Sub" && root72 == "Assets/R38", $"T7b … and the root list follows it: RootFor '{root71}' → '{root72}'");
+
+            Reset36();
+        }
+
+        Console.WriteLine("37) name style — names with or without the extension: the rule, the root's style, the build, the runtime, the editor's answers");
+        {
+            const string GS37 = "5be5be5be5be5be5be5be5be5be5be5b", GX37 = "37373737373737373737373737373737", GL37 = "1eaf1eaf1eaf1eaf1eaf1eaf1eaf1eaf";
+            const ContentNameStyle With37 = ContentNameStyle.PathWithExtension, Without37 = ContentNameStyle.PathWithoutExtension;
+            bool simulation37 = ContentLinkSimulation.Enabled, anyId37 = FakeEngine.EditorServesAnyId;
+            static void Reset37()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject();
+                FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.Refs.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                ContentLinkSimulation.Drop();
+                UnityEditor.EditorApplication.isPlaying = false;
+                UnityEditor.EditorUtility.DirtyCountForTests = 0;
+                FakeEngine.Folders.Add("Assets/Cat");
+                ContentLinkEditorUtility.Invalidate();
+            }
+            static Texture2D Tex37(string path, string guid = null)
+            {
+                var tex = new Texture2D { name = System.IO.Path.GetFileNameWithoutExtension(path) };
+                FakeEngine.AddProjectAsset(path, tex);
+                if (guid != null) FakeEngine.SetGuid(path, guid);
+                return tex;
+            }
+            // The cases of the name table: a texture and its sprite, a sheet whose extension is in capitals, two dots, a '[' in the
+            // file name, a file without an extension, a scene — and when asked, a prefab with the texture's stem
+            static void Content37(string root, bool withPrefab)
+            {
+                FakeEngine.Folders.Add(root);
+                FakeEngine.AddProjectAsset(root + "/Icons/sword.png", new Texture2D { name = "sword" }, new Sprite { name = "sword" });
+                if (withPrefab) FakeEngine.AddProjectAsset(root + "/Icons/sword.prefab", new GameObject { name = "sword" });
+                FakeEngine.AddProjectAsset(root + "/Icons/Sheet.PNG", new Texture2D { name = "Sheet" }, new Sprite { name = "s0" }, new Sprite { name = "s1" });
+                FakeEngine.SetGuid(root + "/Icons/Sheet.PNG", GS37);
+                FakeEngine.AddProjectAsset(root + "/Icons/a.v2.png", new Texture2D { name = "a.v2" });
+                FakeEngine.AddProjectAsset(root + "/Icons/a[1].png", new Texture2D { name = "a[1]" }, new Sprite { name = "a[1]" });
+                FakeEngine.AddProjectAsset(root + "/Docs/LICENSE", new Object { name = "LICENSE" });
+                FakeEngine.AddProjectAsset(root + "/Scenes/Arena.unity", new UnityEditor.SceneAsset { name = "Arena" });
+            }
+            static string Names37(System.Collections.Generic.List<ContentDirectoryBuilder.Scanned> list)
+            {
+                var names = new System.Collections.Generic.List<string>();
+                foreach (var item in list) names.Add(item.IsScene ? item.Scene.name + "(scene)" : item.Entry.name);
+                names.Sort(StringComparer.Ordinal);
+                return string.Join(", ", names);
+            }
+            static string Sorted37(params string[] names) { Array.Sort(names, StringComparer.Ordinal); return string.Join(", ", names); }
+            static bool Has37(System.Collections.Generic.List<ContentDirectoryBuilder.Scanned> list, string name)
+            {
+                foreach (var item in list) if (!item.IsScene && item.Entry.name == name) return true;
+                return false;
+            }
+            static NameStatus V37(string name) => ContentLinkEditorUtility.Validate(name, typeof(Texture2D));
+            // What a build of the root serves: every object under it, loadable from the directory
+            static void Serve37(string dir, string root)
+            {
+                foreach (var kv in FakeEngine.MainAssetAt)
+                {
+                    if (!kv.Key.StartsWith(root + "/", StringComparison.Ordinal)) continue;
+                    var objs = new System.Collections.Generic.List<Object> { kv.Value };
+                    if (FakeEngine.SubAssetsAt.TryGetValue(kv.Key, out var subs)) objs.AddRange(subs);
+                    foreach (var o in objs) if (FakeEngine.ObjectIdOf.TryGetValue(o, out var id)) { FakeEngine.Assets[id] = o; FakeEngine.IdDir[id] = dir; }
+                }
+            }
+
+            Reset37();
+            FakeEngine.Folders.Add("Assets/S3b"); Tex37("Assets/S3b/x3b.png", GX37);
+            ContentDirectoryBuilder.SourceRoot = "Assets/S3b";                             // a root only the static view owns
+            string before3b = ContentLinkEditorUtility.NameForRef(GX37, ""); bool resolvedBefore3b = ContentLinkEditorUtility.ResolveAsset("x3b.png") != null;
+            int rev3b = ContentBuildSettings.Revision;
+            ContentDirectoryBuilder.NameStyle = With37;                                    // the style alone: no revision, the same root
+            string after3b = ContentLinkEditorUtility.NameForRef(GX37, ""); bool resolvedAfter3b = ContentLinkEditorUtility.ResolveAsset("x3b.png") != null;
+            Check(before3b == "x3b" && after3b == "x3b.png" && !resolvedBefore3b && resolvedAfter3b && ContentBuildSettings.Revision == rev3b,
+                  $"T3b a static override of the style alone is seen: NameForRef '{before3b}' → '{after3b}' · 'x3b.png' resolves {resolvedBefore3b} → {resolvedAfter3b}");
+
+            Reset37(); Content37("Assets/Content", withPrefab: false);
+            var without11 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            var with11 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            bool ok11 = ContentDirectoryBuilder.Scan("Assets/Content", Without37, without11) & ContentDirectoryBuilder.Scan("Assets/Content", With37, with11);
+            Check(ok11 && Names37(without11) == Sorted37("Icons/sword", "Icons/sword[sword]", "Icons/Sheet", "Icons/Sheet[s0]", "Icons/Sheet[s1]", "Icons/a.v2", "Icons/a[1]", "Icons/a[1][a[1]]", "Docs/LICENSE", "Scenes/Arena(scene)")
+                  && Names37(with11) == Sorted37("Icons/sword.png", "Icons/sword.png[sword]", "Icons/Sheet.PNG", "Icons/Sheet.PNG[s0]", "Icons/Sheet.PNG[s1]", "Icons/a.v2.png", "Icons/a[1].png", "Icons/a[1].png[a[1]]", "Docs/LICENSE", "Scenes/Arena.unity(scene)"),
+                  $"T11 the names of each style — without: [{Names37(without11)}] · with: [{Names37(with11)}]");
+
+            Reset37(); Content37("Assets/Content", withPrefab: true);
+            Debug.Verbose = false; int errors12 = Debug.Errors;
+            bool without12 = ContentDirectoryBuilder.Scan("Assets/Content", Without37, new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>());
+            errors12 = Debug.Errors - errors12; Debug.Verbose = true;
+            var with12 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            bool okWith12 = ContentDirectoryBuilder.Scan("Assets/Content", With37, with12);
+            Check(!without12 && errors12 >= 1 && Debug.LastError.Contains("duplicate name 'Icons/sword'") && okWith12 && Has37(with12, "Icons/sword.png") && Has37(with12, "Icons/sword.prefab"),
+                  $"T12 two files of one stem: refused as a duplicate without the extension {!without12} (errors +{errors12}) · both named with it {okWith12}");
+
+            Reset37(); Content37("Assets/T13", withPrefab: true);   // not Assets/Content: 'Main' names that root without the extension, and two styles on one root are refused
+            var settings13 = ContentBuildSettings.instance;
+            var p13 = settings13.Add("P13"); p13.SourceRoot = "Assets/T13"; p13.OutputPath = "Build/P13"; p13.NameStyle = With37;
+            p13.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Icons", CreateAt = "Assets/Cat/p13.icons.asset" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Docs", CreateAt = "Assets/Cat/p13.docs.asset" } };
+            settings13.MarkDirty();
+            var errors13 = new System.Collections.Generic.List<string>(); var paths13 = new System.Collections.Generic.List<string>();
+            bool ok13 = ContentBuildRunner.UpdateCatalogs(p13, errors13, paths13);
+            string styles13 = "";
+            foreach (var path13 in paths13) styles13 += (UnityEditor.AssetDatabase.LoadAssetAtPath<ContentCatalog>(path13)?.NameStyle.ToString() ?? "missing") + " ";
+            var own13 = ScriptableObject.CreateInstance<ContentCatalog>();
+            ContentDirectoryBuilder.Write(own13, "Assets/T13", With37, new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>());
+            var recorded13 = own13.NameStyle;
+            ContentDirectoryBuilder.Write(own13, "Assets/T13", Without37, new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>());
+            Check(ok13 && paths13.Count == 2 && styles13 == "PathWithExtension PathWithExtension " && recorded13 == With37 && own13.NameStyle == Without37,
+                  $"T13 Write records the style it is given ({recorded13} · {own13.NameStyle}) and every catalog of a profile records the profile's: [{styles13.Trim()}] [{string.Join(" | ", errors13)}]");
+
+            Reset37();
+            var settings14 = ContentBuildSettings.instance;
+            FakeEngine.Folders.Add("Assets/Other"); Tex37("Assets/Other/o14.png");
+            var default14 = ContentLinkEditorUtility.NameStyleOf("Assets/Nowhere");
+            ContentDirectoryBuilder.SourceRoot = "Assets/Other"; ContentDirectoryBuilder.CatalogPath = "Assets/Cat/other14.asset"; ContentDirectoryBuilder.NameStyle = With37;
+            ContentDirectoryBuilder.UpdateCatalog(); ContentDirectoryBuilder.ClearOverrides(); ContentLinkEditorUtility.Invalidate();
+            var catalog14 = ContentLinkEditorUtility.NameStyleOf("Assets/Other");          // a catalog recorded With
+            ContentDirectoryBuilder.SourceRoot = "Assets/Other"; ContentDirectoryBuilder.NameStyle = Without37;
+            var static14 = ContentLinkEditorUtility.NameStyleOf("Assets/Other");           // the static view beats the catalog
+            ContentDirectoryBuilder.ClearOverrides();
+            settings14.Active.NameStyle = With37; settings14.MarkDirty();
+            ContentDirectoryBuilder.SourceRoot = "Assets/Third";                           // only the root overridden: the style comes from the active profile
+            var inherited14 = ContentDirectoryBuilder.NameStyle; var inheritedRoot14 = ContentLinkEditorUtility.NameStyleOf("Assets/Third");
+            ContentDirectoryBuilder.ClearOverrides(); settings14.Active.NameStyle = Without37; settings14.MarkDirty();
+            var p14 = settings14.Add("P14"); p14.SourceRoot = "Assets/Other"; p14.NameStyle = Without37; settings14.MarkDirty();
+            var profile14 = ContentLinkEditorUtility.NameStyleOf("Assets/Other");          // a profile beats the catalog
+            ContentDirectoryBuilder.SourceRoot = "Assets/Other"; ContentDirectoryBuilder.NameStyle = With37;
+            var overProfile14 = ContentLinkEditorUtility.NameStyleOf("Assets/Other");      // and a live static override
+            Check(default14 == Without37 && catalog14 == With37 && static14 == Without37 && inherited14 == With37 && inheritedRoot14 == With37 && profile14 == Without37 && overProfile14 == Without37,
+                  $"T14 the four rungs — default {default14} · catalog {catalog14} · static view {static14} (inherited {inherited14} · {inheritedRoot14}) · profile {profile14} · profile over a live static override {overProfile14}");
+
+            Reset37();
+            bool clean14b = !ContentDirectoryBuilder.HasOverrides;
+            ContentDirectoryBuilder.NameStyle = With37;
+            bool flagged14b = ContentDirectoryBuilder.HasOverrides && ContentDirectoryBuilder.NameStyle == With37 && ContentBuildSettings.instance.Active.NameStyle == Without37;
+            ContentDirectoryBuilder.ClearOverrides();
+            bool cleared14b = !ContentDirectoryBuilder.HasOverrides && ContentDirectoryBuilder.NameStyle == ContentBuildSettings.instance.Active.NameStyle;
+            Check(clean14b && flagged14b && cleared14b, $"T14b a static NameStyle override is an override: HasOverrides {flagged14b} · ClearOverrides gives the active profile's style back {cleared14b}");
+
+            Reset37();
+            FakeEngine.Folders.Add("Assets/Multi"); Tex37("Assets/Multi/m15.png");
+            var with15 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>(); ContentDirectoryBuilder.Scan("Assets/Multi", With37, with15);
+            var without15 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>(); ContentDirectoryBuilder.Scan("Assets/Multi", Without37, without15);
+            ContentDirectoryBuilder.Write(ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/multi15b.asset"), "Assets/Multi", Without37, without15);   // written first
+            ContentDirectoryBuilder.Write(ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/multi15a.asset"), "Assets/Multi", With37, with15);         // first by path
+            ContentLinkEditorUtility.Invalidate();
+            var root15 = ContentLinkEditorUtility.NameStyleOf("Assets/Multi");
+            var ownerlessOld15 = V37("m15"); var ownerlessNew15 = V37("m15.png");
+            var settings15 = ContentBuildSettings.instance;
+            var p15 = settings15.Add("P15"); p15.SourceRoot = "Assets/Multi"; p15.NameStyle = Without37; settings15.MarkDirty();
+            var ownedOld15 = V37("m15"); var ownedNew15 = V37("m15.png");
+            Check(root15 == With37 && ownerlessOld15 == NameStatus.Ok && ownerlessNew15 == NameStatus.Ok && ownedOld15 == NameStatus.Ok && ownedNew15 == NameStatus.NotInCatalog,
+                  $"T15 two catalogs of one root in two styles — the root's style is the first by path's ({root15}) · no owner: both indexed ('m15' {ownerlessOld15} · 'm15.png' {ownerlessNew15}) · an owner without the extension: only the other one drops ('m15' {ownedOld15} · 'm15.png' {ownedNew15})");
+
+            Reset37();
+            var settings16 = ContentBuildSettings.instance; FakeEngine.Folders.Add("Assets/Content");
+            var a16 = settings16.Active; a16.NameStyle = Without37;
+            var b16 = settings16.Add("B16"); b16.SourceRoot = "Assets/Content"; b16.OutputPath = "Build/B16"; b16.NameStyle = With37;
+            b16.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/b16.asset" } }; settings16.MarkDirty();
+            bool bothA16 = Any(settings16.Validate(a16), "a root gives an asset one name"), bothB16 = Any(settings16.Validate(b16), "a root gives an asset one name");
+            b16.SourceRoot = "assets/content";
+            bool case16 = Any(settings16.Validate(b16), "a root gives an asset one name");
+            // an undefined value on a root nobody else uses: on a shared root the same-root check would answer instead
+            FakeEngine.Folders.Add("Assets/Alone"); b16.SourceRoot = "Assets/Alone"; b16.NameStyle = (ContentNameStyle)7;
+            bool undefined16 = Any(settings16.Validate(b16), "name style 7 is not a ContentNameStyle");
+            Check(bothA16 && bothB16 && case16 && undefined16,
+                  $"T16 validation — one root, two styles: both profiles refused {bothA16} · {bothB16} · the root typed in another case {case16} · an undefined value {undefined16}");
+
+            Reset37(); Content37("Assets/Content", withPrefab: false);
+            var with17 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            ContentDirectoryBuilder.Scan("Assets/Content", With37, with17);   // the active profile names without the extension
+            Check(Has37(with17, "Icons/sword.png[sword]") && !Has37(with17, "Icons/sword[sword]"),
+                  $"T17 a scan given the style names the sprites in it too, whatever the profile says: [{Names37(with17)}]");
+
+            Reset37();
+            FakeEngine.Folders.Add("Assets/A"); Tex37("Assets/A/Icons/single.png");
+            Content37("Assets/E", withPrefab: true);
+            var listA18 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>(); ContentDirectoryBuilder.Scan("Assets/A", Without37, listA18);
+            var listE18 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>(); ContentDirectoryBuilder.Scan("Assets/E", With37, listE18);
+            var catA18 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/a18.asset"); ContentDirectoryBuilder.Write(catA18, "Assets/A", Without37, listA18);
+            var catE18 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/e18.asset"); ContentDirectoryBuilder.Write(catE18, "Assets/E", With37, listE18);
+            FakeEngine.Dirs["DirA18"] = new ScriptableObject[] { catA18 }; FakeEngine.Dirs["DirE18"] = new ScriptableObject[] { catE18 };
+            Serve37("DirA18", "Assets/A"); Serve37("DirE18", "Assets/E");
+            int dirA18 = ContentService.RegisterDirectory("DirA18"), dirE18 = ContentService.RegisterDirectory("DirE18");
+            var single18 = ContentService.Acquire<Texture2D>("Icons/single");
+            var sword18 = ContentService.Acquire<Texture2D>("Icons/sword.png");
+            var prefab18 = ContentService.Acquire<GameObject>("Icons/sword.prefab");
+            int live18 = ContentService.LiveAssetCount;
+            var byName18 = ContentService.Acquire<Sprite>("Icons/Sheet.PNG[s0]");
+            var byRef18 = ContentService.Acquire(new ContentRef<Sprite>(GS37, "s0"));
+            var scope18 = ContentScope.Root.CreateChild("T18");
+            var byLink18 = new ContentLink<Sprite>("Icons/Sheet.PNG", "s0").Load(scope18);
+            bool oneSlot18 = byName18.IsValid && byRef18.IsValid && byLink18 != null && ReferenceEquals(byName18.Asset, byRef18.Asset) && ReferenceEquals(byName18.Asset, byLink18) && ContentService.LiveAssetCount == live18 + 1;
+            Check(single18.IsValid && sword18.IsValid && prefab18.IsValid && oneSlot18,
+                  $"T18 a directory without the extension and one with it, registered together: 'Icons/single' {single18.IsValid} · 'Icons/sword.png' {sword18.IsValid} · 'Icons/sword.prefab' {prefab18.IsValid} · the sheet's s0 by name, reference and link is one slot {oneSlot18}");
+            scope18.Dispose(); byName18.Dispose(); byRef18.Dispose(); single18.Dispose(); sword18.Dispose(); prefab18.Dispose();
+            ContentService.UnregisterDirectory(dirE18, force: true); ContentService.UnregisterDirectory(dirA18, force: true);
+
+            Reset37();
+            Init(typeof(ContentLinkSimulation), "Install");
+            ContentLinkSimulation.Enabled = true; FakeEngine.EditorServesAnyId = true;
+            var settings19 = ContentBuildSettings.instance;
+            FakeEngine.Folders.Add("Assets/Other");
+            var texX19 = Tex37("Assets/Other/x19.png", GX37); FakeEngine.Assets[FakeEngine.ObjectIdOf[texX19]] = texX19;
+            var p19 = settings19.Add("P19"); p19.SourceRoot = "Assets/Other"; p19.OutputPath = "Build/P19";
+            p19.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/p19.asset" } }; settings19.MarkDirty();
+            var errors19 = new System.Collections.Generic.List<string>();
+            ContentBuildRunner.UpdateCatalogs(p19, errors19);
+            var texY19 = Tex37("Assets/Other/y19.png"); FakeEngine.Assets[FakeEngine.ObjectIdOf[texY19]] = texY19; UnityEditor.EditorApplication.RaiseProjectChanged();   // a new file, not built yet
+            static string Pick19(Object o) => ContentLinkEditorUtility.TryGetNameForAsset(o, out var name, out _) ? name : "refused";
+            // Play served from the project (the editor simulation): which of the two names loads
+            static (bool old, bool fresh) Play19()
+            {
+                UnityEditor.EditorApplication.isPlaying = true; UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.EnteredPlayMode);
+                Debug.Verbose = false;
+                int dir = ContentService.RegisterDirectory("Build/P19");
+                var old = ContentService.Acquire<Texture2D>("x19"); var fresh = ContentService.Acquire<Texture2D>("x19.png");
+                var loaded = (old.IsValid, fresh.IsValid);
+                if (old.IsValid) old.Dispose();
+                if (fresh.IsValid) fresh.Dispose();
+                ContentService.UnregisterDirectory(dir, force: true);
+                Debug.Verbose = true;
+                UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.ExitingPlayMode); UnityEditor.EditorApplication.isPlaying = false;
+                Init(typeof(ContentService), "ResetStatics");
+                return loaded;
+            }
+            p19.NameStyle = With37; settings19.MarkDirty();                                // the switch; the catalog still holds 'x19'
+            string pickX19 = Pick19(texX19), pickY19 = Pick19(texY19);
+            var oldName19 = V37("x19"); var newName19 = V37("x19.png");
+            string refName19 = ContentLinkEditorUtility.NameForRef(GX37, ""); var ref19 = ContentLinkEditorUtility.ValidateRef(GX37, "", typeof(Texture2D), false, out _);
+            var play19 = Play19();
+            Check(pickX19 == "x19.png" && pickY19 == "y19.png" && oldName19 == NameStatus.NotInCatalog && newName19 == NameStatus.NotInCatalog
+                  && refName19 == "x19.png" && ref19 == NameStatus.NotInCatalog && !play19.old && play19.fresh,
+                  $"T19 the switch: picks '{pickX19}' · '{pickY19}' · 'x19' {oldName19} · 'x19.png' {newName19} · the reference '{refName19}' {ref19} · Play 'x19' {play19.old} · 'x19.png' {play19.fresh}");
+            p19.NameStyle = Without37; settings19.MarkDirty();                             // reverted before any rewrite
+            string pickBack19 = Pick19(texX19); var back19 = V37("x19");
+            Check(pickBack19 == "x19" && back19 == NameStatus.Ok, $"T19 … reverted before a rewrite: pick '{pickBack19}' · 'x19' {back19}");
+            p19.NameStyle = With37; settings19.MarkDirty();
+            ContentBuildRunner.UpdateCatalogs(p19, errors19);                              // the catalogs rewritten
+            var oldAfter19 = V37("x19"); var newAfter19 = V37("x19.png"); var freshAfter19 = V37("y19.png");
+            var refAfter19 = ContentLinkEditorUtility.ValidateRef(GX37, "", typeof(Texture2D), false, out _);
+            var playAfter19 = Play19();
+            Check(oldAfter19 == NameStatus.NotInCatalog && newAfter19 == NameStatus.Ok && freshAfter19 == NameStatus.Ok && refAfter19 == NameStatus.Ok && !playAfter19.old && playAfter19.fresh,
+                  $"T19 … the catalogs rewritten: 'x19' {oldAfter19} · 'x19.png' {newAfter19} · 'y19.png' {freshAfter19} · the reference {refAfter19} · Play 'x19' {playAfter19.old} · 'x19.png' {playAfter19.fresh}");
+            ContentLinkSimulation.Drop();
+
+            Reset37(); Content37("Assets/Content", withPrefab: true);
+            var settings20 = ContentBuildSettings.instance; settings20.Active.NameStyle = With37; settings20.MarkDirty();
+            static string R20(string name) => ContentLinkEditorUtility.ResolveAsset(name) is Object o && o != null ? o.name : null;
+            string missed20 = "", leaked20 = "";
+            foreach (var n20 in new[] { "Icons/Sheet.PNG", "Icons/Sheet.PNG[s1]", "Icons/sword.png", "Icons/sword.prefab", "Icons/sword.png[sword]", "Docs/LICENSE", "Icons/a.v2.png", "Icons/a[1].png", "Scenes/Arena.unity" })
+                if (R20(n20) == null) missed20 += n20 + " ";
+            foreach (var n20 in new[] { "Icons/sheet.png", "Icons/Sheet.png", "icons/Sheet.PNG", "Icons/Sheet.PNG[nope]", "Icons/sword", "Icons", "../Content/Icons/sword.png", "/Icons/sword.png", "Icons//sword.png", "Scenes/Arena" })
+                if (R20(n20) != null) leaked20 += n20 + " ";
+            Check(missed20.Length == 0 && leaked20.Length == 0,
+                  $"T20 the path fallback under a root that keeps the extension — should resolve but did not: [{missed20.Trim()}] · should not but did: [{leaked20.Trim()}]");
+
+            Reset37(); Content37("Assets/Content", withPrefab: true);
+            ContentLinkSimulation.Enabled = true;
+            var settings21 = ContentBuildSettings.instance; settings21.Active.NameStyle = With37; settings21.MarkDirty();
+            FakeEngine.AddProjectAsset("Assets/N/Dir/leaf.txt", new Object { name = "leaf" }); FakeEngine.SetGuid("Assets/N/Dir/leaf.txt", GL37);
+            var outer21 = settings21.Add("Outer21"); outer21.SourceRoot = "Assets/N"; outer21.OutputPath = "Build/Outer21"; outer21.NameStyle = Without37;
+            outer21.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/outer21.asset" } };
+            var inner21 = settings21.Add("Inner21"); inner21.SourceRoot = "Assets/N/Dir"; inner21.OutputPath = "Build/Inner21"; inner21.NameStyle = With37;
+            inner21.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/inner21.asset" } };
+            settings21.MarkDirty();
+            var errors21 = new System.Collections.Generic.List<string>();
+            bool ok21 = ContentBuildRunner.UpdateCatalogs(settings21.Active, errors21) & ContentBuildRunner.UpdateCatalogs(outer21, errors21) & ContentBuildRunner.UpdateCatalogs(inner21, errors21);
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkSimulation.Rebuild();
+            static string Root21(string name) => ContentLinkSimulation.TryGetPath(name, out _, out var root) ? root : null;
+            bool names21 = Root21("Icons/sword.png") == "Assets/Content" && Root21("Icons/sword.prefab") == "Assets/Content" && Root21("Scenes/Arena.unity") == "Assets/Content" && Root21("Icons/sword") == null;
+            bool nested21 = Root21("Dir/leaf") == "Assets/N" && Root21("leaf.txt") == "Assets/N/Dir" && Root21("leaf") == null && Root21("Dir/leaf.txt") == null;
+            string ref21 = ContentLinkSimulation.OverlayNameFor(GL37, "", false);
+            Check(ok21 && names21 && nested21 && ref21 == "leaf.txt",
+                  $"T21 the overlay — a root with the extension {names21} · nested roots, the outer without and the inner with {nested21} · the reference fallback '{ref21}' (the deepest root's) [{string.Join(" | ", errors21)}]");
+            ContentLinkSimulation.Drop();
+
+            string tip22 = ContentLinkEditorUtility.Describe(NameStatus.NotInCatalog, "Icons/sword");
+            Check(tip22.Contains("Update Content Catalog") && tip22.Contains("pick the asset again"), $"T22 the NotInCatalog tooltip names both cases: '{tip22}'");
+
+            Reset37();
+            var p24 = ContentBuildSettings.instance.Active;
+            bool accepted24 = true; string wrong24 = "";
+            foreach (var v24 in new[] { "PathWithExtension", "pathwithoutextension", "0", "1" })
+                accepted24 &= ContentBuildCLI.Apply(p24, new System.Collections.Generic.Dictionary<string, string> { ["nameStyle"] = v24 }, out _);
+            foreach (var v24 in new[] { "7", "ext", "" })
+                if (ContentBuildCLI.Apply(p24, new System.Collections.Generic.Dictionary<string, string> { ["nameStyle"] = v24 }, out var error24) || !error24.Contains("PathWithoutExtension | PathWithExtension")) wrong24 += $"'{v24}' ";
+            Check(accepted24 && wrong24.Length == 0,
+                  $"T24 CLI nameStyle: the names in any case, 0 and 1 accepted {accepted24} · an undefined number, an alias and an empty value refused with the expected values named (not so: [{wrong24.Trim()}])");
+            p24.NameStyle = Without37;
+            bool parsed24 = ContentBuildCLI.Parse(new[] { "-contentlink.namestyle", "PathWithExtension" }, out var options24, out var parseError24);
+            bool applied24 = parsed24 && ContentBuildCLI.Apply(p24, options24.Overrides, out _) && p24.NameStyle == With37;
+            Check(applied24, $"T24 … and from the command line, the key in any case: parsed {parsed24} {parseError24} · applied {applied24}");
+
+            Reset37();
+            var settings25 = ContentBuildSettings.instance;
+            FakeEngine.Folders.Add("Assets/Other"); Tex37("Assets/Other/n25.png");
+            var p25 = settings25.Add("P25"); p25.SourceRoot = "Assets/Other"; p25.OutputPath = "Build/P25";
+            p25.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/p25.asset" } }; settings25.MarkDirty();
+            ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/p25.asset");           // there, with nothing written in it yet
+            var model25 = new ContentBuildWindowModel(); model25.Select("P25");
+            model25.Edit(q => q.NameStyle = With37, "Name style");
+            bool empty25 = Any(model25.Notes, "name style");
+            model25.Edit(q => q.NameStyle = Without37, "Name style");
+            Check(!empty25, $"T25 an empty catalog in the other style says nothing — there is nothing to rename: {empty25}");
+            ContentBuildRunner.UpdateCatalogs(p25, new System.Collections.Generic.List<string>());
+            bool before25 = Any(model25.Notes, "name style");
+            model25.Edit(q => q.NameStyle = With37, "Name style");
+            bool switched25 = Any(model25.Notes, "name style");
+            model25.UpdateCatalogs(out _);
+            bool updated25 = Any(model25.Notes, "name style");
+            ContentDirectoryBuilder.NameStyle = Without37; settings25.MarkDirty();
+            bool override25 = Any(model25.Notes, "OutputPath/NameStyle");
+            Check(!before25 && switched25 && !updated25 && override25,
+                  $"T25 the window's notes — a line when the profile's style is not the catalogs' (before {before25} · after the switch {switched25} · after updating the catalogs {updated25}) · the override note names NameStyle {override25}");
+
+            Reset37();
+            var settings26 = ContentBuildSettings.instance;
+            FakeEngine.Folders.Add("Assets/Other"); Tex37("Assets/Other/w26.png");
+            var p26 = settings26.Add("P26"); p26.SourceRoot = "Assets/Other"; p26.OutputPath = "Build/P26";
+            p26.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = "Assets/Cat/p26.asset" } }; settings26.MarkDirty();
+            var errors26 = new System.Collections.Generic.List<string>();
+            int first26 = Warn(() => ContentBuildRunner.UpdateCatalogs(p26, errors26));
+            p26.NameStyle = With37; settings26.MarkDirty();
+            int switched26 = Warn(() => ContentBuildRunner.UpdateCatalogs(p26, errors26));
+            int same26 = Warn(() => ContentBuildRunner.UpdateCatalogs(p26, errors26));
+            p26.NameStyle = Without37; settings26.MarkDirty();
+            int back26 = Warn(() => ContentBuildRunner.UpdateCatalogs(p26, errors26));
+            Check(first26 == 0 && switched26 == 1 && same26 == 0 && back26 == 1, $"T26 the warnings of Write — first {first26} · a switch {switched26} · the same style again {same26} · back {back26} (expected 0 · 1 · 0 · 1)");
+
+            Reset37();
+            ContentLinkSimulation.Enabled = simulation37; FakeEngine.EditorServesAnyId = anyId37;
+        }
+
+        Console.WriteLine("38) the stub's Resources answers like the engine's (measured on 6000.6: IMP014 E1 ~ E17) — what the res: checks stand on");
+        {
+            FakeEngine.ClearProject();
+            ResourcesProject(editor: false);
+            Debug.Verbose = false; int e0 = Debug.Errors;
+            var missing = Resources.Load("UI/nope"); var withExtension = Resources.Load("UI/logo.png"); var empty = Resources.Load("");
+            bool quiet = Debug.Errors == e0;
+            var first = Resources.Load<Sprite>("UI/sheet"); var all = Resources.LoadAll<Sprite>("UI/sheet");
+            var twin = Resources.Load("UI/twin");
+            bool anyCase = ReferenceEquals(Resources.Load("UI/logo"), Resources.Load("ui/LOGO"));
+            bool nested = ReferenceEquals(Resources.Load("UI/Outer/Resources/inner"), Resources.Load("inner"));
+            bool player = Resources.Load("UI/edonly") == null && Resources.Load("UI/Editor/inside") != null && Resources.Load("UI/lower") != null && Resources.Load("UI/pkg") != null;
+            var request = Resources.LoadAsync("UI/sheet"); var syncWhile = Resources.Load("UI/sheet");
+            bool inFlight = !request.isDone && syncWhile != null && ReferenceEquals(request.asset, syncWhile);
+            FakeEngine.CompleteLoads();
+            var tex0 = Resources.Load<Texture2D>("UI/logo"); Resources.UnloadAsset(tex0); var tex1 = Resources.Load<Texture2D>("UI/logo");
+            int e1 = Debug.Errors; var go = Resources.Load<GameObject>("UI/hero");
+            Resources.UnloadAsset(go); Resources.UnloadAsset(go.GetComponent<Transform>());
+            bool refused = Debug.Errors == e1 + 2 && go != null && go.GetComponent<Transform>() != null;
+            Debug.Verbose = true;
+            Check(missing == null && withExtension == null && empty == null && quiet && first?.name == "s0" && all.Length == 2 && twin is GameObject && anyCase && nested && player && inFlight
+                  && tex0 == null && tex1 != null && !ReferenceEquals(tex0, tex1) && refused,
+                  $"T0 the stub = the engine: a missing path, an extension, an empty path → null with no log {quiet} · Load<Sprite> the first ('{first?.name}') · LoadAll<Sprite> all ({all.Length}) · three files on a path: the prefab ({twin?.GetType().Name}) · any case {anyCase} · a nested folder's two paths {nested} · a player's folders {player} · a sync load leaves the request in flight {inFlight} · an unloaded reference stays dead and the next load is new {tex0 == null && tex1 != null} · GameObject and Component refused with an error {refused}");
+            FakeEngine.ClearProject();
+        }
+
+        Console.WriteLine("39) Resources source — a res: name loads from a Resources folder of the player: the slot's second source, its release and the questions");
+        {
+            static void Reset39()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject();
+                FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.Refs.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkSimulation.Drop();
+                ContentService.ResourcesFallback = null;   // a player: the editor's seam answers in the editor only
+                ContentService.UnloadResourcesOnRelease = true;
+                ContentService.ReleaseDelayFrames = 0;
+                FakeEngine.Folders.Add("Assets/Cat");
+                ResourcesProject(editor: false);
+            }
+            static int Calls39() => FakeEngine.ResourcesLoads + FakeEngine.ResourcesAsyncLoads + FakeEngine.ResourcesLoadAlls;
+            // what the engine was asked to unload, by name — the truth of a release (not the code under test's own answer)
+            static string Unloaded39() { var names = new System.Collections.Generic.List<string>(); foreach (var o in FakeEngine.ResourcesUnloaded) names.Add(o.name); return string.Join(",", names); }
+            static string Sorted39(string csv) { var parts = csv.Split(','); Array.Sort(parts, StringComparer.Ordinal); return string.Join(",", parts); }
+            static int Deferred39() => ((System.Collections.ICollection)typeof(ContentService).GetField("s_DeferredUnloads", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null)).Count;   // what D2 holds back
+
+            Reset39();
+            Debug.Verbose = false; int e0 = Debug.Errors; int live39 = ContentService.LiveAssetCount, calls = Calls39();
+            var b1 = ContentService.Acquire<Texture2D>("res:"); var b2 = ContentService.Acquire<Texture2D>("res:[s0]"); var b3 = ContentService.Acquire<Texture2D>("res:UI/sheet[]");
+            int errs1 = Debug.Errors - e0; string log1 = Debug.LastError; Debug.Verbose = true;
+            Check(!b1.IsValid && !b2.IsValid && !b3.IsValid && errs1 == 3 && log1.Contains("is not a Resources name") && ContentService.LiveAssetCount == live39 && Calls39() == calls,
+                  $"T1 malformed names ('res:' · 'res:[s0]' · 'res:UI/sheet[]'): an error each ({errs1}) · no slot · no engine call");
+
+            Reset39();
+            calls = Calls39(); live39 = ContentService.LiveAssetCount;
+            var a2 = ContentService.AcquireAsync<Texture2D>("res:UI/logo"); FakeEngine.CompleteLoads(); var h2a = a2.GetResult();
+            var h2b = ContentService.Acquire<Texture2D>("res:UI/logo");
+            Check(h2a.IsValid && h2a.Key == "res:UI/logo" && ReferenceEquals(h2a.Asset, h2b.Asset) && h2a.Asset is Texture2D && Calls39() - calls == 1 && ContentService.LiveAssetCount == live39 + 1,
+                  $"T2 the main asset async, then sync: the key is the name · the second load is the same slot (engine calls {Calls39() - calls}) · LiveAssetCount +1");
+            h2a.Dispose(); h2b.Dispose(); ContentService.Collect();
+
+            Reset39();
+            var h3 = ContentService.Acquire<Sprite>("res:UI/sheet[s1]");
+            var h3b = ContentService.Acquire<Sprite>("res:UI/m[1]x[s0]");   // D1: split at the last '[' — a '[' inside the file name stays in the path
+            Debug.Verbose = false; e0 = Debug.Errors; var h3m = ContentService.Acquire<Sprite>("res:UI/sheet[s9]"); string log3 = Debug.LastError; int errs3 = Debug.Errors - e0; Debug.Verbose = true;
+            Check(h3.IsValid && h3.Asset?.name == "s1" && h3b.IsValid && h3b.Asset?.name == "s0" && !h3m.IsValid && errs3 == 1 && log3.Contains("has no sprite named 's9'"),
+                  $"T3 the sheet's s1 by name · a sprite of a file with '[' in its name (split at the last '[') {h3b.IsValid} · a missing sprite: one error with its reason ({errs3})");
+            h3.Dispose(); if (h3b.IsValid) h3b.Dispose(); ContentService.Collect();
+
+            Reset39();
+            live39 = ContentService.LiveAssetCount;
+            Debug.Verbose = false; e0 = Debug.Errors; var a4 = ContentService.AcquireAsync<Texture2D>("res:UI/nope"); FakeEngine.CompleteLoads(); var h4 = a4.GetResult(); string log4 = Debug.LastError; int errs4 = Debug.Errors - e0; Debug.Verbose = true;
+            int liveAfter4 = ContentService.LiveAssetCount; ContentService.Collect();
+            Check(!h4.IsValid && errs4 == 1 && log4.Contains("is not in a Resources folder of this build") && ContentService.LiveAssetCount == live39,
+                  $"T4 a missing path: an invalid handle · one error with its reason ({errs4}) · the slot closes at the next Collect ({liveAfter4} → {ContentService.LiveAssetCount})");
+
+            Reset39();
+            ContentService.ReleaseDelayFrames = 2;
+            var h5 = ContentService.Acquire<Texture2D>("res:UI/logo"); var old5 = h5.Asset;
+            h5.Dispose(); ContentService.Collect(); string before5 = Unloaded39();
+            Tick(); Tick(); Tick(); ContentService.Collect(); string after5 = Unloaded39();
+            ContentService.ReleaseDelayFrames = 0;
+            var again5 = ContentService.Acquire<Texture2D>("res:UI/logo");
+            bool fresh5 = again5.Asset != null && !ReferenceEquals(again5.Asset, old5) && old5 == null;
+            again5.Dispose(); ContentService.Collect();
+            Debug.Verbose = false; e0 = Debug.Errors; FakeEngine.ResourcesUnloaded.Clear();
+            var hero5 = ContentService.Acquire<GameObject>("res:UI/hero"); var heroT5 = ContentService.Acquire<Transform>("res:UI/hero");
+            bool component5 = heroT5.Asset != null && ReferenceEquals(heroT5.Asset.gameObject, hero5.Asset);
+            hero5.Dispose(); heroT5.Dispose(); ContentService.Collect(); int errs5 = Debug.Errors - e0; Debug.Verbose = true;
+            Check(before5 == "" && after5 == "logo" && fresh5 && component5 && FakeEngine.ResourcesUnloaded.Count == 0 && errs5 == 0,
+                  $"T5 release: not before the delay frames ([{before5}]) · then one UnloadAsset ([{after5}]) and a new object after {fresh5} · a prefab and its component: no UnloadAsset, no engine error ({errs5})");
+
+            Reset39();
+            var c1 = ContentService.Acquire<Texture2D>("res:UI/logo"); var c2 = ContentService.Acquire<Texture2D>("res:ui/LOGO");
+            c1.Dispose(); ContentService.Collect(); bool c2alive = c2.Asset != null; string c6a = Unloaded39(); c2.Dispose(); ContentService.Collect(); string c6b = Unloaded39();
+            Reset39();
+            var tx = ContentService.Acquire<Texture2D>("res:UI/sheet"); var sp = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            tx.Dispose(); ContentService.Collect(); bool texKept = sp.Asset != null && Unloaded39() == ""; sp.Dispose(); ContentService.Collect(); string ord1 = Unloaded39();
+            Reset39();
+            tx = ContentService.Acquire<Texture2D>("res:UI/sheet"); sp = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            sp.Dispose(); ContentService.Collect(); string ord2a = Unloaded39(); tx.Dispose(); ContentService.Collect(); string ord2 = Unloaded39();
+            Reset39();
+            var gx = ContentService.Acquire<Texture2D>("res:UI/Outer/Resources/inner"); var gy = ContentService.Acquire<Sprite>("res:UI/Outer/Resources/inner[i0]"); var gz = ContentService.Acquire<Texture2D>("res:inner");
+            gy.Dispose(); ContentService.Collect(); gx.Dispose(); ContentService.Collect(); string g6 = Unloaded39(); gz.Dispose(); ContentService.Collect(); string g6b = Unloaded39();
+            Reset39();
+            tx = ContentService.Acquire<Texture2D>("res:UI/sheet");
+            Debug.Verbose = false; ContentService.Acquire<Sprite>("res:UI/sheet[s9]"); Debug.Verbose = true;   // failed: its slot stays until the next Collect
+            tx.Dispose(); ContentService.Collect(); string f6 = Unloaded39();                                // one Collect closes both, the texture first
+            Reset39();
+            tx = ContentService.Acquire<Texture2D>("res:UI/sheet"); sp = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            sp.Dispose(); ContentService.Collect();                                                          // the sprite waits for the texture's slot
+            Resources.UnloadAsset(Resources.Load<Texture2D>("UI/sheet"));                                    // other code unloads the texture under that slot
+            tx.Dispose(); ContentService.Collect(); string d6 = Unloaded39();
+            Reset39();
+            tx = ContentService.Acquire<Texture2D>("res:UI/sheet"); sp = ContentService.Acquire<Sprite>("res:ui/SHEET[s0]");   // one file, two spellings
+            tx.Dispose(); ContentService.Collect(); string w6a = Unloaded39(); sp.Dispose(); ContentService.Collect(); string w6 = Unloaded39();
+            Check(c2alive && c6a == "" && c6b == "logo" && texKept && Sorted39(ord1) == "s0,sheet" && ord2a == "" && Sorted39(ord2) == "s0,sheet" && g6 == "i0" && Sorted39(g6b) == "i0,inner" && f6 == "sheet" && Sorted39(d6) == "s0,sheet" && w6a == "" && Sorted39(w6) == "s0,sheet",
+                  $"T6 D2 ⓓ: two names of one object — none until the last ([{c6a}] → [{c6b}]) · the texture released first [{ord1}] · the sprite first [{ord2}] · the path's last slot while another name holds its texture [{g6}] → [{g6b}] · the path's last slot failed [{f6}] · its object unloaded by other code [{d6}] · a texture and its sprite under two spellings [{w6a}] → [{w6}]");
+
+            Reset39();
+            ContentService.UnloadResourcesOnRelease = false;
+            var mine7 = ContentService.Acquire<Texture2D>("res:UI/logo"); var legacy7 = Resources.Load<Texture2D>("UI/logo");
+            live39 = ContentService.LiveAssetCount; mine7.Dispose(); ContentService.Collect();
+            int sweeps = FakeEngine.ResourcesSweeps; var op7 = ContentService.SweepResources();
+            Check(Unloaded39() == "" && ContentService.LiveAssetCount == live39 - 1 && legacy7 != null && FakeEngine.ResourcesSweeps == sweeps + 1 && op7 != null,
+                  "T7 D3 off: no UnloadAsset · the slot closed · a reference taken with Resources.Load lives · SweepResources → UnloadUnusedAssets once");
+            ContentService.UnloadResourcesOnRelease = true;
+
+            Reset39();
+            var p8 = ContentService.AcquireAsync<Texture2D>("res:UI/sheet");
+            var s8 = ContentService.Acquire<Texture2D>("res:UI/sheet"); bool atOnce8 = s8.IsValid && s8.Asset != null;
+            FakeEngine.CompleteLoads(); var waiter8 = p8.GetResult();
+            bool same8 = waiter8.IsValid && ReferenceEquals(waiter8.Asset, s8.Asset);
+            s8.Dispose(); waiter8.Dispose(); ContentService.Collect();
+            Check(atOnce8 && same8 && Unloaded39() == "sheet", $"T8 a sync load while the request is in flight completes at once {atOnce8} · the waiter wakes with the same object {same8} · one UnloadAsset at release [{Unloaded39()}]");
+
+            Reset39();
+            var catalog9 = ScriptableObject.CreateInstance<ContentCatalog>(); FakeEngine.Dirs["Dir9"] = new ScriptableObject[] { catalog9 };
+            int dir9 = ContentService.RegisterDirectory("Dir9");
+            var h9 = ContentService.Acquire<Texture2D>("res:UI/logo");
+            var infos9 = new System.Collections.Generic.List<ContentService.LeaseInfo>(); ContentService.Snapshot(infos9);
+            bool unregistered9 = ContentService.UnregisterDirectory(dir9);
+            ContentService.Shutdown(); bool closed9 = ContentService.LiveAssetCount == 0 && Unloaded39() == "logo";
+            Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");   // Shutdown disposed the scope root
+            Check(unregistered9 && infos9.Count == 1 && infos9[0].Dir == ContentService.ResourcesDirectory && closed9,
+                  $"T9 a live res: slot does not block UnregisterDirectory {unregistered9} · LeaseInfo.Dir = ResourcesDirectory · Shutdown closes it with its UnloadAsset {closed9}");
+
+            Reset39();
+            var sc10 = ContentScope.Root.CreateChild("T10"); var sc10b = ContentScope.Root.CreateChild("T10b");
+            var tex10 = sc10.Load<Texture2D>("res:UI/logo");
+            bool contains10 = sc10.Contains("res:UI/logo"), shared10 = sc10.ShareTo(sc10b, "res:UI/logo"), adopted10 = ContentScope.Root.CreateChild("T10c").Adopt(tex10);
+            sc10.Release("res:UI/logo"); ContentService.Collect(); bool keptByOthers10 = Unloaded39() == "";
+            sc10b.Dispose(); ContentService.Collect();
+            var scene10 = NewScene(910, "T10scene"); var owner10 = NewGO("T10owner", scene10);
+            owner10.Scope().Load<Texture2D>("res:UI/sheet");
+            var clone10 = Object.Instantiate(owner10);
+            bool inherited10 = clone10.Scope().Contains("res:UI/sheet");
+            Object.Destroy(owner10); Tick(); bool cloneHolds10 = clone10.Scope().Contains("res:UI/sheet") && !Unloaded39().Contains("sheet");
+            Object.Destroy(clone10); Tick(); ContentService.Collect(); bool sheetGone10 = Unloaded39().Contains("sheet");
+            var cts10 = new System.Threading.CancellationTokenSource();
+            var p10 = ContentService.AcquireAsync<Texture2D>("res:UI/Outer/Resources/inner", cts10.Token); cts10.Cancel();
+            bool cancelled10 = false; try { p10.GetResult(); } catch (OperationCanceledException) { cancelled10 = true; }
+            FakeEngine.CompleteLoads(); ContentService.Collect();
+            Check(contains10 && shared10 && adopted10 && keptByOthers10 && inherited10 && cloneHolds10 && sheetGone10 && cancelled10 && ContentService.LiveAssetCount == 1,
+                  $"T10 scopes: Contains · ShareTo · Adopt · released by one, kept by the others {keptByOthers10} · a clone inherits the key and holds it after the original goes {cloneHolds10} · a cancelled load returns at once and its slot closes at the next Collect (live {ContentService.LiveAssetCount} — the adopted logo)");
+
+            Reset39();
+            live39 = ContentService.LiveAssetCount;
+            var link11 = new ContentLink<Sprite>("res:UI/sheet", "s0"); var sc11 = ContentScope.Root.CreateChild("T11");
+            var viaLink11 = link11.Load(sc11); var viaName11 = sc11.Load<Sprite>("res:UI/sheet[s0]");
+            Check(viaLink11 != null && ReferenceEquals(viaLink11, viaName11) && ContentService.LiveAssetCount == live39 + 1 && link11.RuntimeKeyIsValid(),
+                  "T11 the link ('res:UI/sheet', 's0') and the name 'res:UI/sheet[s0]' are one slot · RuntimeKeyIsValid");
+            link11.Release(); sc11.Dispose(); ContentService.Collect();
+
+            Reset39();
+            int asked12 = 0; var savedFallback12 = ContentService.NameFallback; var savedScene12 = ContentService.SceneContainsFallback;
+            ContentService.NameFallback = n => { if (n.StartsWith("res:")) asked12++; return default; };
+            ContentService.SceneContainsFallback = n => { if (n.StartsWith("res:")) asked12++; return false; };
+            bool q12 = ContentService.Contains("res:UI/nope") && !ContentService.Contains("res:") && ContentService.Contains("res:UI/sheet", "s9")
+                       && !ContentService.TryGetLoadableObjectId("res:UI/logo", out _) && !ContentService.ContainsScene("res:UI/level") && !ContentService.TryGetLoadableSceneId("res:UI/level", out _);
+            var h12 = ContentService.Acquire<Texture2D>("res:UI/logo"); h12.Dispose(); ContentService.Collect();
+            ContentService.NameFallback = savedFallback12; ContentService.SceneContainsFallback = savedScene12;
+            Check(q12 && asked12 == 0, $"T12 Contains is the format only · no id · no scene {q12} · the editor's name and scene fallbacks asked {asked12} time(s) for res: names");
+
+            Reset39();
+            ContentService.ReleaseDelayFrames = 5;
+            var tx13 = ContentService.Acquire<Texture2D>("res:UI/sheet"); var sp13 = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            tx13.Dispose(); ContentService.Collect(); int live13 = ContentService.LiveAssetCount;
+            sp13.Dispose(); int sweeps13 = FakeEngine.ResourcesSweeps; var op13 = ContentService.SweepResources();
+            ContentService.ReleaseDelayFrames = 0;
+            Check(ContentService.LiveAssetCount == 0 && FakeEngine.ResourcesSweeps == sweeps13 + 1 && op13 != null,
+                  $"T13 SweepResources closes the zero-reference slots without the delay (live {live13} → {ContentService.LiveAssetCount}), then UnloadUnusedAssets once and its AsyncOperation");
+
+            Reset39();
+            var tx13b = ContentService.Acquire<Texture2D>("res:UI/sheet"); var sp13b = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            tx13b.Dispose(); ContentService.Collect(); ContentService.SweepResources(); FakeEngine.CompleteLoads(); string swept13 = Unloaded39();
+            sp13b.Dispose(); ContentService.Collect();
+            Check(swept13 == "" && Sorted39(Unloaded39()) == "s0,sheet", $"T13 … a sweep while the sprite holds the path keeps the texture's deferral: [{swept13}] → with the path's last slot [{Unloaded39()}]");
+
+            Reset39();
+            var sp27 = ContentService.Acquire<Sprite>("res:UI/sheet[s0]");
+            for (int i = 0; i < 100; ++i) { var t27 = ContentService.Acquire<Texture2D>(i % 2 == 0 ? "res:UI/sheet" : "res:ui/SHEET"); t27.Dispose(); ContentService.Collect(); }
+            int held27 = Deferred39(); sp27.Dispose(); ContentService.Collect(); int after27 = Deferred39();
+            Check(held27 == 1 && after27 == 0 && Sorted39(Unloaded39()) == "s0,sheet",
+                  $"T27a the texture opened and closed 100 times under two spellings while its sprite holds the path: one entry ({held27}) · none after the path's last slot ({after27}) · [{Unloaded39()}]");
+            Reset39();
+            var tx27 = ContentService.Acquire<Texture2D>("res:UI/sheet"); var sp27b = ContentService.Acquire<Sprite>("res:ui/SHEET[s0]");   // the last slot in another spelling
+            tx27.Dispose(); ContentService.Collect();
+            ContentService.UnloadResourcesOnRelease = false;
+            sp27b.Dispose(); ContentService.Collect(); int off27 = Deferred39(); string offUnloads27 = Unloaded39();
+            ContentService.UnloadResourcesOnRelease = true;
+            Check(off27 == 0 && offUnloads27 == "", $"T27b the switch off: the path's last slot (another spelling) drops what the path held back and unloads nothing ({off27} left · [{offUnloads27}]) — the sweep can take it");
+
+            Reset39();
+            var a29 = ContentService.AcquireAsync<Texture2D>("res:UI/Outer/Resources/inner"); var b29 = ContentService.AcquireAsync<Texture2D>("res:inner");
+            FakeEngine.CompleteLoads(); var ha29 = a29.GetResult(); var hb29 = b29.GetResult();
+            ha29.Dispose(); ContentService.Collect(); bool kept29a = Unloaded39() == "" && hb29.Asset != null;
+            hb29.Dispose(); ContentService.Collect(); string end29a = Unloaded39();
+            Check(kept29a && end29a == "inner",
+                  $"T29a two names of one object loaded asynchronously (a nested folder's two paths): the other name keeps it {kept29a} · it goes with the last [{end29a}]");
+            Reset39();
+            var tA = ContentService.Acquire<Texture2D>("res:UI/Outer/Resources/inner"); var sA = ContentService.Acquire<Sprite>("res:UI/Outer/Resources/inner[i0]");
+            tA.Dispose(); ContentService.Collect();                                                         // the texture waits for its path
+            var tB = ContentService.Acquire<Texture2D>("res:inner");                                        // the other path holds the same texture again
+            sA.Dispose(); ContentService.Collect(); string mid29b = Unloaded39(); bool alive29b = tB.Asset != null;
+            tB.Dispose(); ContentService.Collect();
+            Check(mid29b == "i0" && alive29b && Sorted39(Unloaded39()) == "i0,inner",
+                  $"T29b the path's last slot lets go of what it held back, but not while another path's slot holds it: [{mid29b}] alive {alive29b} → [{Unloaded39()}]");
+            Reset39();
+            ContentService.UnloadResourcesOnRelease = false;
+            var c29 = ContentService.Acquire<Texture2D>("res:UI/logo"); c29.Dispose(); ContentService.Collect();
+            ContentService.UnloadResourcesOnRelease = true;
+            var c29b = ContentService.Acquire<Texture2D>("res:UI/logo"); c29b.Dispose(); ContentService.Collect(); string end29c = Unloaded39();
+            Check(end29c == "logo", $"T29c a release with the switch off, then on: the next release unloads [{end29c}]");
+            Reset39();
+            var d29 = ContentService.Acquire<Texture2D>("res:UI/logo");
+            Init(typeof(ContentService), "ResetStatics");                                                   // a Play entry drops the slot without releasing it
+            var d29b = ContentService.Acquire<Texture2D>("res:UI/logo"); d29b.Dispose(); ContentService.Collect(); string end29d = Unloaded39();
+            Check(end29d == "logo", $"T29d after a reset that dropped a live slot, the same path opens and closes clean [{end29d}]");
+            Reset39();
+        }
+
+        Console.WriteLine("40) Resources source — editor: asset ↔ res: name, the status with no catalog, a typed link name, the reference's and the builder's refusals");
+        {
+            static void Reset40()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject();
+                FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.Refs.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkSimulation.Drop();
+                FakeEngine.Folders.Add("Assets/Cat");
+                ResourcesProject(editor: true);   // the editor's Resources.Load finds editor-only folders too (measured)
+            }
+            static string Name40(string path) => ContentLinkEditorUtility.TryGetNameForAsset(FakeEngine.MainAssetAt[path], out var n, out var r) ? n : "refused: " + r;
+            static string SubName40(string path, int i) => ContentLinkEditorUtility.TryGetNameForAsset(FakeEngine.SubAssetsAt[path][i], out var n, out var r) ? n : "refused: " + r;
+            static NameStatus V40(string name, Type type) => ContentLinkEditorUtility.Validate(name, type);
+
+            Reset40();
+            string names15 = $"{Name40("Assets/Resources/UI/logo.png")}|{SubName40("Assets/Resources/UI/sheet.png", 0)}|{Name40("Assets/Resources/UI/Outer/Resources/inner.png")}|{Name40("Assets/Lower/resources/UI/lower.png")}|{Name40("Packages/com.x/Resources/UI/pkg.png")}|{Name40("Assets/Resources/UI/Editor/inside.png")}|{Name40("Assets/Content/Resources/UI/both.png")}";
+            ContentLinkEditorUtility.TryGetLinkForAsset(FakeEngine.SubAssetsAt["Assets/Resources/UI/sheet.png"][1], out var linkName15, out var linkSub15, out _);
+            string[] refused15 = { Name40("Assets/Resources/UI/a[1].png"), SubName40("Assets/Resources/UI/br.png", 0), Name40("Assets/Resources/UI/twin.png"), Name40("Assets/Editor/Resources/UI/edonly.png"), Name40("Assets/Resources/UI/level.unity"), SubName40("Assets/Resources/UI/model.fbx", 0) };
+            string notRefused15 = ""; foreach (var r in refused15) if (!r.StartsWith("refused")) notRefused15 += r + " ";
+            bool twinFiles15 = refused15[2].Contains("twin.prefab") && refused15[2].Contains("twin.png");
+            Check(names15 == "res:UI/logo|res:UI/sheet[s0]|res:inner|res:UI/lower|res:UI/pkg|res:UI/Editor/inside|Resources/UI/both" && linkName15 == "res:UI/sheet" && linkSub15 == "s1" && notRefused15.Length == 0 && twinFiles15,
+                  $"T15 names [{names15}] · link ('{linkName15}', '{linkSub15}') · refused: a file ending with ']' · a sprite with '[' · a shared path (its files named {twinFiles15}) · editor-only · a scene · a sub-asset that is not a sprite (not refused: [{notRefused15.Trim()}])");
+
+            string v16 = $"{V40("res:UI/logo", typeof(Texture2D))}|{V40("res:UI/logo", typeof(Sprite))}|{ContentLinkEditorUtility.Validate("res:UI/sheet", "s1", typeof(Sprite))}|{V40("res:UI/nope", typeof(Texture2D))}|{V40("res:UI/edonly", typeof(Texture2D))}|{V40("res:UI/hero", typeof(Transform))}|{V40("res:UI/twin", typeof(Texture2D))}";
+            string tip16 = ContentLinkEditorUtility.Describe(NameStatus.NotInCatalog, "res:UI/nope");
+            Check(ContentLinkEditorUtility.LoadCatalogs().Length == 0 && v16 == "Ok|TypeMismatch|Ok|NotInCatalog|NotInCatalog|Ok|TypeMismatch" && tip16.Contains("Resources folder"),
+                  $"T16 status with no catalog in the project: [{v16}] (the main asset · it in a Sprite field · a sprite link · missing · editor-only · a prefab's component · a shared path in a Texture2D field: the engine's pick is the prefab) · tooltip: {tip16}");
+
+            ContentLinkEditorUtility.SplitLinkName("res:UI/sheet[s1]", out var sheetName17, out var sheetSub17);
+            ContentLinkEditorUtility.SplitLinkName("res:UI/logo", out var mainName17, out var mainSub17);
+            Check(sheetName17 == "res:UI/sheet" && sheetSub17 == "s1" && mainName17 == "res:UI/logo" && mainSub17 == "",
+                  $"T17 a typed 'res:UI/sheet[s1]' splits into ('{sheetName17}', '{sheetSub17}') · a main name stays whole ('{mainName17}', '{mainSub17}')");
+
+            bool ref18 = ContentLinkEditorUtility.TryGetRefForAsset(FakeEngine.MainAssetAt["Assets/Resources/UI/logo.png"], out _, out _, out var why18);
+            var status18 = ContentLinkEditorUtility.ValidateRef("Assets/Resources/UI/logo.png", "", typeof(Texture2D), false, out var tip18);
+            Check(!ref18 && why18 != null && why18.Contains("res:UI/logo") && status18 == NameStatus.NotInCatalog && tip18.Contains("ContentLink"),
+                  $"T18 a reference refuses a Resources asset, with the way out: {why18} · status {status18}");
+
+            FakeEngine.AddProjectAsset("Assets/Content/res:x/y.png", new Texture2D { name = "y" });
+            Debug.Verbose = false; bool scan19 = ContentDirectoryBuilder.Scan("Assets/Content", new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>()); string log19 = Debug.LastError; Debug.Verbose = true;
+            Check(!scan19 && log19.Contains("names a Resources asset"), $"T19 the builder refuses a name that starts with 'res:' (a folder 'res:x' at the top of a source root): {log19}");
+
+            Reset40();
+            FakeEngine.ClearProject(); FakeEngine.ResourcesSeeEditorOnly = false;
+        }
+
+        Console.WriteLine("41) IMP015 stubs — the atlas surface answers like the engine (E9 · E10 · E11)");
+        {
+            var f41 = AtlasProject();
+            var packables41 = UnityEditor.U2D.SpriteAtlasExtensions.GetPackables(f41.fold);
+            var textures41 = UnityEditor.AssetDatabase.FindAssets("t:Texture2D", new[] { AtlasFx.R + "/Folder" });
+            f41.main.Packed = false; int unpackedCount41 = f41.main.spriteCount; bool unpackedBind41 = f41.main.CanBindTo(f41.a1); f41.main.Packed = true;
+            Check(packables41.Length == 1 && packables41[0] == f41.folder && UnityEditor.AssetDatabase.IsValidFolder(UnityEditor.AssetDatabase.GetAssetPath(packables41[0]))
+                  && textures41.Length == 3 && UnityEditor.U2D.SpriteAtlasExtensions.GetPackables(f41.variant).Length == 0 && f41.variant.isVariant
+                  && unpackedCount41 == 0 && !unpackedBind41 && f41.main.spriteCount == 4 && f41.main.CanBindTo(f41.o1)
+                  && UnityEditor.AssetDatabase.FindAssets("t:SpriteAtlas").Length == 4 && UnityEditor.EditorSettings.spritePackerMode == UnityEditor.SpritePackerMode.SpriteAtlasV2
+                  && UnityEditor.AssetDatabase.LoadAllAssetRepresentationsAtPath(AtlasFx.R + "/Folder/Sub/plain.png").Length == 0,
+                  "T0 the stubs: GetPackables answers the objects as added (a folder stays a folder) · a folder's textures are found below it · a variant packs none · not packed = spriteCount 0 and CanBindTo false · the four atlases by type · the projects' packer mode · a Default texture has no sprite");
+        }
+
+        Console.WriteLine("42) IMP015 builder — an atlas under the root names the sprites it packs");
+        {
+            var f42 = AtlasProject();
+            var s42 = ScanFx();
+            bool hasOwn42 = TryEntry(s42.items, "Icons/a1[a1]", out var own42); bool hasAlias42 = TryEntry(s42.items, "Atlas/MainAtlas[a1]", out var alias42);
+            Check(s42.ok && AtlasNames(s42.items) == "Atlas/MainAtlas[a1],Atlas/MainAtlas[o1],Atlas/MainAtlas[s0],Atlas/MainAtlas[s1],FolderAtlas[f1],FolderAtlas[f2],Zone/ZoneAtlas[a2]"
+                  && hasOwn42 && hasAlias42 && alias42.id.Equals(own42.id) && alias42.guid == AtlasFx.GMain && alias42.sub == "a1" && own42.guid == AtlasFx.GA1
+                  && HasEntry(s42.items, "Atlas/MainAtlas"),
+                  $"T1 the atlas names [{AtlasNames(s42.items)}] — each carries the sprite's own id (the same as 'Icons/a1[a1]'), the atlas GUID and the sprite name; a sheet's slices, a sprite packed by a folder below it; the atlas's own entry stays");
+            f42.main.Packed = f42.zone.Packed = f42.fold.Packed = false;   // SpriteAtlasV2Build before a build: the editor has not packed them (measured)
+            var u42 = ScanFx();
+            f42.main.Packed = f42.zone.Packed = f42.fold.Packed = true;
+            Check(AtlasNames(u42.items) == AtlasNames(s42.items), $"T1 atlases the editor has not packed yet (mode 6) name the same sprites: [{AtlasNames(u42.items)}]");
+            var x42 = ScanFx(style: ContentNameStyle.PathWithExtension);
+            Check(HasEntry(x42.items, "Atlas/MainAtlas.spriteatlasv2[a1]") && HasEntry(x42.items, "Icons/a1.png[a1]"),
+                  "T1 with the extension style the atlas name carries the atlas's extension: 'Atlas/MainAtlas.spriteatlasv2[a1]'");
+            bool hasO42 = TryEntry(s42.items, "Atlas/MainAtlas[o1]", out var o42);
+            bool noOwn42 = true; foreach (var i in s42.items) if (!i.IsScene && i.Entry.guid == AtlasFx.GO1) noOwn42 = false;
+            Check(hasO42 && o42.id.Equals(UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(f42.o1)) && noOwn42,
+                  "T2 a texture outside the root: its sprite has the atlas's name only (the build pulls it in by id — E1)");
+            Check(s42.warnings >= 1 && s42.warning.Contains("variant") && !HasEntry(s42.items, "Atlas/MainVariant[a1]") && HasEntry(s42.items, "Atlas/MainVariant"),
+                  $"T4 a variant names no sprite and says so (its own entry stays): {s42.warning}");
+
+            // T3 — the packer mode
+            var modes42 = (UnityEditor.SpritePackerMode[])Enum.GetValues(typeof(UnityEditor.SpritePackerMode));
+            string Matrix42() { var l = new System.Collections.Generic.List<string>(); foreach (var m in modes42) { UnityEditor.EditorSettings.spritePackerMode = m; l.Add(ScanFx().ok ? "ok" : "no"); } UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2; return string.Join(" ", l); }
+            string under42 = Matrix42();
+            foreach (var p in new[] { AtlasFx.Main, AtlasFx.Zone, AtlasFx.Fold, AtlasFx.Var }) FakeEngine.MainAssetAt.Remove(p);
+            var out42 = new UnityEngine.U2D.SpriteAtlas { name = "OutAtlas", Packables = new Object[] { f42.a2t } }; out42.Bound.Add(f42.a2);
+            FakeEngine.AddProjectAsset("Assets/Outside/OutAtlas.spriteatlasv2", out42);
+            string outside42 = Matrix42();
+            FakeEngine.MainAssetAt.Remove("Assets/Outside/OutAtlas.spriteatlasv2");
+            string none42 = Matrix42();
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.Disabled; ScanFx(); string tip42 = Debug.LastError; UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            FakeEngine.MainAssetAt[AtlasFx.Main] = f42.main; FakeEngine.MainAssetAt[AtlasFx.Zone] = f42.zone; FakeEngine.MainAssetAt[AtlasFx.Fold] = f42.fold; FakeEngine.MainAssetAt[AtlasFx.Var] = f42.variant;
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.AlwaysOnAtlas; var m4_42 = ScanFx(); UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            Check(under42 == "no no no no no ok ok" && outside42 == "ok no no no no ok ok" && none42 == "ok ok ok ok ok ok ok"
+                  && m4_42.error.Contains("AlwaysOnAtlas") && m4_42.error.Contains("without a texture"),
+                  $"T3 modes 0 ~ 6 — atlases under the root [{under42}] · only an atlas outside it packing a sprite under it [{outside42}] · no atlas [{none42}] · mode 4 says why: {m4_42.error}");
+
+            // T4 — V1 atlases
+            var v1out42 = new UnityEngine.U2D.SpriteAtlas { name = "V1Out", Packables = new Object[] { f42.a1t } }; v1out42.Bound.Add(f42.a1);
+            FakeEngine.AddProjectAsset("Assets/Outside/V1Out.spriteatlas", v1out42);
+            var v42 = ScanFx();
+            FakeEngine.MainAssetAt.Remove("Assets/Outside/V1Out.spriteatlas");
+            var v1in42 = new UnityEngine.U2D.SpriteAtlas { name = "V1In", Packables = new Object[] { f42.a2t } }; v1in42.Bound.Add(f42.a2);
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/V1/V1In.spriteatlas", v1in42);
+            var w42 = ScanFx();
+            FakeEngine.MainAssetAt.Remove(AtlasFx.R + "/V1/V1In.spriteatlas");
+            Check(!v42.ok && v42.error.Contains("V1") && v42.error.Contains("Icons/a1.png") && !w42.ok && !AtlasNames(w42.items).Contains("V1In") && w42.error.Contains("V1In"),
+                  $"T4 a V1 atlas that packs a catalogued sprite refuses the build — outside the root ({v42.error}) and under it, where it names nothing");
+
+            // T5 — one name twice in an atlas · one sprite in two atlases
+            var dx42 = new Sprite { name = "dup" }; var dy42 = new Sprite { name = "dup" };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Dup/x/dup.png", new Texture2D { name = "dup" }, dx42);
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Dup/y/dup.png", new Texture2D { name = "dup" }, dy42);
+            var dup42 = new UnityEngine.U2D.SpriteAtlas { name = "DupAtlas", Packables = new Object[] { FakeEngine.MainAssetAt[AtlasFx.R + "/Dup/x/dup.png"], FakeEngine.MainAssetAt[AtlasFx.R + "/Dup/y/dup.png"] } };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Dup/DupAtlas.spriteatlasv2", dup42);
+            var d42 = ScanFx();
+            foreach (var p in new[] { AtlasFx.R + "/Dup/x/dup.png", AtlasFx.R + "/Dup/y/dup.png", AtlasFx.R + "/Dup/DupAtlas.spriteatlasv2" }) FakeEngine.MainAssetAt.Remove(p);
+            var other42 = new UnityEngine.U2D.SpriteAtlas { name = "OtherAtlas", Packables = new Object[] { f42.a1t } }; other42.Bound.Add(f42.a1);
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Other/OtherAtlas.spriteatlasv2", other42);
+            var t42 = ScanFx();
+            FakeEngine.MainAssetAt.Remove(AtlasFx.R + "/Other/OtherAtlas.spriteatlasv2");
+            Check(!d42.ok && d42.error.Contains("Dup/DupAtlas[dup]") && d42.error.Contains("Dup/x/dup.png") && d42.error.Contains("Dup/y/dup.png")
+                  && t42.ok && HasEntry(t42.items, "Other/OtherAtlas[a1]") && HasEntry(t42.items, "Atlas/MainAtlas[a1]") && t42.warning.Contains("2 atlases") && t42.warning.Contains("OtherAtlas"),
+                  $"T5 two sprites of one name in an atlas: the duplicate names both textures ({d42.error}) · one sprite in two atlases: a name in each, and a warning that names them ({t42.warning})");
+
+            // T6 — categories
+            var catAI42 = new ContentBuildSettings.Profile { Name = "AI", SourceRoot = AtlasFx.R, Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Atlas" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Icons" } } };
+            var catI42 = new ContentBuildSettings.Profile { Name = "I", SourceRoot = AtlasFx.R, Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Icons" } } };
+            var g42 = ContentBuildRunner.Partition(catAI42, ScanFx().items, out _);
+            var gi42 = ContentBuildRunner.Partition(catI42, ScanFx().items, out _);
+            Check(AtlasNames(g42[0]) == "Atlas/MainAtlas[a1],Atlas/MainAtlas[o1],Atlas/MainAtlas[s0],Atlas/MainAtlas[s1]" && AtlasNames(g42[1]) == "" && AtlasNames(gi42[0]) == "",
+                  $"T6 an atlas's names go where the atlas is: the Atlas category [{AtlasNames(g42[0])}] (the texture outside the root too) · the Icons category none · a profile with Icons only builds none");
+
+            // T22 (builder side) — an atlas changed after the editor read it: the scan names what it packs now
+            ContentLinkEditorUtility.ResolveAsset("Atlas/MainAtlas[a1]");   // the editor has read the atlas
+            f42.main.Packables = new Object[] { f42.sheet, f42.o1t };
+            var e42 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            Debug.Verbose = false; ContentDirectoryBuilder.Scan(AtlasFx.R, ContentNameStyle.PathWithoutExtension, e42); Debug.Verbose = true;   // as a build does: nothing dropped the editor's caches first
+            f42.main.Packables = new Object[] { f42.a1t, f42.sheet, f42.s0, f42.o1t };
+            Check(!HasEntry(e42, "Atlas/MainAtlas[a1]") && HasEntry(e42, "Atlas/MainAtlas[s0]"),
+                  "T22 a texture taken out of an atlas the editor had read: the next scan has no name for it (the builder does not read the editor's cache)");
+        }
+
+        Console.WriteLine("43) IMP015 editor and runtime — the atlas names in the index, the path rule, references, the simulation and the runtime");
+        {
+            var f43 = AtlasProject();
+            var cat43 = CatalogFx();
+            ContentLinkEditorUtility.TryGetNameForAsset(f43.a1, out var n43a1, out _);
+            ContentLinkEditorUtility.TryGetNameForAsset(f43.a2, out var n43a2, out _);
+            ContentLinkEditorUtility.TryGetLinkForAsset(f43.a2, out var l43a2, out var l43a2s, out _);
+            Check(n43a1 == "Icons/a1[a1]" && n43a2 == "Icons/a2[a2]" && l43a2 == "Icons/a2" && l43a2s == "a2",
+                  $"T7 a sprite picked keeps its own name whether its atlas's name sorts before or after it: a1 → {n43a1} · a2 → {n43a2} · a2's link ({l43a2}, {l43a2s})");
+
+            ContentLinkEditorUtility.TryGetNameForAsset(f43.o1, out var n43o1, out var why43o1);
+            ContentLinkEditorUtility.TryGetLinkForAsset(f43.o1, out var l43o1, out var l43o1s, out _);
+            FakeEngine.MainAssetAt.Remove("Assets/Cat/atlas.asset"); ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(f43.o1, out var p43o1, out _);
+            ContentLinkEditorUtility.TryGetLinkForAsset(f43.o1, out var p43l, out var p43ls, out _);
+            FakeEngine.MainAssetAt["Assets/Cat/atlas.asset"] = cat43; ContentLinkEditorUtility.Invalidate();
+            Check(n43o1 == "Atlas/MainAtlas[o1]" && l43o1 == "Atlas/MainAtlas" && l43o1s == "o1" && p43o1 == "Atlas/MainAtlas[o1]" && p43l == "Atlas/MainAtlas" && p43ls == "o1",
+                  $"T8 a sprite whose texture is outside every root: name {n43o1 ?? why43o1} · link ({l43o1}, {l43o1s}) — and the same before any catalog has it ({p43o1} · ({p43l}, {p43ls}))");
+
+            ContentLinkEditorUtility.TryGetRefForAsset(f43.a1, out var g43a1, out var s43a1, out _);
+            ContentLinkEditorUtility.TryGetRefForAsset(f43.o1, out var g43o1, out var s43o1, out var r43o1);
+            Check(g43a1 == AtlasFx.GA1 && s43a1 == "a1" && g43o1 == AtlasFx.GMain && s43o1 == "o1"
+                  && ContentLinkEditorUtility.ResolveRefAsset(AtlasFx.GMain, "s1") == f43.s1 && ContentLinkEditorUtility.NameForRef(AtlasFx.GMain, "a1") == "Atlas/MainAtlas[a1]",
+                  $"T9 references: a sprite under the root keeps its texture's GUID ({g43a1}, {s43a1}) · one outside every root takes the atlas's ({g43o1}, {s43o1}{r43o1}) · (atlas GUID, s1) shows s1 · and names 'Atlas/MainAtlas[a1]'");
+
+            var v1_43 = new UnityEngine.U2D.SpriteAtlas { name = "V1Out" }; FakeEngine.AddProjectAsset("Assets/Outside/V1Out.spriteatlas", v1_43); FakeEngine.SetGuid("Assets/Outside/V1Out.spriteatlas", "cc000000000000000000000000000001");
+            NameStatus VR43(string g, string s, out string tip) => ContentLinkEditorUtility.ValidateRef(g, s, typeof(Sprite), false, out tip);
+            var st43 = new[] { VR43(AtlasFx.GMain, "a1", out var t43a), VR43(AtlasFx.GMain, "nope", out var t43b), VR43(AtlasFx.GVar, "a1", out var t43c), VR43("cc000000000000000000000000000001", "a1", out var t43d), VR43(AtlasFx.GMain, "", out var t43e) };
+            FakeEngine.MainAssetAt.Remove("Assets/Outside/V1Out.spriteatlas");
+            Check(st43[0] == NameStatus.Ok && st43[1] == NameStatus.Missing && t43b.Contains("packs no sprite named") && st43[2] == NameStatus.NotInCatalog && t43c.Contains("variant")
+                  && st43[3] == NameStatus.NotInCatalog && t43d.Contains("V1") && st43[4] == NameStatus.TypeMismatch && t43e.Contains("atlas"),
+                  $"T10 a reference through an atlas: a sprite it packs Ok · a name it does not pack Missing · a variant · a V1 atlas NotInCatalog with the reason · the atlas itself in a Sprite field TypeMismatch ({t43e})");
+
+            FakeEngine.MainAssetAt.Remove("Assets/Cat/atlas.asset"); ContentLinkEditorUtility.Invalidate();
+            var dx43 = new Sprite { name = "dup" }; var dy43 = new Sprite { name = "dup" };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Dup/x/dup.png", new Texture2D { name = "dup" }, dx43);
+            FakeEngine.AddProjectAsset("Assets/Outside/dup.png", new Texture2D { name = "dup" }, dy43);   // the other one outside every root: its only name would be the shared one
+            var dup43 = new UnityEngine.U2D.SpriteAtlas { name = "DupAtlas", Packables = new Object[] { FakeEngine.MainAssetAt[AtlasFx.R + "/Dup/x/dup.png"], FakeEngine.MainAssetAt["Assets/Outside/dup.png"] } };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Dup/DupAtlas.spriteatlasv2", dup43);
+            ContentLinkEditorUtility.Invalidate();
+            var r43a = ContentLinkEditorUtility.ResolveAsset("Atlas/MainAtlas[a1]"); var r43b = ContentLinkEditorUtility.ResolveAsset("Atlas/MainAtlas", "o1");
+            var r43c = ContentLinkEditorUtility.ResolveAsset("Dup/DupAtlas[dup]"); var r43d = ContentLinkEditorUtility.ResolveRefAsset(AtlasFx.R + "/Dup/DupAtlas.spriteatlasv2", "dup");
+            bool sharedNamed43 = ContentLinkEditorUtility.TryGetNameForAsset(dy43, out var sharedName43, out _);
+            foreach (var p in new[] { AtlasFx.R + "/Dup/x/dup.png", "Assets/Outside/dup.png", AtlasFx.R + "/Dup/DupAtlas.spriteatlasv2" }) FakeEngine.MainAssetAt.Remove(p);
+            bool owned43 = false;   // the root's owner gives the style: the default Main profile owns Assets/Content
+            foreach (var pr in ContentBuildSettings.instance.Profiles) if (pr != null && pr.SourceRoot == AtlasFx.R) { pr.NameStyle = ContentNameStyle.PathWithExtension; owned43 = true; }
+            if (!owned43) { var px43 = ContentBuildSettings.instance.Add("AtlasExt"); px43.SourceRoot = AtlasFx.R; px43.NameStyle = ContentNameStyle.PathWithExtension; }
+            ContentLinkEditorUtility.Invalidate();
+            var rx43 = ContentLinkEditorUtility.ResolveAsset("Atlas/MainAtlas.spriteatlasv2[a1]");
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            FakeEngine.MainAssetAt["Assets/Cat/atlas.asset"] = cat43; ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.SplitLinkName("Atlas/MainAtlas[a1]", out var sp43n, out var sp43s);
+            Check(r43a == f43.a1 && r43b == f43.o1 && r43c == null && r43d == null && !sharedNamed43 && rx43 == f43.a1 && sp43n == "Atlas/MainAtlas" && sp43s == "a1",
+                  $"T11 the path rule before the catalog has the atlas names: 'Atlas/MainAtlas[a1]' · ('Atlas/MainAtlas', 'o1') · a name two packed sprites share answers nothing (the build refuses it) — nor is it given to the one outside every root ({sharedName43}) · under a root that keeps the extension 'Atlas/MainAtlas.spriteatlasv2[a1]' · a typed atlas name splits into (atlas, sprite)");
+
+            // T12 — the simulation: a profile's output registered in Play is served from the project
+            FakeEngine.MainAssetAt.Remove("Assets/Cat/atlas.asset");
+            ContentLinkSimulation.Drop(); ContentLinkSimulation.Enabled = true; FakeEngine.EditorServesAnyId = true;
+            Init(typeof(ContentLinkSimulation), "Install");
+            UnityEditor.EditorApplication.isPlaying = true;
+            foreach (var o in new Object[] { f43.a1, f43.a2, f43.s0, f43.s1, f43.o1, f43.f1, f43.f2 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            var sim43 = ContentBuildSettings.instance.Add("AtlasSim"); sim43.SourceRoot = AtlasFx.R; sim43.OutputPath = "Build/Content/AtlasSim";
+            sim43.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Atlas", CreateAt = "Assets/Cat/simA.asset" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Icons", CreateAt = "Assets/Cat/simI.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            int simDir43 = ContentService.RegisterDirectory("Build/Content/AtlasSim");
+            var sc43 = ContentScope.ForScene(sceneA).CreateChild("AtlasSim");
+            var viaName43 = sc43.Load<Sprite>("Atlas/MainAtlas[o1]");
+            bool refName43 = ContentService.TryGetName(new ContentRef<Sprite>(AtlasFx.GMain, "s1"), out var refN43);
+            var viaRef43 = sc43.Load(new ContentRef<Sprite>(AtlasFx.GMain, "s1"));
+            bool path43 = ContentLinkSimulation.TryGetPath("Atlas/MainAtlas[o1]", out var simPath43, out var simRoot43);
+            sc43.Dispose(); Tick();
+            ContentService.UnregisterDirectory(simDir43, force: true);
+            Check(viaName43 == f43.o1 && refName43 && refN43 == "Atlas/MainAtlas[s1]" && viaRef43 == f43.s1 && path43 && simPath43 == AtlasFx.Main && simRoot43 == AtlasFx.R,
+                  $"T12 the simulation serves an atlas's names from the project: 'Atlas/MainAtlas[o1]' (texture outside the root) · (atlas GUID, s1) → {refN43} · filed under the atlas's path {simPath43} in the root {simRoot43}");
+            UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false; ContentLinkSimulation.Drop();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests(); Init(typeof(ContentService), "ResetStatics");
+            ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+
+            // T13 — the runtime: a built directory carries both names with one id
+            FakeEngine.MainAssetAt["Assets/Cat/atlas.asset"] = cat43; ContentLinkEditorUtility.Invalidate();
+            foreach (var e in cat43.Entries) { FakeEngine.Assets[e.id.value] = UnityEditor.LoadableObjectIdEditorUtility.LoadableObjectIdToObject(e.id); FakeEngine.IdDir[e.id.value] = "AtlasRun"; }
+            FakeEngine.Dirs["AtlasRun"] = new ScriptableObject[] { cat43 };
+            int run43 = ContentService.RegisterDirectory("AtlasRun");
+            var rs43 = ContentScope.ForScene(sceneA).CreateChild("AtlasRun");
+            var own43 = Run(rs43.LoadAsync<Sprite>("Icons/a1[a1]"));
+            var alias43 = Run(rs43.LoadAsync<Sprite>("Atlas/MainAtlas[a1]"));
+            var byRef43 = Run(rs43.LoadAsync(new ContentRef<Sprite>(AtlasFx.GMain, "a1")));
+            var link43 = new ContentLink<Sprite>("Atlas/MainAtlas", "a1");
+            var byLink43 = Run(link43.LoadAsync(rs43));
+            int id43 = FakeEngine.ObjectIdOf[f43.a1];
+            int refs43 = Ref(id43);
+            Check(own43 == f43.a1 && alias43 == f43.a1 && byRef43 == f43.a1 && byLink43 == f43.a1 && rs43.Contains("Icons/a1[a1]") && rs43.Contains("Atlas/MainAtlas[a1]") && refs43 == 2,
+                  $"T13 a built directory: the own name, the atlas name, (atlas GUID, a1) and the link (atlas, a1) load the same sprite — two slots (two engine references: {refs43}), the reference and the link on the atlas name's");
+            link43.Release(); rs43.Dispose(); Tick();
+            ContentService.UnregisterDirectory(run43, force: true);
+            // T17 (the pure part) — what a drop offers, what a pick writes
+            ContentLinkEditorUtility.Invalidate();
+            string Ch43(Object o, Type ty) { var l = new System.Collections.Generic.List<string>(); foreach (var s in ContentLinkEditorUtility.AtlasChoices(o, ty)) l.Add(s.name); return string.Join(",", l); }
+            ContentLinkEditorUtility.TryGetLinkForAtlasSprite(f43.main, f43.a1, out var pl43, out var ps43);
+            ContentLinkEditorUtility.TryGetRefForAtlasSprite(f43.main, f43.a1, out var pg43, out var pgs43);
+            Check(Ch43(f43.main, typeof(Sprite)) == "a1,s0,s1,o1" && Ch43(f43.main, typeof(Object)) == "" && Ch43(f43.main, typeof(Texture2D)) == "" && Ch43(f43.variant, typeof(Sprite)) == "" && Ch43(f43.a1, typeof(Sprite)) == ""
+                  && pl43 == "Atlas/MainAtlas" && ps43 == "a1" && pg43 == AtlasFx.GMain && pgs43 == "a1",
+                  "T17 an atlas dropped on a Sprite field offers what it packs (not on an Object or Texture2D field, not a variant, not a sprite) · a pick writes the link (atlas, sprite) and the reference (atlas GUID, sprite)");
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
+            ContentLinkEditorUtility.Invalidate();
+        }
+
+        Console.WriteLine("44) IMP016 locale overlay — two profiles share names: the simulation follows the registration order; built directories pin the runtime rule");
+        {
+            var flagBase44 = new Texture2D { name = "flag" }; var flagKo44 = new Texture2D { name = "flag" };
+            var only44 = new Texture2D { name = "only" }; var koOnly44 = new Texture2D { name = "koonly" };
+            var sheetBase44 = new Texture2D { name = "sheet" }; var s0Base44 = new Sprite { name = "s0" };
+            var sheetKo44 = new Texture2D { name = "sheet" }; var s0Ko44 = new Sprite { name = "s0" };
+            var titleBase44 = new UnityEditor.SceneAsset { name = "Title" }; var titleKo44 = new UnityEditor.SceneAsset { name = "Title" };
+            var dupA44 = new Texture2D { name = "dup" }; var dupB44 = new Object { name = "dup" }; var dupBase44 = new Texture2D { name = "dup" };
+            // Profiles Loc (Assets/Loc) and Loc.ko (Assets/Loc.ko): flag · sheet[s0] · Scenes/Title on both sides, only in the base,
+            // koonly in the locale, and two files named Icons/dup under the locale root
+            void Setup44(bool koCatalog)
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkSimulation.Drop();
+                ContentLinkSimulation.Enabled = true;
+                FakeEngine.EditorServesAnyId = true;
+                Init(typeof(ContentLinkSimulation), "Install");
+                UnityEditor.EditorApplication.isPlaying = true;
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/flag.png", flagBase44);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/only.png", only44);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.png", sheetBase44, s0Base44);
+                FakeEngine.AddProjectAsset("Assets/Loc/Scenes/Title.unity", titleBase44);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/dup.png", dupBase44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/flag.png", flagKo44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/koonly.png", koOnly44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet.png", sheetKo44, s0Ko44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Scenes/Title.unity", titleKo44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/dup.png", dupA44);
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/dup.mat", dupB44);
+                foreach (var o in new Object[] { flagBase44, flagKo44, only44, koOnly44, sheetBase44, s0Base44, sheetKo44, s0Ko44, dupA44, dupB44, dupBase44 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+                var st = ContentBuildSettings.instance;
+                var pb = st.Add("Loc"); pb.SourceRoot = "Assets/Loc"; pb.OutputPath = "Build/Loc";
+                pb.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/loc.asset" } };
+                var pk = st.Add("Loc.ko"); pk.SourceRoot = "Assets/Loc.ko"; pk.OutputPath = "Build/Loc.ko";
+                pk.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/locko.asset" } };
+                if (koCatalog)   // the locale profile was built once: its catalog is a project asset
+                    FakeEngine.AddProjectAsset("Assets/Cat/locko.asset", Cat44("Assets/Loc.ko", ("Icons/flag", flagKo44, "Assets/Loc.ko/Icons/flag.png")));
+                ContentLinkEditorUtility.Invalidate();
+            }
+            ContentCatalog Cat44(string root, params (string name, Object asset, string guid)[] es)
+            {
+                var c = ScriptableObject.CreateInstance<ContentCatalog>();
+                var list = new System.Collections.Generic.List<ContentCatalog.Entry>();
+                foreach (var e in es) list.Add(new ContentCatalog.Entry { name = e.name, id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(e.asset), guid = e.guid, sub = "" });
+                c.EditorSetEntries(list.ToArray()); c.EditorSetSourceRoot(root);
+                return c;
+            }
+            string W44(Object o) => o == null ? "null" : ReferenceEquals(o, flagBase44) || ReferenceEquals(o, s0Base44) || ReferenceEquals(o, dupBase44) ? "base" : ReferenceEquals(o, flagKo44) || ReferenceEquals(o, s0Ko44) ? "ko" : o.name;
+            Object Get44(string name) { Debug.Verbose = false; var h = ContentService.Acquire<Object>(name); Debug.Verbose = true; var a = h.IsValid ? h.Asset : null; h.Dispose(); Tick(); return a; }
+            Object Ref44(string guid, string sub = "") { Debug.Verbose = false; var h = ContentService.Acquire(new ContentRef<Object>(guid, sub)); Debug.Verbose = true; var a = h.IsValid ? h.Asset : null; h.Dispose(); Tick(); return a; }
+            int Reg44(string path) { Debug.Verbose = false; int d = ContentService.RegisterDirectory(path); Debug.Verbose = true; return d; }
+            string ScenePath44(string name) { var args = new object[] { name, null, null }; bool ok = (bool)typeof(ContentLinkSimulation).GetMethod("TryGetScenePath", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, args); return ok ? (string)args[1] : "none"; }
+
+            Setup44(false);
+            int w1_44 = Debug.Warnings; Reg44("Build/Loc");
+            var g1_44 = Get44("Icons/flag");
+            Check(ReferenceEquals(g1_44, flagBase44) && Debug.Warnings == w1_44, $"T1 the base alone, no locale catalog: the base's file, not the longer sibling root's (got {W44(g1_44)} · warnings +{Debug.Warnings - w1_44})");
+
+            Setup44(true);
+            int w2_44 = Debug.Warnings; Reg44("Build/Loc");
+            var g2_44 = Get44("Icons/flag"); var o2_44 = Get44("Icons/only");
+            Check(ReferenceEquals(g2_44, flagBase44) && ReferenceEquals(o2_44, only44) && Debug.Warnings - w2_44 <= 1, $"T2 the base alone, a locale catalog in the project: the base's file, no duplicate warning for the shared names (got {W44(g2_44)} · only={W44(o2_44)} · warnings +{Debug.Warnings - w2_44} '{Debug.LastWarning}')");
+
+            Setup44(false);
+            Reg44("Build/Loc"); int k3_44 = Reg44("Build/Loc.ko");
+            var g3_44 = Get44("Icons/flag"); var r3_44 = Ref44("Assets/Loc/Icons/flag.png"); var ko3_44 = Get44("Icons/koonly"); var o3_44 = Get44("Icons/only");
+            Check(ReferenceEquals(g3_44, flagKo44) && ReferenceEquals(r3_44, flagKo44) && ReferenceEquals(ko3_44, koOnly44) && ReferenceEquals(o3_44, only44),
+                  $"T3 base then locale: the locale's file, the base asset's reference too; each side's own names (got {W44(g3_44)} · ref {W44(r3_44)} · koonly {W44(ko3_44)} · only {W44(o3_44)})");
+            bool sc3_44 = ContentService.ContainsScene("Scenes/Title");
+            ContentLinkSimulation.TryGetPath("Scenes/Title", out var sp3_44, out _);
+            Check(sc3_44 && sp3_44 == "Assets/Loc.ko/Scenes/Title.unity", $"T4 a scene name: the locale's scene (contained={sc3_44} · path={sp3_44})");
+            var sub3_44 = Get44("Icons/sheet[s0]");
+            Check(ReferenceEquals(sub3_44, s0Ko44), $"T8 a sprite name 'Icons/sheet[s0]': the locale sheet's sprite (got {W44(sub3_44)})");
+            Debug.Verbose = false; ContentService.UnregisterDirectory(k3_44, force: true); Debug.Verbose = true;
+            var g5_44 = Get44("Icons/flag"); var ko5_44 = Get44("Icons/koonly"); var sub5_44 = Get44("Icons/sheet[s0]");
+            ContentLinkSimulation.TryGetPath("Scenes/Title", out var sp5_44, out _);
+            var sl5_44 = ScenePath44("Scenes/Title");
+            Check(sl5_44 == "Assets/Loc/Scenes/Title.unity", $"T4b the scene lookup after the locale went: the base's scene (got {sl5_44})");
+            Check(ReferenceEquals(g5_44, flagBase44) && ko5_44 == null && ReferenceEquals(sub5_44, s0Base44) && sp5_44 == "Assets/Loc/Scenes/Title.unity",
+                  $"T6 the locale unregistered: the base's file again, the locale's own name does not resolve (got {W44(g5_44)} · koonly {W44(ko5_44)} · sheet[s0] {W44(sub5_44)} · scene {sp5_44})");
+            var r6_44 = Ref44("Assets/Loc.ko/Icons/flag.png");
+            Check(r6_44 == null, $"T3b a reference to the locale asset while only the base is registered misses, as a player does (got {W44(r6_44)})");
+
+            Setup44(false);
+            Reg44("Build/Loc.ko"); Reg44("Build/Loc");
+            var g4_44 = Get44("Icons/flag");
+            Check(ReferenceEquals(g4_44, flagBase44), $"T5 locale then base: the base's file — the order, not the root's length or name (got {W44(g4_44)})");
+
+            Setup44(false);
+            Reg44("Build/Loc"); Reg44("Build/Loc.ko");
+            var d7_44 = Get44("Icons/dup");
+            Check(d7_44 == null, $"T7 two files of one name under the root that wins: nothing (got {W44(d7_44)})");
+            Setup44(false);
+            Reg44("Build/Loc");
+            var d7b_44 = Get44("Icons/dup");
+            Check(ReferenceEquals(d7b_44, dupBase44), $"T7b the same name under the base alone: the base's file — the locale's duplicate is the locale's (got {W44(d7b_44)})");
+
+            Setup44(false);
+            Reg44("Build/Loc.ko"); Reg44("Build/Loc");
+            var sub8_44 = Get44("Icons/sheet[s0]");
+            ContentLinkSimulation.TryGetPath("Scenes/Title", out var sp8_44, out _);
+            var sl8_44 = ScenePath44("Scenes/Title");
+            Check(ReferenceEquals(sub8_44, s0Base44) && sp8_44 == "Assets/Loc/Scenes/Title.unity" && sl8_44 == sp8_44, $"T8b locale then base: the sprite name and the scene name take the base's files (got {W44(sub8_44)} · scene {sp8_44} · lookup {sl8_44})");
+
+            Setup44(false);
+            Reg44("Build/Loc");
+            var before6b_44 = Get44("Icons/only");
+            var replaced44 = new Texture2D { name = "only" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/only.png", replaced44);
+            FakeEngine.Assets[FakeEngine.ObjectIdOf[replaced44]] = replaced44;
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            var after6b_44 = Get44("Icons/only");
+            Check(ReferenceEquals(before6b_44, only44) && ReferenceEquals(after6b_44, replaced44), $"T6b a file replaced at the same path during Play: after the project change the new file answers (before {W44(before6b_44)} · after {(ReferenceEquals(after6b_44, replaced44) ? "new" : W44(after6b_44))})");
+
+            Setup44(false);
+            var xTex44 = new Texture2D { name = "x" }; var xScene44 = new UnityEditor.SceneAsset { name = "x" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/x.png", xTex44); FakeEngine.Assets[FakeEngine.ObjectIdOf[xTex44]] = xTex44;
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/x.unity", xScene44);
+            ContentLinkEditorUtility.Invalidate();
+            int w7d_44 = Debug.Warnings;
+            Reg44("Build/Loc");
+            var x7d_44 = Get44("Icons/x");
+            bool xs7d_44 = ContentService.ContainsScene("Icons/x");
+            Check(x7d_44 == null && !xs7d_44 && Debug.Warnings == w7d_44 + 1 && Debug.LastWarning.Contains("'Icons/x'"), $"T7d an asset and a scene of one name in one root: neither, one warning (asset {W44(x7d_44)} · scene {xs7d_44} · warnings +{Debug.Warnings - w7d_44})");
+
+            Setup44(false);
+            var yScene44 = new UnityEditor.SceneAsset { name = "y" }; var yTex44 = new Texture2D { name = "y" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/y.unity", yScene44); FakeEngine.Assets[FakeEngine.ObjectIdOf[yScene44]] = yScene44;   // loadable, so a wrong answer shows
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/y.png", yTex44); FakeEngine.Assets[FakeEngine.ObjectIdOf[yTex44]] = yTex44;
+            ContentLinkEditorUtility.Invalidate();
+            Reg44("Build/Loc");
+            var y7d_44 = Get44("Icons/y");
+            bool ys7d_44 = ContentService.ContainsScene("Icons/y");
+            Check(y7d_44 == null && !ys7d_44, $"T7d' the same with the scene scanned first: neither (asset {W44(y7d_44)} · scene {ys7d_44})");
+
+            Setup44(false);
+            var newBase44 = new Texture2D { name = "new" }; var newKo44 = new Texture2D { name = "new" }; var newOne44 = new Texture2D { name = "one" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/new.png", newBase44); FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/new.png", newKo44); FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/one.png", newOne44);
+            foreach (var o in new Object[] { newBase44, newKo44, newOne44 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            var c7eBase44 = Cat44("Assets/Loc", ("Icons/flag", flagBase44, "")); var c7eKo44 = Cat44("Assets/Loc.ko", ("Icons/flag", flagKo44, ""));
+            FakeEngine.Dirs["Built/Loc"] = new ScriptableObject[] { c7eBase44 };
+            FakeEngine.Dirs["Built/Loc.ko"] = new ScriptableObject[] { c7eKo44 };
+            FakeEngine.AddProjectAsset("Assets/Cat/loc.asset", c7eBase44); FakeEngine.AddProjectAsset("Assets/Cat/locko.asset", c7eKo44);   // a built project keeps its catalogs: both roots are scanned
+            ContentLinkEditorUtility.Invalidate();
+            Reg44("Built/Loc"); Reg44("Built/Loc.ko");
+            var n7e_44 = Get44("Icons/new"); var one7e_44 = Get44("Icons/one");
+            Check(n7e_44 == null && ReferenceEquals(one7e_44, newOne44), $"T7e two real directories' roots with the same new file: nothing (their order is not visible) · a new file in one root answers (new {W44(n7e_44)} · one {(ReferenceEquals(one7e_44, newOne44) ? "one" : W44(one7e_44))})");
+
+            Setup44(false);
+            var clashScene44 = new UnityEditor.SceneAsset { name = "only" };
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/only.unity", clashScene44);
+            ContentLinkEditorUtility.Invalidate();
+            int w7c_44 = Debug.Warnings;
+            Reg44("Build/Loc"); Reg44("Build/Loc.ko");
+            var o7c_44 = Get44("Icons/only");
+            Check(ReferenceEquals(o7c_44, only44) && Debug.Warnings == w7c_44 + 1, $"T7c an asset in one root and a scene of the same name in another are no duplicate — the one warning is the locale root's own Icons/dup (got {W44(o7c_44)} · warnings +{Debug.Warnings - w7c_44} '{Debug.LastWarning}')");
+
+            Setup44(false);
+            ContentLinkSimulation.Enabled = false; FakeEngine.EditorServesAnyId = false;   // a player's view: built directories only
+            FakeEngine.Dirs["Built/Loc"] = new ScriptableObject[] { Cat44("Assets/Loc", ("Icons/flag", flagBase44, "Assets/Loc/Icons/flag.png"), ("Icons/only", only44, "Assets/Loc/Icons/only.png")) };
+            FakeEngine.Dirs["Built/Loc.ko"] = new ScriptableObject[] { Cat44("Assets/Loc.ko", ("Icons/flag", flagKo44, "Assets/Loc.ko/Icons/flag.png"), ("Icons/koonly", koOnly44, "Assets/Loc.ko/Icons/koonly.png")) };
+            foreach (var (o, d) in new (Object, string)[] { (flagBase44, "Built/Loc"), (only44, "Built/Loc"), (flagKo44, "Built/Loc.ko"), (koOnly44, "Built/Loc.ko") }) FakeEngine.IdDir[FakeEngine.ObjectIdOf[o]] = d;
+            int rb44 = Reg44("Built/Loc");
+            var h1_44 = ContentService.Acquire<Texture2D>("Icons/flag");
+            int rk44 = Reg44("Built/Loc.ko");
+            var h2_44 = ContentService.Acquire<Texture2D>("Icons/flag");
+            Check(ReferenceEquals(h1_44.Asset, flagBase44) && ReferenceEquals(h2_44.Asset, flagBase44), $"T10a a built directory: a slot opened before the locale keeps the base object ({W44(h1_44.Asset)} · {W44(h2_44.Asset)})");
+            h1_44.Dispose(); h2_44.Dispose(); Tick();
+            var h3_44 = ContentService.Acquire<Texture2D>("Icons/flag");
+            var hr44 = ContentService.Acquire(new ContentRef<Texture2D>("Assets/Loc/Icons/flag.png"));
+            Check(ReferenceEquals(h3_44.Asset, flagKo44) && ReferenceEquals(hr44.Asset, flagKo44), $"T10b after the release the locale's — the base asset's reference too ({W44(h3_44.Asset)} · ref {W44(hr44.Asset)})");
+            Debug.Verbose = false; int er44 = Debug.Errors; bool refused44 = !ContentService.UnregisterDirectory(rk44); Debug.Verbose = true;
+            Check(refused44 && Debug.Errors == er44 + 1, "T10c unregistering the locale while its asset is held is refused, with one error");
+            h3_44.Dispose(); hr44.Dispose(); Tick();
+            bool unreg44 = ContentService.UnregisterDirectory(rk44);
+            var h4_44 = ContentService.Acquire<Texture2D>("Icons/flag");
+            Debug.Verbose = false; var hk44 = ContentService.Acquire(new ContentRef<Texture2D>("Assets/Loc.ko/Icons/flag.png")); Debug.Verbose = true;
+            Check(unreg44 && ReferenceEquals(h4_44.Asset, flagBase44) && !hk44.IsValid, $"T10d unregistered: the base's again; the locale asset's reference misses ({W44(h4_44.Asset)} · koRef valid={hk44.IsValid})");
+            h4_44.Dispose(); hk44.Dispose(); Tick();
+            ContentService.UnregisterDirectory(rb44, force: true);
+            ContentLinkSimulation.Enabled = true;
+
+            Setup44(false);
+            var e1_44 = ContentLinkEditorUtility.ResolveAsset("Icons/flag");
+            Check(ReferenceEquals(e1_44, flagKo44), $"E1 the inspector's name → asset answers from the longest root (IMP016 D2 ⓐ: kept) (got {W44(e1_44)})");
+
+            ContentLinkSimulation.Enabled = true;
+            ContentLinkSimulation.Drop();
+            UnityEditor.EditorApplication.isPlaying = false;
+            FakeEngine.EditorServesAnyId = false;
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+            Init(typeof(ContentService), "ResetStatics");
+            ContentLinkEditorUtility.Invalidate();
+        }
+
+        Console.WriteLine("45) IMP017 remote content — index v2 · compatibility · check · download · cache");
+        {
+            var root45 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-45-" + Guid.NewGuid().ToString("N"));
+            var cache45 = System.IO.Path.Combine(root45, "cache");
+            const string Base45 = "https://cdn.test/osx/Main";
+            var utf45 = new System.Text.UTF8Encoding(false);
+            void Fresh45()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear(); FakeEngine.Registered.Clear(); FakeEngine.MountFrames = 0;
+                FakeWeb.Reset();
+                ContentRemote.ProfileFallback = null; ContentRemote.MaxConcurrentWebRequests = 3;
+                ContentArchives.EditorTarget = () => "StandaloneOSX";
+                Application.platform = RuntimePlatform.OSXEditor; Application.unityVersion = "6000.6.0f1";
+                if (System.IO.Directory.Exists(root45)) System.IO.Directory.Delete(root45, true);
+                System.IO.Directory.CreateDirectory(cache45);
+            }
+            // a packed build as the packer writes it: archives of random bytes, the v2 index as bytes and the hash of those bytes
+            (byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) Build45(
+                string profile = "Main", int count = 3, int size = 3000, string version = "1", bool typeTrees = true, string target = "StandaloneOSX",
+                string unity = "6000.6.0f1", int layout = ContentCatalog.Layout, int seed = 1)
+            {
+                var r = new System.Random(seed);
+                var files = new System.Collections.Generic.Dictionary<string, byte[]>();
+                var archives = new ContentArchives.Archive[count];
+                for (int i = 0; i < count; ++i)
+                {
+                    var b = new byte[size + i]; r.NextBytes(b);
+                    var name = $"{profile}.a{i}-{seed:x4}{i}.archive";
+                    files[name] = b;
+                    archives[i] = new ContentArchives.Archive { File = name, Bytes = b.Length, InputBytes = b.Length, Crc = "00000000", Md5 = Md5Of(b), Files = new[] { $"f{i}.cf" } };
+                }
+                var index = new ContentArchives.Index { Profile = profile, Target = target, UnityVersion = unity, TypeTrees = typeTrees, CatalogLayout = layout, ContentVersion = version, Compression = "LZ4", MaxArchiveMB = 20, Archives = archives };
+                var json = utf45.GetBytes(JsonUtility.ToJson(index, true));
+                return (json, Md5Of(json), index, files);
+            }
+            void Write45(string folder, (byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) b)
+            {
+                System.IO.Directory.CreateDirectory(folder);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(folder, ContentArchives.IndexFile), b.json);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(folder, ContentArchives.HashFile), b.hash);
+                foreach (var kv in b.files) System.IO.File.WriteAllBytes(System.IO.Path.Combine(folder, kv.Key), kv.Value);
+            }
+            bool Same45(string path, byte[] b) => System.IO.File.Exists(path) && SameBytes(System.IO.File.ReadAllBytes(path), b);
+            int Parts45(string profile = "Main") => System.IO.Directory.Exists(Dir45(profile)) ? System.IO.Directory.GetFiles(Dir45(profile), "*.part").Length : 0;
+
+            // ── T0: the request stubs behave as measured ──
+            Fresh45();
+            {
+                var data = new byte[4000]; new System.Random(0).NextBytes(data);
+                const string U0 = "https://stub.test/x";
+                FakeWeb.Serve(U0, data);
+                var t0 = System.IO.Path.Combine(root45, "t0"); System.IO.Directory.CreateDirectory(t0);
+                string P0(string n) => System.IO.Path.Combine(t0, n);
+                UnityEngine.Networking.UnityWebRequest Send0(string path, bool append, string range, Action<UnityEngine.Networking.UnityWebRequest> mid = null, bool remove = false)
+                {
+                    var h = new UnityEngine.Networking.DownloadHandlerFile(path, append) { removeFileOnAbort = remove };
+                    var q = new UnityEngine.Networking.UnityWebRequest(U0, "GET", h, null);
+                    if (range != null) q.SetRequestHeader("Range", range);
+                    var op = q.SendWebRequest();
+                    while (!op.isDone) { mid?.Invoke(q); Awaitable.NextFrameAsync(); }
+                    return q;
+                }
+                byte[] Head0(int n) { var b = new byte[n]; Array.Copy(data, b, n); return b; }
+                FakeWeb.BytesPerFrame = 500;
+                System.IO.File.WriteAllBytes(P0("a"), Head0(1000));
+                var a = Send0(P0("a"), true, "bytes=1000-");
+                bool resumed = a.result == UnityEngine.Networking.UnityWebRequest.Result.Success && a.responseCode == 206 && a.downloadedBytes == 3000 && Same45(P0("a"), data);
+                FakeWeb.Files[U0].IgnoreRange = true;
+                System.IO.File.WriteAllBytes(P0("b"), Head0(1000));
+                var b = Send0(P0("b"), true, "bytes=1000-");
+                bool appended = b.responseCode == 200 && new System.IO.FileInfo(P0("b")).Length == 5000;
+                FakeWeb.Files[U0].IgnoreRange = false;
+                FakeWeb.Files[U0].CutAfter = 1500;
+                var c = Send0(P0("c"), false, null);
+                bool cut = c.result == UnityEngine.Networking.UnityWebRequest.Result.ConnectionError && c.responseCode == 200 && c.error == "Unknown Error" && Same45(P0("c"), Head0(1500));
+                var d = Send0(P0("d"), false, null, q => { if (q.downloadedBytes >= 1000) q.Abort(); });
+                var e = Send0(P0("e"), false, null, q => { if (q.downloadedBytes >= 1000) q.Abort(); }, remove: true);
+                bool aborted = d.error == "Request aborted" && Same45(P0("d"), Head0(1000)) && e.error == "Request aborted" && !System.IO.File.Exists(P0("e"));
+                Check(resumed && appended && cut && aborted,
+                      $"T0 the request stubs follow the measurements: Range + append resumes (206 · this request's bytes) · a Range ignored is appended whole (200 · 5000) · a drop keeps the prefix with code 200 · an abort keeps it unless removeFileOnAbort ({resumed}/{appended}/{cut}/{aborted})");
+            }
+
+            void Serve45((byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) b, string baseUrl = Base45)
+            {
+                FakeWeb.Serve(baseUrl + "/archives.hash", System.Text.Encoding.ASCII.GetBytes(b.hash + "\n"));
+                FakeWeb.Serve(baseUrl + "/archives.json", b.json);
+                foreach (var kv in b.files) FakeWeb.Serve(baseUrl + "/" + kv.Key, kv.Value);
+            }
+            ContentRemoteOptions Opt45(int retry = 0, int timeout = 0, string builtIn = null, bool verify = false) => new ContentRemoteOptions { CacheRoot = cache45, RetryCount = retry, Timeout = timeout, BuiltInDirectory = builtIn, VerifyCachedFiles = verify };
+            ContentRemote Check45(ContentRemoteOptions o = null, string profile = "Main", string url = Base45) => ContentRemote.CheckAsync(profile, url, o ?? Opt45()).GetAwaiter().GetResult();
+            bool Get45(ContentRemote r) { Debug.Verbose = false; try { return r.DownloadAsync().GetAwaiter().GetResult(); } finally { Debug.Verbose = true; } }
+            string Dir45(string profile = "Main") => System.IO.Path.Combine(cache45, profile);
+            int Archives45(string url = Base45) { int n = 0; foreach (var l in FakeWeb.Log) if (l.StartsWith("GET " + url + "/", StringComparison.Ordinal) && l.Contains(".archive ")) ++n; return n; }
+            bool Committed45(string profile, byte[] json) => Same45(System.IO.Path.Combine(Dir45(profile), "archives.json"), json);
+            int Reg45(string folder)
+            {
+                FakeEngine.Dirs["ns:/" + ContentArchives.NamespaceFor(folder) + "/" + ContentArchives.MountPrefix + "/"] = new ScriptableObject[0];
+                Debug.Verbose = false;
+                try { return ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); }
+                finally { Debug.Verbose = true; }
+            }
+
+            // ── T2 · T3 · T4: the index and the compatibility check ──
+            Fresh45();
+            {
+                Debug.Verbose = false; int e0 = Debug.Errors;
+                var v1 = ContentArchives.ParseIndex("{\"Version\":1,\"Profile\":\"P\",\"Archives\":[]}", "v1");
+                var noMd5 = ContentArchives.ParseIndex("{\"Version\":2,\"Profile\":\"P\",\"Archives\":[{\"File\":\"a.archive\",\"Bytes\":1,\"Md5\":\"\"}]}", "nomd5");
+                Debug.Verbose = true;
+                var ok = ContentArchives.ParseIndex(utf45.GetString(Build45().json), "ok");
+                Check(v1 == null && noMd5 == null && ok != null && ok.Archives.Length == 3 && Debug.Errors == e0 + 2,
+                      "T2 an index of another version and one with an archive lacking its MD5 are refused (one error each); a v2 index reads");
+            }
+            {
+                var ix = Build45().index;
+                bool C(Action<ContentArchives.Index> edit) { var j = JsonUtility.FromJson<ContentArchives.Index>(JsonUtility.ToJson(ix)); edit(j); return ContentArchives.CheckCompatible(j, out _); }
+                bool same = C(_ => { });
+                bool otherTarget = C(j => j.Target = "iOS");
+                ContentArchives.EditorTarget = null; Application.platform = RuntimePlatform.OSXPlayer;
+                bool playerOk = C(_ => { }), playerWin = C(j => j.Target = "StandaloneWindows64");
+                Application.platform = RuntimePlatform.WindowsPlayer;
+                bool win32 = C(j => j.Target = "StandaloneWindows"), win64 = C(j => j.Target = "StandaloneWindows64");
+                Application.platform = RuntimePlatform.PS5;
+                typeof(ContentArchives).GetField("s_WarnedPlatform", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+                int w0 = Debug.Warnings; Debug.Verbose = false;
+                bool unknown = C(j => j.Target = "Whatever"), unknown2 = C(j => j.Target = "Other");
+                Debug.Verbose = true;
+                int warned = Debug.Warnings - w0;
+                ContentArchives.EditorTarget = () => "StandaloneOSX"; Application.platform = RuntimePlatform.OSXEditor;
+                bool noTreesOtherEngine = C(j => { j.TypeTrees = false; j.UnityVersion = "6000.6.1f1"; });
+                bool noTreesOtherLayout = C(j => { j.TypeTrees = false; j.CatalogLayout = ContentCatalog.Layout + 1; });
+                bool noTreesSame = C(j => j.TypeTrees = false);
+                bool treesOlder = C(j => j.UnityVersion = "6000.5.3f1"), treesOlderBeta = C(j => j.UnityVersion = "6000.6.0b9");
+                bool treesNewer = C(j => j.UnityVersion = "6000.7.0a1"), treesNewerPatch = C(j => j.UnityVersion = "6000.6.0f2");
+                bool treesOtherLayout = C(j => j.CatalogLayout = ContentCatalog.Layout + 1);
+                bool unreadable = C(j => j.UnityVersion = "six"), suffix = C(j => j.UnityVersion = "6000.6.0f1c1");
+                Check(same && !otherTarget && playerOk && !playerWin && win32 && win64 && unknown && unknown2 && warned == 1,
+                      $"T3 platform: the editor's build target · the player table (Windows 32 and 64) · an unknown platform is not checked, warned once (warned={warned})");
+                Check(!noTreesOtherEngine && !noTreesOtherLayout && noTreesSame && treesOlder && treesOlderBeta && !treesNewer && !treesNewerPatch && treesOtherLayout && !unreadable && suffix,
+                      "T3 engine and layout (D2 ⓒ): without type trees the exact engine and layout; with type trees an older engine and another layout pass, a newer engine (even a patch) does not; an unreadable version is refused, a suffix ignored");
+            }
+            {
+                var b = Build45(typeTrees: false, unity: "6000.6.1f1");
+                var folder = System.IO.Path.Combine(root45, "local"); Write45(folder, b);
+                FakeEngine.Dirs["ns:/" + ContentArchives.NamespaceFor(folder) + "/" + ContentArchives.MountPrefix + "/"] = new ScriptableObject[0];
+                Debug.Verbose = false; int e0 = Debug.Errors;
+                int rc = ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult();
+                Debug.Verbose = true;
+                Check(rc == -1 && Debug.Errors == e0 + 1 && Debug.LastError.Contains("cannot be loaded by this player") && FakeEngine.Mounts.Count == 0,
+                      $"T4 a local packed folder this player cannot load is refused before anything is mounted (rc={rc} mounts={FakeEngine.Mounts.Count})");
+            }
+
+            // ── T5: the catalog layout is pinned ──
+            {
+                string Fp(Type type)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var f in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    {
+                        bool serialized = !f.IsNotSerialized && (f.IsPublic || f.GetCustomAttributes(typeof(SerializeField), false).Length > 0);
+                        if (serialized) sb.Append(f.Name).Append(':').Append(f.FieldType.Name).Append(';');
+                    }
+                    return sb.ToString();
+                }
+                var fp = Fp(typeof(ContentCatalog)) + "|" + Fp(typeof(ContentCatalog.Entry)) + "|" + Fp(typeof(ContentCatalog.SceneEntry));
+                const string Layout1 = "m_Entries:Entry[];m_Scenes:SceneEntry[];m_SourceRoot:String;m_NameStyle:ContentNameStyle;|name:String;id:LoadableObjectId;guid:String;sub:String;|name:String;id:LoadableSceneId;guid:String;";
+                Check(ContentCatalog.Layout == 1 && fp == Layout1,
+                      $"T5 the serialized fields of ContentCatalog, Entry and SceneEntry are the ones layout 1 recorded — change one and Layout must move with it ({fp})");
+            }
+
+            // ── T7: the same packed folder registered twice is refused before anything is mounted (the engine refuses the second
+            // registration only after its archives are mounted again, and unmounting those breaks the first registration — measured) ──
+            Fresh45();
+            {
+                var folder = System.IO.Path.Combine(root45, "twice"); Write45(folder, Build45());
+                int d1 = Reg45(folder);
+                int mounts = FakeEngine.Mounts.Count;
+                string thrown = "";
+                Debug.Verbose = false;
+                try { ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (Exception e) { thrown = e.GetType().Name; }
+                Debug.Verbose = true;
+                Check(d1 >= 0 && thrown == "InvalidOperationException" && FakeEngine.Mounts.Count == mounts,
+                      $"T7 registering a registered packed folder again throws before anything is mounted (mounts {mounts} → {FakeEngine.Mounts.Count}, {(thrown == "" ? "no exception" : thrown)})");
+                if (d1 >= 0) ContentService.UnregisterDirectory(d1, force: true);
+            }
+
+            // ── T10 · T11 · T14: check, download, commit, check again ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var r = Check45();
+                long total = 0; foreach (var a in b.index.Archives) total += a.Bytes;
+                Check(r.Source == ContentRemoteSource.Remote && r.Error == null && r.BytesToDownload == total && FakeWeb.Count(Base45 + "/archives.hash") == 1 && FakeWeb.Count(Base45 + "/archives.json") == 1 && Archives45() == 0,
+                      $"T10 an empty cache: everything to download ({r.BytesToDownload} of {total}); the check asked for the hash and the index only");
+                bool ok = Get45(r);
+                bool files = true; foreach (var kv in b.files) files &= Same45(System.IO.Path.Combine(Dir45(), kv.Key), kv.Value);
+                Check(ok && files && Parts45() == 0 && Committed45("Main", b.json) && r.ContentVersion == "1" && r.Status.IsDone && r.Status.Percent == 1f,
+                      "T14 the download: every archive under its name, no .part left, the index committed byte for byte, status done");
+                FakeWeb.Log.Clear();
+                var again = Check45();
+                Check(again.Source == ContentRemoteSource.Remote && again.BytesToDownload == 0 && FakeWeb.Log.Count == 1 && FakeWeb.Log[0].Contains("archives.hash") && Get45(again),
+                      $"T11 the hash equals the committed index and the cache is whole: nothing to download, one request ({FakeWeb.Log.Count})");
+            }
+
+            // ── T12: the remote index names another profile · the index and its hash disagree ──
+            Fresh45();
+            {
+                var main = Build45(); Serve45(main);
+                Get45(Check45());                                                     // v1 committed
+                var ko = Build45(profile: "Main.ko", seed: 2); Serve45(ko);          // a mistaken URL: Main's address serves Main.ko
+                var r = Check45();
+                bool kept = Committed45("Main", main.json);
+                Check(r.Source == ContentRemoteSource.Cache && r.Error != null && r.Error.Contains("profile 'Main.ko'") && Archives45() == 3 && kept,
+                      $"T12 a remote index for another profile is refused before any download; the committed one stays (source={r.Source})");
+                Fresh45();
+                var v2 = Build45(seed: 3); Serve45(v2);
+                FakeWeb.Files[Base45 + "/archives.hash"].Data = System.Text.Encoding.ASCII.GetBytes(Build45(seed: 4).hash);
+                var bad = Check45();
+                Check(bad.Source == ContentRemoteSource.None && bad.Error.Contains("two versions") && FakeWeb.Count(Base45 + "/archives.json") == 2,
+                      $"T12 an index that does not match the hash file is asked for twice, then refused ({bad.Error})");
+            }
+
+            // ── T13: an incompatible remote is refused before any archive is asked for ──
+            Fresh45();
+            {
+                Serve45(Build45(typeTrees: false, unity: "6000.6.1f1"));
+                var r = Check45();
+                Check(r.Source == ContentRemoteSource.None && r.Error.Contains("cannot be loaded") && Archives45() == 0 && FakeWeb.Count(Base45 + "/archives.json") == 1,
+                      $"T13 a remote this player cannot load: refused after the index, no archive requested ({r.Error})");
+            }
+
+            // ── T15: wrong bytes ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var first = b.index.Archives[0];
+                FakeWeb.Files[Base45 + "/" + first.File].CorruptTimes = 1;
+                var r = Check45();
+                bool ok = Get45(r);
+                Check(!ok && r.Error.Contains("MD5") && !System.IO.File.Exists(System.IO.Path.Combine(Dir45(), first.File)) && !System.IO.File.Exists(System.IO.Path.Combine(Dir45(), "archives.json")),
+                      $"T15 a download whose MD5 differs is refused: no file under its name, nothing committed (RetryCount 0 — {r.Error})");
+                Fresh45(); Serve45(b);
+                FakeWeb.Files[Base45 + "/" + first.File].CorruptTimes = 1;
+                var q2 = Check45(Opt45(retry: 1));
+                Check(Get45(q2) && Same45(System.IO.Path.Combine(Dir45(), first.File), b.files[first.File]), "T15 with one retry the second download is whole");
+                Fresh45(); Serve45(b);
+                System.IO.Directory.CreateDirectory(Dir45());
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), first.File + ".part"), new byte[] { 1, 2, 3 });   // a kept prefix that is wrong
+                var q3 = Check45();
+                bool ok3 = Get45(q3);
+                Check(ok3 && Same45(System.IO.Path.Combine(Dir45(), first.File), b.files[first.File]) && FakeWeb.CountContaining(first.File + " range=bytes=3-") == 1 && FakeWeb.CountContaining(first.File + " range=-") == 1,
+                      "T15 a resumed file that fails its MD5 gets one fresh download even with RetryCount 0 (the kept prefix may be what is wrong)");
+            }
+
+            // ── T16: a dropped connection resumes with Range · a server that ignores Range · an oversized .part ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var a0 = b.index.Archives[0];
+                FakeWeb.Files[Base45 + "/" + a0.File].CutAfter = 1000;
+                var r = Check45();
+                bool ok = Get45(r);
+                long part = System.IO.File.Exists(System.IO.Path.Combine(Dir45(), a0.File + ".part")) ? new System.IO.FileInfo(System.IO.Path.Combine(Dir45(), a0.File + ".part")).Length : -1;
+                Check(!ok && part == 1000 && !Committed45("Main", b.json), $"T16 a dropped connection with no retry fails and keeps the received 1000 bytes as .part ({part})");
+                var again = Check45();
+                bool ok2 = Get45(again);
+                Check(again.BytesToDownload == a0.Bytes - 1000 && ok2 && FakeWeb.CountContaining(a0.File + " range=bytes=1000-") == 1 && Same45(System.IO.Path.Combine(Dir45(), a0.File), b.files[a0.File]),
+                      $"T16 the next check counts only the rest ({again.BytesToDownload}) and the download resumes with Range bytes=1000-");
+                Fresh45(); Serve45(b);
+                FakeWeb.Files[Base45 + "/" + a0.File].CutAfter = 1000;
+                Check(Get45(Check45(Opt45(retry: 1))) && FakeWeb.CountContaining(a0.File + " range=bytes=1000-") == 1, "T16 with one retry the same download resumes within the call");
+                Fresh45(); Serve45(b);
+                FakeWeb.Files[Base45 + "/" + a0.File].IgnoreRange = true;
+                System.IO.Directory.CreateDirectory(Dir45());
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), a0.File + ".part"), b.files[a0.File].AsSpan(0, 500).ToArray());
+                var ir = Check45();
+                Check(Get45(ir) && Same45(System.IO.Path.Combine(Dir45(), a0.File), b.files[a0.File]) && FakeWeb.CountContaining(a0.File + " range=bytes=500-") == 1 && FakeWeb.CountContaining(a0.File + " range=-") == 1,
+                      "T16 a server that answers Range with the whole file (200): the appended file is thrown away and one plain download follows, without spending a retry");
+                Fresh45(); Serve45(b);
+                var f2 = FakeWeb.Files[Base45 + "/" + a0.File]; f2.IgnoreRange = true; f2.CutAfter = 1000; f2.CutTimes = 2;
+                var twice = Check45(Opt45(retry: 2));
+                Check(Get45(twice) && Same45(System.IO.Path.Combine(Dir45(), a0.File), b.files[a0.File]) && FakeWeb.CountContaining(a0.File + " range=bytes=") == 1,
+                      $"T16 a server that ignores Range and drops while answering one: the polluted .part (prefix + the body's head) is thrown away and no Range is sent again ({FakeWeb.CountContaining(a0.File + " range=bytes=")} Range requests)");
+                Fresh45(); Serve45(b);
+                System.IO.Directory.CreateDirectory(Dir45());
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), a0.File + ".part"), new byte[a0.Bytes + 10]);
+                var big = Check45();
+                Check(big.BytesToDownload == SumBytes(b.index) && Get45(big) && FakeWeb.CountContaining(a0.File + " range=-") == 1, "T16 a .part longer than the archive is not resumed from");
+            }
+
+            // ── T17: retries · errors never retried · the stall timeout ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var a0 = b.index.Archives[0];
+                FakeWeb.Files[Base45 + "/" + a0.File].FailTimes = 2;
+                Check(Get45(Check45(Opt45(retry: 2))), "T17 two connection failures, two retries: done");
+                Fresh45(); Serve45(b);
+                FakeWeb.Files[Base45 + "/" + a0.File].FailTimes = 2;
+                var q1 = Check45(Opt45(retry: 1));
+                Check(!Get45(q1) && q1.Error.Contains("Cannot connect"), "T17 two failures, one retry: failed");
+                Fresh45(); Serve45(b);
+                var f = FakeWeb.Files[Base45 + "/" + a0.File]; f.FailTimes = 1; f.FailError = "Malformed URL";
+                var q2 = Check45(Opt45(retry: 3));
+                Check(!Get45(q2) && FakeWeb.Count(Base45 + "/" + a0.File) == 1, "T17 an error Addressables never retries (Malformed URL) is not retried");
+                Fresh45(); Serve45(b);
+                f = FakeWeb.Files[Base45 + "/" + a0.File]; f.StallAfter = 1000; f.StallFrames = 400;   // 400 frames × 16 ms = 6.4 s without a byte
+                var q3 = Check45(Opt45(retry: 1, timeout: 1));
+                Check(Get45(q3) && FakeWeb.CountContaining(a0.File + " range=bytes=1000-") == 1, "T17 a stall longer than Timeout aborts the request, which is retried and resumes");
+                Fresh45(); Serve45(b);
+                f = FakeWeb.Files[Base45 + "/" + a0.File]; f.StallAfter = 1000; f.StallFrames = 400;
+                var q4 = Check45(Opt45(retry: 0, timeout: 1));
+                Check(!Get45(q4) && q4.Error.Contains("Request timeout"), $"T17 with no retry the stalled request fails as a timeout ({q4.Error})");
+                Fresh45(); Serve45(b);
+                f = FakeWeb.Files[Base45 + "/" + a0.File]; f.StallAfter = 1000; f.StallFrames = 400;
+                Check(Get45(Check45(Opt45(timeout: 0))) && FakeWeb.Count(Base45 + "/" + a0.File) == 1, "T17 Timeout 0: the stall is waited out (no abort)");
+                Fresh45(); Serve45(b);
+                FakeWeb.SecondsPerFrame = 5;                                                          // long frames: 5 s each
+                f = FakeWeb.Files[Base45 + "/" + a0.File]; f.StallAfter = 1000; f.StallFrames = 3;
+                Check(Get45(Check45(Opt45(timeout: 1))) && FakeWeb.Count(Base45 + "/" + a0.File) == 1, "T17 a few long frames without a byte are not a stall (more than 5 frames are needed, as in Addressables)");
+            }
+
+            // ── what the default cache-hit check sees ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                var a1 = b.index.Archives[1];
+                var pD8 = System.IO.Path.Combine(Dir45(), a1.File);
+                var bad = (byte[])b.files[a1.File].Clone(); bad[10] ^= 0xFF; System.IO.File.WriteAllBytes(pD8, bad);   // same size, other bytes (disk damage)
+                var size = Check45();
+                var hash = Check45(Opt45(verify: true));
+                bool fixedUp = Get45(hash) && Same45(pD8, b.files[a1.File]);
+                var a2 = b.index.Archives[2];
+                var pTrunc = System.IO.Path.Combine(Dir45(), a2.File);
+                System.IO.File.WriteAllBytes(pTrunc, new byte[10]);                                        // truncated: the size gives it away
+                var trunc = Check45();
+                Check(trunc.BytesToDownload == a2.Bytes && Get45(trunc) && Same45(pTrunc, b.files[a2.File]), $"T11b a cached archive of the wrong size is no hit: it is downloaded again ({trunc.BytesToDownload})");
+                Check(size.BytesToDownload == 0 && hash.BytesToDownload == a1.Bytes && fixedUp,
+                      $"T11b a damaged cached archive of the right size: name + size (ⓐ) does not see it, VerifyCachedFiles (ⓑ) downloads it again ({size.BytesToDownload} · {hash.BytesToDownload})");
+            }
+
+            // ── T18: the concurrency limit ──
+            Fresh45();
+            {
+                var b = Build45(count: 8); Serve45(b);
+                FakeWeb.BytesPerFrame = 1000;
+                bool ok = Get45(Check45());
+                Check(ok && FakeWeb.MaxInFlight == 3, $"T18 never more than MaxConcurrentWebRequests in flight (max {FakeWeb.MaxInFlight})");
+                Fresh45(); Serve45(b); FakeWeb.BytesPerFrame = 1000; ContentRemote.MaxConcurrentWebRequests = 1;
+                Check(Get45(Check45()) && FakeWeb.MaxInFlight == 1, "T18 a limit of one downloads one at a time");
+            }
+
+            // ── T19: hooks and the no-cache header ──
+            Fresh45();
+            {
+                var b = Build45();
+                Serve45(b, "https://signed.test/osx/Main");
+                int overrides = 0;
+                var o = Opt45(); o.WebRequestOverride = q => ++overrides; o.TransformUrl = u => u.Replace("https://cdn.test", "https://signed.test");
+                bool ok = Get45(Check45(o));
+                Check(ok && overrides == 5 && FakeWeb.Log.Count == 5 && FakeWeb.Log.TrueForAll(l => l.StartsWith("GET https://signed.test", StringComparison.Ordinal)),
+                      $"T19 TransformUrl rewrites every remote URL and WebRequestOverride sees every remote request ({overrides})");
+                Check(FakeWeb.CountContaining("archives.hash range=- cc=no-cache") == 1 && FakeWeb.CountContaining("archives.json range=- cc=no-cache") == 1 && FakeWeb.CountContaining(".archive range=- cc=no-cache") == 0,
+                      "T19 the hash and the index are asked for with Cache-Control: no-cache; archives (named by content) are not");
+            }
+
+            // ── T20 · T21: cancel · status ──
+            Fresh45();
+            {
+                var b = Build45(size: 10000); Serve45(b);
+                FakeWeb.BytesPerFrame = 2000;
+                var r = Check45();
+                var cts = new CancellationTokenSource();
+                long seen = 0; float percent = 0; bool doneEarly = false;
+                FakeWeb.OnStep = () => { var s = r.Status; if (s.DownloadedBytes > seen) seen = s.DownloadedBytes; percent = s.Percent; doneEarly |= s.IsDone; if (seen >= 8000) cts.Cancel(); };
+                string thrown = "";
+                Debug.Verbose = false;
+                try { r.DownloadAsync(cts.Token).GetAwaiter().GetResult(); } catch (Exception e) { thrown = e.GetType().Name; }
+                Debug.Verbose = true;
+                FakeWeb.OnStep = null;
+                Check(thrown == "OperationCanceledException" && Parts45() > 0 && !System.IO.File.Exists(System.IO.Path.Combine(Dir45(), "archives.json")) && FakeWeb.InFlight == 0,
+                      $"T20 a cancel aborts the requests, keeps the .part files and commits nothing ({thrown} · parts {Parts45()})");
+                var again = Check45();
+                Check(again.BytesToDownload < SumBytes(b.index) && Get45(again), $"T20 the next download resumes from the kept files ({again.BytesToDownload} of {SumBytes(b.index)})");
+                Check(seen >= 8000 && !doneEarly && percent > 0 && percent < 1, $"T21 the polled status grows while the download runs and is not done before the end (seen {seen} · {percent:F2})");
+                var st45 = again.Status;
+                Check(st45.IsDone && st45.Percent == 1f && st45.TotalBytes == again.BytesToDownload && st45.DownloadedBytes == st45.TotalBytes, "T21 at the end: done, Percent 1, downloaded = total (the resumed prefixes are not counted)");
+            }
+
+            // ── T22 · T23 · T24: the built-in copy and the fallbacks ──
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets", "Main"); Write45(builtIn, b);
+                Serve45(b);
+                var r = Check45(Opt45(builtIn: builtIn));
+                Check(r.Source == ContentRemoteSource.Remote && r.BytesToDownload == 0 && Get45(r) && Archives45() == 0 && FakeWeb.CountContaining("GET file://") == 4 && Committed45("Main", b.json),
+                      $"T22 archives the app ships (same name and MD5) are copied, not downloaded: 0 bytes, file:// requests only (index + 3)");
+                Fresh45();
+                var v2 = Build45(seed: 5);
+                var mixed = v2; mixed.index.Archives[0] = b.index.Archives[0]; mixed.files.Remove(v2.index.Archives[0].File); mixed.files[b.index.Archives[0].File] = b.files[b.index.Archives[0].File];
+                mixed.json = utf45.GetBytes(JsonUtility.ToJson(mixed.index, true)); mixed.hash = Md5Of(mixed.json);
+                Serve45(mixed); Write45(builtIn, b);
+                var q2 = Check45(Opt45(builtIn: builtIn));
+                Check(Get45(q2) && Archives45() == 2 && Committed45("Main", mixed.json), "T22 only what the app does not ship is downloaded (two of three)");
+                Fresh45(); Serve45(b); Write45(builtIn, b);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(builtIn, b.index.Archives[1].File), new byte[b.index.Archives[1].Bytes]);   // same name and size, other bytes
+                var q3 = Check45(Opt45(builtIn: builtIn));
+                Check(Get45(q3) && Archives45() == 1 && Same45(System.IO.Path.Combine(Dir45(), b.index.Archives[1].File), b.files[b.index.Archives[1].File]),
+                      "T22 a built-in file that fails its MD5 is downloaded instead");
+            }
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets", "Main"); Write45(builtIn, b);
+                Serve45(b); Get45(Check45());                                       // a complete cache
+                FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                var off = Check45(Opt45(builtIn: builtIn));
+                FakeWeb.Log.Clear();
+                Check(off.Source == ContentRemoteSource.Cache && off.Error.Contains("Cannot connect") && Get45(off) && FakeWeb.Log.Count == 0,
+                      $"T23 the remote unreachable and the cache whole: the cache (Error says why), nothing requested");
+                ContentRemote.ClearCache("Main", Opt45());
+                FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                var bi = Check45(Opt45(builtIn: builtIn));
+                Check(bi.Source == ContentRemoteSource.BuiltIn && Get45(bi) && Committed45("Main", b.json) && Archives45() == 0, "T23 no cache: the built-in build is copied into the cache and committed");
+                ContentRemote.ClearCache("Main", Opt45());
+                FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                var none = Check45();
+                Check(none.Source == ContentRemoteSource.None && !Get45(none), "T23 no cache, no built-in: None, and the download fails");
+            }
+            Fresh45();
+            {
+                var old = Build45(typeTrees: false, unity: "6000.6.0f1");
+                Serve45(old); Get45(Check45());                                     // an app built with 6000.6.0f1 committed it
+                Application.unityVersion = "6000.6.2f1";                           // the app is updated: another engine
+                var fresh = Build45(seed: 9, unity: "6000.6.2f1");
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets", "Main"); Write45(builtIn, fresh);
+                FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                var r = Check45(Opt45(builtIn: builtIn));
+                Debug.Verbose = false;
+                int rc = Reg45(Dir45());
+                Debug.Verbose = true;
+                Check(rc == -1 && r.Source == ContentRemoteSource.BuiltIn && Get45(r) && Committed45("Main", fresh.json),
+                      "T24 after an engine update the old no-type-tree cache is refused — by the registration and by the fallback, which takes the built-in build");
+            }
+
+            Fresh45();
+            {
+                var old = Build45(typeTrees: false, unity: "6000.6.0f1");
+                Serve45(old); Get45(Check45());                                     // committed by an app built with 6000.6.0f1
+                Application.unityVersion = "6000.6.2f1";                           // updated app; the server still serves the old build
+                var fresh = Build45(seed: 9, unity: "6000.6.2f1");
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets", "Main"); Write45(builtIn, fresh);
+                FakeWeb.Log.Clear();
+                var r = Check45(Opt45(builtIn: builtIn));
+                Check(r.Source == ContentRemoteSource.BuiltIn && r.Error != null && r.Error.Contains("cannot be loaded") && FakeWeb.Count(Base45 + "/archives.json") == 0 && Get45(r) && Committed45("Main", fresh.json),
+                      $"T24 the server still serves the build the cache holds, but the app moved to another engine: the same hash does not skip the check — the built-in build is taken ({r.Source})");
+            }
+
+            // ── T25 · T26 · T29: cleaning, clearing, an update while registered ──
+            Fresh45();
+            {
+                var v1 = Build45(); Serve45(v1); Get45(Check45());
+                int d = Reg45(Dir45());
+                var mounted = System.IO.Path.Combine(Dir45(), v1.index.Archives[0].File);
+                var stamp = System.IO.File.GetLastWriteTimeUtc(mounted);
+                var v2 = Build45(seed: 7); FakeWeb.Reset(); Serve45(v2);
+                var up = Check45();
+                bool ok = Get45(up);
+                bool untouched = Same45(mounted, v1.files[v1.index.Archives[0].File]) && System.IO.File.GetLastWriteTimeUtc(mounted) == stamp;
+                Check(ok && untouched && Committed45("Main", v2.json), "T29 an update while the folder is registered: the mounted files are untouched and the new index is committed");
+                System.IO.File.WriteAllText(System.IO.Path.Combine(Dir45(), "notes.txt"), "mine");
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), "stray.archive.part"), new byte[] { 1 });
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), "sub"));
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), "sub", "x.archive"), new byte[] { 1 });
+                System.IO.Directory.CreateDirectory(Dir45("Other")); System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45("Other"), "y.archive"), new byte[] { 1 });
+                var (n1, _) = up.CleanCache();
+                bool mountedKept = System.IO.File.Exists(mounted);
+                Check(n1 == 1 && mountedKept && System.IO.File.Exists(System.IO.Path.Combine(Dir45(), "notes.txt")) && System.IO.File.Exists(System.IO.Path.Combine(Dir45(), "sub", "x.archive")) && System.IO.File.Exists(System.IO.Path.Combine(Dir45("Other"), "y.archive")),
+                      $"T25 CleanCache while v1 is mounted: only the stray .part goes ({n1}); mounted archives, unknown files, a subfolder and another profile stay");
+                Check(!ContentRemote.ClearCache("Main", Opt45()) && System.IO.Directory.Exists(Dir45()), "T26 ClearCache refuses a folder a registered directory was mounted from");
+                {
+                    var damaged = System.IO.Path.Combine(Dir45(), v2.index.Archives[0].File);
+                    ContentService.UnregisterDirectory(d, force: true);
+                    int dv2 = Reg45(Dir45());                                                           // v2 is mounted now
+                    var bytesBefore = System.IO.File.ReadAllBytes(damaged);
+                    System.IO.File.WriteAllBytes(damaged, new byte[5]);                                 // the disk damages a mounted archive
+                    var repair = Check45();
+                    bool repaired = Get45(repair);
+                    Check(!repaired && repair.Error.Contains("mounted") && new System.IO.FileInfo(damaged).Length == 5,
+                          $"T29 a damaged archive that is mounted is not replaced under the registration — the download fails and says why ({repair.Error})");
+                    System.IO.File.WriteAllBytes(damaged, bytesBefore);
+                    ContentService.UnregisterDirectory(dv2, force: true);
+                    d = Reg45(Dir45()); ContentService.UnregisterDirectory(d, force: true);
+                }
+                int d2 = Reg45(Dir45());
+                var (n2, bytes2) = up.CleanCache();
+                bool v1Gone = true; foreach (var a in v1.index.Archives) v1Gone &= !System.IO.File.Exists(System.IO.Path.Combine(Dir45(), a.File));
+                bool v2Kept = true; foreach (var a in v2.index.Archives) v2Kept &= System.IO.File.Exists(System.IO.Path.Combine(Dir45(), a.File));
+                Check(d2 >= 0 && n2 == 3 && bytes2 == SumBytes(v1.index) && v1Gone && v2Kept, $"T29 unregister → register the same folder: the new index is mounted, and CleanCache now removes v1's three ({n2} · {bytes2} B)");
+                ContentService.UnregisterDirectory(d2, force: true);
+                Check(ContentRemote.ClearCache("Main", Opt45()) && !System.IO.Directory.Exists(Dir45()) && System.IO.Directory.Exists(Dir45("Other")), "T26 ClearCache removes that profile's folder only");
+            }
+
+            // ── T27 · T28: two directories side by side · one folder, one download at a time ──
+            Fresh45();
+            {
+                var main = Build45(version: "5"); var ko = Build45(profile: "Main.ko", seed: 2, version: "5");
+                Serve45(main); Serve45(ko, "https://cdn.test/osx/Main.ko");
+                var rm = Check45(); var rk = Check45(profile: "Main.ko", url: "https://cdn.test/osx/Main.ko");
+                bool both = Get45(rm) && Get45(rk);
+                Check(both && rm.CacheDirectory != rk.CacheDirectory && ContentArchives.NamespaceFor(rm.CacheDirectory) != ContentArchives.NamespaceFor(rk.CacheDirectory) && rm.ContentVersion == "5" && rk.ContentVersion == "5",
+                      "T27 a base and its locale: two cache folders, two namespaces, both content versions visible for the app to pair");
+                var (n, _) = rm.CleanCache();
+                bool koKept = true; foreach (var a in ko.index.Archives) koKept &= System.IO.File.Exists(System.IO.Path.Combine(rk.CacheDirectory, a.File));
+                Check(n == 0 && koKept, "T27 cleaning the base never touches the locale's folder");
+                Fresh45();
+                Serve45(main); FakeWeb.BytesPerFrame = 500;
+                var first = Check45(); var second = Check45();
+                bool secondResult = true; string secondError = null;
+                bool once = false, hung = false;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    Debug.Verbose = false;
+                    try { secondResult = second.DownloadAsync().GetAwaiter().GetResult(); secondError = second.Error ?? "-"; }
+                    catch (TimeoutException) { hung = true; secondError = "hung"; }
+                    Debug.Verbose = true;
+                };
+                bool firstResult = false;
+                try { firstResult = Get45(first); } catch (TimeoutException) { hung = true; }
+                FakeWeb.OnStep = null;
+                Check(!hung && firstResult && !secondResult && secondError.Contains("another download"), $"T28 a second download into the same folder while one runs fails at once ({secondError})");
+            }
+
+            // ── T30: the editor ──
+            Fresh45();
+            {
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                var settings = ContentBuildSettings.instance;
+                var main = settings.Find("Main"); main.SourceRoot = "Assets/Content"; main.OutputPath = "Build/Content/Main";
+                FakeEngine.Folders.Add("Assets/Content");
+                Init(typeof(ContentLinkSimulation), "Install");
+                ContentLinkSimulation.Enabled = true; UnityEditor.EditorApplication.isPlaying = true;
+                var sim = Check45();
+                int dir45 = ContentService.RegisterPackedDirectoryAsync(sim.CacheDirectory).GetAwaiter().GetResult();
+                Check(sim.Source == ContentRemoteSource.Simulated && sim.CacheDirectory == "Build/Content/Main" && FakeWeb.Log.Count == 0 && Get45(sim) && dir45 >= 0 && ContentService.HasSimulatedDirectories,
+                      "T30 simulation on: no request, the cache directory is the profile's output, and registering it is served from the project");
+                ContentService.UnregisterDirectory(dir45, force: true);
+                Debug.Verbose = false; int direct = ContentService.RegisterPackedDirectoryAsync(System.IO.Path.Combine(cache45, "Main")).GetAwaiter().GetResult(); Debug.Verbose = true;
+                Check(direct == -1, "T30 (D1 ⓑ) a cache folder the caller picks is no profile's output: the simulation cannot serve it");
+                ContentLinkSimulation.Enabled = false;
+                Serve45(Build45());
+                var real = Check45();
+                Check(real.Source == ContentRemoteSource.Remote && FakeWeb.Log.Count == 2, "T30 simulation off: the real check");
+                UnityEditor.EditorUserBuildSettings.activeBuildTarget = UnityEditor.BuildTarget.Android;
+                Init(typeof(ContentLinkSimulation), "Install");
+                bool android = ContentArchives.CheckCompatible(Build45().index, out var why);
+                Check(!android && why.Contains("Android"), "T30 the editor checks against its active build target");
+                UnityEditor.EditorUserBuildSettings.activeBuildTarget = UnityEditor.BuildTarget.StandaloneOSX;
+                ContentLinkSimulation.Enabled = true; ContentLinkSimulation.Drop(); UnityEditor.EditorApplication.isPlaying = false;
+                ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+                ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            }
+
+            Console.WriteLine("46) IMP018 archive names — an index names files of its own folder, once; one rule for the packer and the reader");
+            (byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) Named46(params string[] names)
+            {
+                var b = Build45(count: names.Length, seed: 46);
+                var files = new System.Collections.Generic.Dictionary<string, byte[]>(StringComparer.Ordinal);
+                for (int i = 0; i < names.Length; ++i)
+                {
+                    var data = b.files[b.index.Archives[i].File];
+                    b.index.Archives[i].File = names[i];
+                    files[names[i]] = data;
+                }
+                var json = utf45.GetBytes(JsonUtility.ToJson(b.index, true));
+                return (json, Md5Of(json), b.index, files);
+            }
+            (byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) Twice46(string second, int seed)
+            {
+                var b = Build45(count: 2, seed: seed);
+                var a0 = b.index.Archives[0];
+                var data = b.files[a0.File];
+                a0.File = "Main.dup-0000000a.archive";
+                b.index.Archives[1] = new ContentArchives.Archive { File = second, Bytes = a0.Bytes, InputBytes = a0.InputBytes, Crc = a0.Crc, Md5 = a0.Md5, Files = a0.Files };
+                var json = utf45.GetBytes(JsonUtility.ToJson(b.index, true));
+                var files = new System.Collections.Generic.Dictionary<string, byte[]>(StringComparer.Ordinal) { [a0.File] = data };
+                files[second] = data;
+                return (json, Md5Of(json), b.index, files);
+            }
+            byte[] Victim46(string path, int size, int seed) { var v = new byte[size]; new System.Random(seed).NextBytes(v); System.IO.File.WriteAllBytes(path, v); return v; }
+
+            // ── N1: ParseIndex refuses a name that leaves the folder, is not an archive name, or comes twice ──
+            Fresh45();
+            {
+                string Ix(params string[] fileFields)
+                {
+                    var parts = new System.Collections.Generic.List<string>();
+                    foreach (var f in fileFields) parts.Add("{" + f + "\"Bytes\":1,\"Md5\":\"0123456789abcdef0123456789abcdef\"}");
+                    return "{\"Version\":2,\"Profile\":\"Main\",\"Archives\":[" + string.Join(",", parts) + "]}";
+                }
+                string F(string name) => "\"File\":\"" + name + "\",";
+                var bad = new (string what, string json)[]
+                {
+                    ("../x.archive", Ix(F("../x.archive"))),
+                    ("an absolute path", Ix(F("/tmp/x.archive"))),
+                    ("a backslash", Ix(F("..\\\\x.archive"))),
+                    ("an escaped separator", Ix(F("..\\u002fx.archive"))),
+                    ("a JSON-escaped slash", Ix(F("..\\/x.archive"))),
+                    ("empty", Ix(F(""))),
+                    ("null", Ix("\"File\":null,")),
+                    ("missing", Ix("")),
+                    ("a drive", Ix(F("C:x.archive"))),
+                    ("a space", Ix(F("a b.archive"))),
+                    ("a hash sign", Ix(F("Stage#1.all-1a2b3c4d.archive"))),
+                    ("a percent sign", Ix(F("50%41.archive"))),
+                    ("non-ASCII", Ix(F("\uBA54\uC778.archive"))),
+                    ("another extension case", Ix(F("x.ARCHIVE"))),
+                    ("no extension", Ix(F("x.bin"))),
+                    ("a name twice", Ix(F("Main.a-1.archive"), F("Main.a-1.archive"))),
+                    ("a name twice in another case", Ix(F("Main.a-1.archive"), F("MAIN.A-1.archive"))),
+                };
+                var accepted = new System.Collections.Generic.List<string>();
+                foreach (var (what, json) in bad)
+                {
+                    Debug.Verbose = false; int e0 = Debug.Errors;
+                    var ix = ContentArchives.ParseIndex(json, "n1");
+                    int n = Debug.Errors - e0; Debug.Verbose = true;
+                    if (ix != null || n != 1) accepted.Add($"{what} ({(ix != null ? "read" : "errors +" + n)})");
+                }
+                Debug.Verbose = false;
+                var good = ContentArchives.ParseIndex(Ix(F("Main.manifest-1a653976.archive"), F("Main.0110-a3f9c2e1.archive"), F("Main.big-ab12_cf-0a1b2c3d.archive"), F("Main.seq-00ff00ff.archive")), "n1ok");
+                Debug.Verbose = true;
+                Check(accepted.Count == 0 && good != null && good.Archives.Length == 4,
+                      $"N1 ParseIndex refuses, one error each, a name that leaves the folder, is not an archive name or comes twice — and reads the packer's shapes (accepted: {(accepted.Count == 0 ? "none" : string.Join(" · ", accepted))})");
+            }
+
+            // ── N2 · N3: a remote index that names a file outside the cache folder changes nothing outside it ──
+            foreach (var (label, outside) in new[] { ("N2 '../victim.archive'", "../victim.archive"), ("N3 an absolute name", "") })
+            {
+                Fresh45();
+                var victimPath = outside.Length > 0 ? System.IO.Path.GetFullPath(System.IO.Path.Combine(Dir45(), outside)) : System.IO.Path.Combine(root45, "abs-victim.archive");
+                var b = Named46("Main.ok-00000001.archive", outside.Length > 0 ? outside : victimPath);
+                var victim = Victim46(victimPath, 777, 4646);
+                Serve45(b);
+                Debug.Verbose = false; var r = Check45(); bool got = Get45(r); Debug.Verbose = true;
+                bool partOutside = System.IO.File.Exists(victimPath + ContentRemote.PartExtension);
+                Check(Same45(victimPath, victim) && !partOutside && Archives45() == 0 && r.Source != ContentRemoteSource.Remote && !got && (r.Error ?? "").Contains("is not an archive name"),
+                      $"{label}: refused before anything is requested — the file outside keeps its bytes, no .part beside it (source={r.Source} · archive requests={Archives45()} · download={got} · victim kept={Same45(victimPath, victim)} · part outside={partOutside} · error={r.Error})");
+            }
+
+            // ── N4: a remote index that lists one archive twice — the same string or another case — is refused ──
+            foreach (var second in new[] { "Main.dup-0000000a.archive", "MAIN.DUP-0000000A.archive" })
+            {
+                Fresh45();
+                var b = Twice46(second, 47);
+                Serve45(b);
+                Debug.Verbose = false; var r = Check45(); bool got = Get45(r); Debug.Verbose = true;
+                Check(r.Source != ContentRemoteSource.Remote && Archives45() == 0 && !got && !Committed45("Main", b.json) && (r.Error ?? "").Contains("listed twice"),
+                      $"N4 an archive listed twice ({(second == "Main.dup-0000000a.archive" ? "the same string" : "another case")}) is refused before anything is requested (source={r.Source} · archive requests={Archives45()} · committed={Committed45("Main", b.json)})");
+            }
+
+            // ── N5: a built-in index that names a file outside its folder is not used; nothing outside either folder changes ──
+            Fresh45();
+            {
+                var builtIn = System.IO.Path.Combine(root45, "builtin", "Main");
+                var b = Named46("Main.ok-00000001.archive", "../bvictim.archive");
+                Write45(builtIn, b);
+                var cacheVictim = System.IO.Path.GetFullPath(System.IO.Path.Combine(Dir45(), "../bvictim.archive"));
+                var vb = Victim46(cacheVictim, 555, 4747);
+                Debug.Verbose = false; var r = Check45(Opt45(builtIn: builtIn)); bool got = Get45(r); Debug.Verbose = true;
+                Check(Same45(cacheVictim, vb) && r.Source != ContentRemoteSource.BuiltIn && FakeWeb.CountContaining("bvictim") == 0,
+                      $"N5 a built-in index that names a file outside its folder is not used: the file outside the cache folder keeps its bytes and nothing outside the built-in folder is read (source={r.Source} · download={got} · reads={FakeWeb.CountContaining("bvictim")})");
+            }
+
+            // ── N5b: an index already committed in the cache that names a file outside it is not used and cleans nothing ──
+            Fresh45();
+            {
+                var b = Named46("Main.ok-00000001.archive", "../cvictim.archive");
+                Write45(Dir45(), b);
+                var cv = System.IO.Path.GetFullPath(System.IO.Path.Combine(Dir45(), "../cvictim.archive"));
+                var cvBytes = System.IO.File.ReadAllBytes(cv);
+                Debug.Verbose = false; var r = Check45(); var (cleaned, _) = r.CleanCache(); Debug.Verbose = true;
+                Check(r.Source != ContentRemoteSource.Cache && cleaned == 0 && Same45(cv, cvBytes),
+                      $"N5b an index committed in the cache that names a file outside it is not used, and cleaning removes nothing (source={r.Source} · cleaned={cleaned} · file kept={Same45(cv, cvBytes)})");
+            }
+
+            // ── N6 · N6b: registering a folder whose index names a file outside it, or one archive twice, mounts nothing ──
+            foreach (var twice in new[] { false, true })
+            {
+                Fresh45();
+                var folder = System.IO.Path.Combine(root45, twice ? "dup46" : "local46");
+                var b = twice ? Twice46("Main.dup-0000000a.archive", 48) : Named46("Main.ok-00000001.archive", "../outside46.archive");
+                Write45(folder, b);
+                Debug.Verbose = false; int e0 = Debug.Errors; int d46 = -2; string thrown = "";
+                try { d46 = Reg45(folder); } catch (Exception e) { thrown = e.GetType().Name; }
+                int errs = Debug.Errors - e0; Debug.Verbose = true;
+                int mounts = FakeEngine.Mounts.Count;
+                bool outsideMounted = FakeEngine.Mounts.Exists(m => m.Path.Contains("outside46"));
+                if (d46 >= 0) ContentService.UnregisterDirectory(d46, force: true);
+                Check(d46 == -1 && thrown == "" && mounts == 0 && errs == 1,
+                      $"{(twice ? "N6b one archive listed twice" : "N6 a file outside the folder")}: −1, nothing mounted, one error (dir={d46} · thrown={(thrown == "" ? "-" : thrown)} · mounts={mounts} · outside mounted={outsideMounted} · errors=+{errs})");
+            }
+
+            // ── N9: a refused index gives one error, not a second one saying the file is missing ──
+            Fresh45();
+            {
+                int Errs9(string json)
+                {
+                    var folder = System.IO.Path.Combine(root45, "n9-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                    System.IO.Directory.CreateDirectory(folder);
+                    if (json != null) System.IO.File.WriteAllText(System.IO.Path.Combine(folder, ContentArchives.IndexFile), json);
+                    Debug.Verbose = false; int e0 = Debug.Errors; int d9 = Reg45(folder); int n = Debug.Errors - e0; Debug.Verbose = true;
+                    return d9 == -1 ? n : -100;
+                }
+                int v1 = Errs9("{\"Version\":1,\"Profile\":\"Main\",\"Archives\":[]}");
+                int noMd5 = Errs9("{\"Version\":2,\"Profile\":\"Main\",\"Archives\":[{\"File\":\"Main.a-1.archive\",\"Bytes\":1,\"Md5\":\"\"}]}");
+                int none = Errs9(null);
+                bool lastSaysMissing = Debug.LastError.Contains("has no archives.json");
+                Check(v1 == 1 && noMd5 == 1 && none == 1 && lastSaysMissing,
+                      $"N9 one error per refused index (version 1: +{v1} · no MD5: +{noMd5}); a folder without an index keeps its one line (+{none} · says missing={lastSaysMissing})");
+            }
+
+            // ── N12: the validator refuses a name a URL or a CDN key does not carry as is; its other wording stays ──
+            {
+                var sizes = new System.Collections.Generic.Dictionary<string, long> { ["a.cf"] = 4, ["BuildManifestHash.txt"] = 1, ["abc123.json"] = 2 };
+                var input = new ArchivePartitionInput { ProfileName = "T", LimitBytes = 8, Files = new[] { "a.cf", "BuildManifestHash.txt", "abc123.json" }, Sizes = sizes, ManifestFiles = new[] { "BuildManifestHash.txt", "abc123.json" } };
+                string Err12(string name) { var errs = new System.Collections.Generic.List<string>(); ArchivePartitionValidator.Validate(input, new[] { Grp("T.m.archive", "BuildManifestHash.txt", "abc123.json"), Grp(name, "a.cf") }, errs, null); return string.Join(" | ", errs); }
+                var missed = new System.Collections.Generic.List<string>();
+                foreach (var n in new[] { "Stage#1.all-1a2b3c4d.archive", "a b.archive", "x+y.archive", "\uBA54\uC778.archive", "50%41.archive", "a;b.archive", "a~b.archive" })
+                    if (!Err12(n).Contains("does not carry as is")) missed.Add($"{n} → '{Err12(n)}'");
+                string slash = Err12("sub/m.archive"), colon = Err12("T:x.archive"), shape = Err12("T.0110-a3f9c2e1.archive");
+                bool keep = slash.Contains("is not a plain file name") && !slash.Contains("does not carry") && colon.Contains("is not a plain file name") && !colon.Contains("does not carry");
+                Check(missed.Count == 0 && keep && shape == "",
+                      $"N12 the validator: a URL character is refused in its own words; '/' and ':' keep theirs, one error each; a built-in shape is clean (missed: {(missed.Count == 0 ? "none" : string.Join(" · ", missed))} · keep={keep} · shape='{shape}')");
+            }
+
+            // ── N10: the predicates ──
+            {
+                var wrong = new System.Collections.Generic.List<string>();
+                string Show(string n) => n == null ? "null" : n.Replace("\u0000", "\\0").Replace("\u001f", "\\x1f");
+                foreach (var n in new[] { "Main.manifest-1a653976.archive", "Main.0110-a3f9c2e1.archive", "Main.seq-00ff00ff.archive", "Main.big-ab12_cf-0a1b2c3d.archive", "A.archive", ".archive", "Console.archive", "COM10.archive", "Main.all-64aa547c.archive", "Main.CON.archive" })
+                    if (!ContentArchives.IsArchiveName(n)) wrong.Add("refused " + Show(n));
+                foreach (var n in new[] { null, "", ".", "..", "x.bin", "x.ARCHIVE", "x.archive ", " x.archive", "a b.archive", "a#b.archive", "a%b.archive", "a+b.archive", "a~b.archive", "a;b.archive", "\uBA54\uC778.archive", "\u00e9.archive", "a\uFF0Fb.archive", "a/b.archive", "a\\b.archive", "C:x.archive", "a*b.archive", "a?b.archive", "a\"b.archive", "a<b.archive", "a>b.archive", "a|b.archive", "a\u0000b.archive", "a\u001fb.archive", "CON.archive", "aux.all-1a2b3c4d.archive", "com1.archive", "LPT9.big-x.archive", "NUL.x.archive", "Lpt9.a.archive" })
+                    if (ContentArchives.IsArchiveName(n)) wrong.Add("archive name " + Show(n));
+                foreach (var n in new[] { "a b", "a#b", "\uBA54\uC778", "a+b", "x.archive", "Main", "CONX", "COM10", "Console", " lead" })
+                    if (!ContentArchives.IsPlainFileName(n)) wrong.Add("not plain " + Show(n));
+                foreach (var n in new[] { null, "", ".", "..", "a/b", "a\\b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\u0000b", "a\u001fb", "Main.", "Main ", "CON", "con.txt", "Aux.ko", "COM1", "lpt9.x", "NUL .x" })
+                    if (ContentArchives.IsPlainFileName(n)) wrong.Add("plain " + Show(n));
+                Check(wrong.Count == 0, $"N10 IsArchiveName and IsPlainFileName (wrong: {(wrong.Count == 0 ? "none" : string.Join(" · ", wrong))})");
+            }
+
+            // ── N13: a packed profile's name takes only what an archive name can; other modes keep theirs ──
+            {
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                var st13 = ContentBuildSettings.instance;
+                var p13 = st13.Add("N13");
+                string V13(string name, ContentBuildSettings.ArchiveMode mode) { p13.Name = name; p13.Archive = mode; return string.Join(" | ", st13.Validate(p13)); }
+                const string Portable = "archive name cannot", Plain = "cannot be in a file name";
+                var miss = new System.Collections.Generic.List<string>();
+                foreach (var n in new[] { "Stage#1", "Main Content", "\uBA54\uC778", "a+b" })
+                {
+                    if (!V13(n, ContentBuildSettings.ArchiveMode.Packed).Contains(Portable)) miss.Add($"packed '{n}' passed");
+                    if (V13(n, ContentBuildSettings.ArchiveMode.None).Contains(Portable) || V13(n, ContentBuildSettings.ArchiveMode.Engine).Contains(Portable)) miss.Add($"'{n}' refused outside packed");
+                }
+                foreach (var n in new[] { "bad/name", "..", "a\u0001b", "Main.", "Con", "aux.ko", "LPT1" })
+                    foreach (var mode in new[] { ContentBuildSettings.ArchiveMode.None, ContentBuildSettings.ArchiveMode.Packed })
+                        if (!V13(n, mode).Contains(Plain)) miss.Add($"'{n.Replace("\u0001", "\\x01")}' ({mode}) not refused as a file name");
+                p13.Name = "Stage#1"; p13.Archive = ContentBuildSettings.ArchiveMode.Packed;
+                var ucErrors = new System.Collections.Generic.List<string>();
+                Debug.Verbose = false; bool uc = ContentBuildRunner.UpdateCatalogs(p13, ucErrors); Debug.Verbose = true;
+                if (uc || !string.Join(" | ", ucErrors).Contains(Portable)) miss.Add("a catalog update of packed 'Stage#1' was not refused");
+                if (V13("Main-2_ok.v3", ContentBuildSettings.ArchiveMode.Packed).Contains(Portable)) miss.Add("a portable name refused");
+                Check(miss.Count == 0,
+                      $"N13 profile names: packed takes letters, digits, '.', '-', '_'; None and Engine keep any file name; a path or control character, '..', a trailing dot or a Windows device name fails in every mode; a packed profile with a bad name cannot update its catalogs either ({(miss.Count == 0 ? "ok" : string.Join(" · ", miss))})");
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            }
+
+            // ── N14: CheckProfile uses the fixed set on every platform ──
+            Fresh45();
+            {
+                var accepted = new System.Collections.Generic.List<string>();
+                Debug.Verbose = false;
+                foreach (var n in new[] { "a:b", "a*b", "a|b", "a?b", "a\"b", "a<b", "a\u0001b", "Stage#1", "Main Content", "\uBA54\uC778", "CON", "Main." })
+                {
+                    bool threw = false;
+                    try { ContentRemote.CheckAsync(n, Base45, Opt45()).GetAwaiter().GetResult(); } catch (ArgumentException) { threw = true; }
+                    if (!threw) accepted.Add(n.Replace("\u0001", "\\x01"));
+                }
+                bool okKo = true; try { ContentRemote.CheckAsync("Main.ko", Base45, Opt45()).GetAwaiter().GetResult(); ContentRemote.CheckAsync("Main-2_x", Base45, Opt45()).GetAwaiter().GetResult(); } catch (ArgumentException) { okKo = false; }
+                bool clearOld = true; try { ContentRemote.ClearCache("Main Content", Opt45()); } catch (ArgumentException) { clearOld = false; }
+                var dirOf = new System.Collections.Generic.List<string>();
+                foreach (var n in new[] { "..", "a:b", "CON", "../x" })
+                {
+                    bool threw = false;
+                    try { ContentRemote.CacheDirectoryOf(n, Opt45()); } catch (ArgumentException) { threw = true; }
+                    if (!threw) dirOf.Add(n);
+                }
+                Debug.Verbose = true;
+                okKo &= clearOld && dirOf.Count == 0;
+                if (!clearOld) accepted.Add("(ClearCache refused an old plain name)");
+                foreach (var n in dirOf) accepted.Add($"(CacheDirectoryOf took '{n}')");
+                Check(accepted.Count == 0 && okKo,
+                      $"N14 a remote profile is a packed one: a name an archive name cannot carry is refused at once, on this platform too; 'Main.ko' and 'Main-2_x' are profiles (accepted: {(accepted.Count == 0 ? "none" : string.Join(" ", accepted))} · Main.ko={okKo})");
+            }
+
+            Console.WriteLine("48) IMP018 §9-3 — a cancel, a mount that fails or a file the cache cannot take ends in the documented state");
+            int Installed48(ContentArchives.Index ix) { int n = 0; foreach (var a in ix.Archives) if (System.IO.File.Exists(System.IO.Path.Combine(Dir45(), a.File))) ++n; return n; }
+            int Listed48(string folder) => Unity.IO.Archive.ArchiveFileInterface.GetMountedArchives(Unity.Content.ContentNamespace.GetOrCreateNamespace(ContentArchives.NamespaceFor(folder))).Length;
+            string Outcome48(Func<bool> run) { Debug.Verbose = false; try { return run() ? "true" : "false"; } catch (Exception e) { return e.GetType().Name; } finally { Debug.Verbose = true; } }
+            void CancelWhen48(ContentRemote r, Func<bool> when)
+            {
+                var cts = new CancellationTokenSource();
+                FakeWeb.OnStep = () => { if (!cts.IsCancellationRequested && when()) cts.Cancel(); };
+                Debug.Verbose = false;
+                try { r.DownloadAsync(cts.Token).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+                finally { Debug.Verbose = true; FakeWeb.OnStep = null; }
+            }
+            bool unix48 = !OperatingSystem.IsWindows();
+            (string res, int errors) Run48(ContentRemote r) { int e0 = Debug.Errors; var res = Outcome48(() => r.DownloadAsync().GetAwaiter().GetResult()); return (res, Debug.Errors - e0); }
+            string Latched48(ContentRemote r)   // a failed download is latched: the same instance again is false at once — no request, no second error
+            {
+                FakeWeb.Log.Clear(); int e0 = Debug.Errors;
+                var again = Outcome48(() => r.DownloadAsync().GetAwaiter().GetResult());
+                return again == "false" && FakeWeb.Log.Count == 0 && Debug.Errors == e0 ? "latched" : $"not latched ({again} · {FakeWeb.Log.Count} requests · {Debug.Errors - e0} errors)";
+            }
+            void Unregister48() { Debug.Verbose = false; for (int d = 0; d < 8; ++d) try { ContentService.UnregisterDirectory(d, force: true); } catch (Exception) { } Debug.Verbose = true; }
+            void MountPath48(string folder) => FakeEngine.Dirs["ns:/" + ContentArchives.NamespaceFor(folder) + "/" + ContentArchives.MountPrefix + "/"] = new ScriptableObject[0];
+
+            // ── F-3 N0: the stub refuses a second registration of one path and an unmounted handle's Status, as the engine does ──
+            Fresh45();
+            {
+                string twice = "-", status = "-", again = "-";
+                var first = Unity.Loading.ContentLoadManager.RegisterContentDirectory("ns:/n0/p/");
+                try { Unity.Loading.ContentLoadManager.RegisterContentDirectory("ns:/n0/p/"); } catch (InvalidOperationException e) { twice = e.Message; }
+                Unity.Loading.ContentLoadManager.UnregisterContentDirectory(first);
+                var b = Build45(count: 1); var folder = System.IO.Path.Combine(root45, "n0"); Write45(folder, b);
+                var space = Unity.Content.ContentNamespace.GetOrCreateNamespace(ContentArchives.NamespaceFor(folder));
+                var h = Unity.IO.Archive.ArchiveFileInterface.MountAsync(space, System.IO.Path.Combine(folder, b.index.Archives[0].File), ContentArchives.MountPrefix);
+                h.Unmount();
+                try { status = h.Status.ToString(); } catch (InvalidOperationException e) { status = e.Message; }
+                try { h.Unmount(); } catch (InvalidOperationException e) { again = e.Message; }
+                var made = System.IO.Path.Combine(root45, "n0h", "sub", "a.part");
+                new UnityEngine.Networking.DownloadHandlerFile(made).Dispose();
+                bool madeNow = System.IO.File.Exists(made) && new System.IO.FileInfo(made).Length == 0;
+                string cannot = "-";
+                if (unix48)
+                {
+                    var ro = System.IO.Path.Combine(root45, "n0ro"); System.IO.Directory.CreateDirectory(ro);
+                    System.IO.File.SetUnixFileMode(ro, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);
+                    try { new UnityEngine.Networking.DownloadHandlerFile(System.IO.Path.Combine(ro, "b.part")).Dispose(); } catch (ArgumentException e) { cannot = e.Message; }
+                    System.IO.File.SetUnixFileMode(ro, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                }
+                Check(twice.Contains("already registered") && status.Contains("already been unmounted") && again.Contains("already been unmounted") && madeNow && (!unix48 || cannot.Contains("Failed to create file")),
+                      $"F-3 N0 the stub as the engine: a second registration of one path throws; an unmounted handle's Status and a second Unmount throw; a file handler makes its file at once, its folder too, and throws when it cannot (twice={twice} · status={status} · again={again} · made={madeNow} · cannot={cannot})");
+            }
+
+            // ── F-3 N1: a cancel once two archives are in place, then the same instance again — only the rest is asked for ──
+            Fresh45();
+            {
+                var b = Build45(count: 4, size: 10000); Serve45(b);
+                FakeWeb.BytesPerFrame = 2000; ContentRemote.MaxConcurrentWebRequests = 1;   // one at a time: the archives finish in order
+                var r = Check45();
+                CancelWhen48(r, () => Installed48(b.index) >= 2);
+                var a = b.index.Archives;
+                var cutPart = System.IO.Path.Combine(Dir45(), a[2].File + ".part");
+                long kept = System.IO.File.Exists(cutPart) ? new System.IO.FileInfo(cutPart).Length : 0;
+                long rest = a[2].Bytes - kept + a[3].Bytes;                                    // from the files, not from the plan
+                var control = Check45(); long planned = control.BytesToDownload;              // what a new check plans from the same cache
+                FakeWeb.Log.Clear();
+                int frames = 0, fullAt = -1;
+                FakeWeb.OnStep = () => { ++frames; if (fullAt < 0 && r.Status.Percent >= 1f) fullAt = frames; };
+                bool ok = Get45(r);
+                FakeWeb.OnStep = null;
+                var status = r.Status;
+                int again01 = FakeWeb.Count(Base45 + "/" + a[0].File) + FakeWeb.Count(Base45 + "/" + a[1].File);
+                bool resumed = kept > 0 && FakeWeb.CountContaining(a[2].File + " range=bytes=" + kept + "-") == 1;
+                Check(Installed48(b.index) == 4 && ok && again01 == 0 && resumed && FakeWeb.Count(Base45 + "/" + a[3].File) == 1 && Archives45() == 2
+                      && r.BytesToDownload == rest && planned == rest && status.TotalBytes == rest && status.DownloadedBytes == rest && fullAt == frames && Committed45("Main", b.json),
+                      $"F-3 N1 the same instance after a cancel asks only for the rest: the two installed archives are not asked again ({again01}), the cut one resumes with Range bytes={kept}-, BytesToDownload = the rest from the files ({r.BytesToDownload} · {rest} · a new check {planned}), Percent reaches 1 on the last frame only ({fullAt} of {frames})");
+            }
+
+            // ── F-3 N1b: a call refused because another download works on the folder plans again on the next call ──
+            Fresh45();
+            {
+                var b = Build45(count: 3, size: 10000); Serve45(b);
+                FakeWeb.BytesPerFrame = 2000;
+                var first = Check45(); var other = Check45();                                  // two instances, one folder
+                bool once = false; string refused = "-";
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    Debug.Verbose = false; bool r1 = other.DownloadAsync().GetAwaiter().GetResult(); Debug.Verbose = true;
+                    refused = r1 ? "true" : other.Error;
+                };
+                bool okFirst = Get45(first);
+                FakeWeb.OnStep = null;
+                FakeWeb.Log.Clear();
+                bool okOther = Get45(other);
+                Check(once && refused.Contains("another download") && okFirst && okOther && Archives45() == 0 && Committed45("Main", b.json),
+                      $"F-3 N1b refused while another download worked on the folder, the next call plans again: nothing asked for ({refused} · {Archives45()} archive requests)");
+            }
+
+            // ── F-3 N1c: the first call uses the check's plan — with VerifyCachedFiles nothing cached is hashed again ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                var r = Check45(Opt45(verify: true));
+                int hops = FakeWeb.BackgroundHops;
+                bool ok = Get45(r);
+                Check(ok && hops >= b.index.Archives.Length && FakeWeb.BackgroundHops == hops, $"F-3 N1c the first download does not hash the cache again ({hops} → {FakeWeb.BackgroundHops})");
+            }
+
+            // ── F-3 N1d: planning again honours the token — a call cancelled before it starts hashes nothing ──
+            Fresh45();
+            {
+                var b = Build45(count: 4, size: 10000); Serve45(b);
+                FakeWeb.BytesPerFrame = 2000; ContentRemote.MaxConcurrentWebRequests = 1;
+                var r = Check45(Opt45(verify: true));
+                CancelWhen48(r, () => Installed48(b.index) >= 2);
+                var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+                int hops = FakeWeb.BackgroundHops; string thrown = "-";
+                Debug.Verbose = false;
+                try { r.DownloadAsync(cancelled.Token).GetAwaiter().GetResult(); } catch (OperationCanceledException) { thrown = "OCE"; }
+                Debug.Verbose = true;
+                Check(thrown == "OCE" && FakeWeb.BackgroundHops == hops && Installed48(b.index) == 2,
+                      $"F-3 N1d a call cancelled before it starts plans nothing: {thrown} · hashed {FakeWeb.BackgroundHops - hops} · installed {Installed48(b.index)}");
+            }
+
+            // ── F-3 N2: built-in copies — a cancel after two, then the same instance copies only the third ──
+            Fresh45();
+            {
+                var b = Build45(count: 3, size: 10000);
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48", "Main"); Write45(builtIn, b);
+                Serve45(b);
+                FakeWeb.BytesPerFrame = 2000;
+                var r = Check45(Opt45(builtIn: builtIn));
+                FakeWeb.Log.Clear();
+                CancelWhen48(r, () => Installed48(b.index) >= 2);
+                int firstCopies = FakeWeb.CountContaining("GET file://");
+                FakeWeb.Log.Clear();
+                bool ok = Get45(r);
+                int copies = FakeWeb.CountContaining("GET file://");
+                bool same = true; foreach (var kv in b.files) same &= Same45(System.IO.Path.Combine(Dir45(), kv.Key), kv.Value);
+                Check(firstCopies == 3 && ok && copies == 1 && Archives45() == 0 && same && Committed45("Main", b.json),
+                      $"F-3 N2 the same instance after a cancel copies only the built-in archive it had not finished ({copies} copy, {Archives45()} downloads)");
+            }
+
+            // ── F-3 N2b: the built-in source (the remote is down) — a cancel after two copies, then the same instance copies only the third ──
+            Fresh45();
+            {
+                var b = Build45(count: 3, size: 10000);
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48f", "Main"); Write45(builtIn, b);
+                FakeWeb.Serve(Base45 + "/archives.hash", new byte[0]).FailTimes = 1;
+                FakeWeb.BytesPerFrame = 2000;
+                var r = Check45(Opt45(builtIn: builtIn));
+                FakeWeb.Log.Clear();
+                CancelWhen48(r, () => Installed48(b.index) >= 2);
+                int firstCopies = FakeWeb.CountContaining("GET file://");
+                FakeWeb.Log.Clear();
+                bool ok = Get45(r);
+                int copies = FakeWeb.CountContaining("GET file://");
+                bool same = true; foreach (var kv in b.files) same &= Same45(System.IO.Path.Combine(Dir45(), kv.Key), kv.Value);
+                Check(r.Source == ContentRemoteSource.BuiltIn && firstCopies == 3 && ok && copies == 1 && same && Committed45("Main", b.json),
+                      $"F-3 N2b the built-in source after a cancel copies only what it had not finished ({r.Source} · {firstCopies} then {copies})");
+            }
+
+            // ── F-3 N3: CleanCache between the cancel and the second call — the second call reads the cache, not its memory ──
+            Fresh45();
+            {
+                var v1 = Build45(count: 3, size: 10000, seed: 11); Serve45(v1); Get45(Check45());
+                var v2 = Build45(count: 4, size: 10000, seed: 12); FakeWeb.Reset(); Serve45(v2);
+                FakeWeb.BytesPerFrame = 2000; ContentRemote.MaxConcurrentWebRequests = 1;
+                var r = Check45();
+                CancelWhen48(r, () => Installed48(v2.index) >= 2);
+                var (cleaned, _) = r.CleanCache();
+                int left = Installed48(v2.index);
+                bool ok = Get45(r);
+                bool whole = true; foreach (var kv in v2.files) whole &= Same45(System.IO.Path.Combine(Dir45(), kv.Key), kv.Value);
+                int reg = Reg45(Dir45());
+                Check(cleaned == 3 && left == 0 && ok && whole && Committed45("Main", v2.json) && reg >= 0,
+                      $"F-3 N3 CleanCache between a cancel and the next call removes what the cancelled call installed ({cleaned}); the next call downloads it again and the commit registers ({reg})");
+                if (reg >= 0) ContentService.UnregisterDirectory(reg, force: true);
+            }
+
+            // ── F-3 N3b: the cache loses archives between the check and the first download — the download fails naming one, nothing is committed ──
+            Fresh45();
+            {
+                var v1 = Build45(count: 3, size: 10000, seed: 41); Serve45(v1); Get45(Check45());
+                var v2 = Build45(count: 3, size: 10000, seed: 42); FakeWeb.Reset(); Serve45(v2);
+                for (int i = 0; i < 2; ++i) System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), v2.index.Archives[i].File), v2.files[v2.index.Archives[i].File]);   // an earlier session installed two, then stopped
+                var r = Check45();
+                long planned = r.BytesToDownload;
+                var (cleaned, _) = r.CleanCache();                                             // the committed index is v1's: the two go
+                var (res, errors) = Run48(r);
+                Check(planned == v2.index.Archives[2].Bytes && cleaned == 2 && res == "false" && errors == 1 && r.Error != null && r.Error.Contains("not in the cache any more")
+                      && Committed45("Main", v1.json) && Latched48(r) == "latched",
+                      $"F-3 N3b archives that left the cache after the check: false ({res}) · Error {r.Error} · the previous commit stays · {Latched48(r)}");
+                var again = Check45(); bool ok = Get45(again); int reg = Reg45(Dir45());
+                Check(again.BytesToDownload == v2.index.Archives[0].Bytes + v2.index.Archives[1].Bytes && ok && Committed45("Main", v2.json) && reg >= 0,
+                      $"F-3 N3b a new check then downloads them and the commit registers ({again.BytesToDownload} · {reg})");
+                if (reg >= 0) ContentService.UnregisterDirectory(reg, force: true);
+            }
+
+            // ── F-3 N4: a second registration of a folder whose first registration is mounting is refused before it mounts anything ──
+            Fresh45();
+            {
+                var b = Build45(); var folder = System.IO.Path.Combine(root45, "n4"); Write45(folder, b);
+                FakeEngine.MountFrames = 3;
+                FakeEngine.Dirs["ns:/" + ContentArchives.NamespaceFor(folder) + "/" + ContentArchives.MountPrefix + "/"] = new ScriptableObject[0];
+                int second = -9, mountsBySecond = -1; string secondThrown = "-"; bool once = false;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    int m0 = FakeEngine.Mounts.Count;
+                    Debug.Verbose = false;
+                    try { second = ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (InvalidOperationException e) { secondThrown = e.Message; }
+                    Debug.Verbose = true;
+                    mountsBySecond = FakeEngine.Mounts.Count - m0;
+                };
+                int first = -9; string firstThrown = "-";
+                Debug.Verbose = false;
+                try { first = ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (Exception e) { firstThrown = e.GetType().Name + ": " + e.Message; }
+                Debug.Verbose = true;
+                FakeWeb.OnStep = null;
+                bool one = first >= 0 && ContentService.UnregisterDirectory(first) && !ContentService.IsPackedFolderRegistered(folder) && Listed48(folder) == 0;
+                Check(once && second == -9 && secondThrown.Contains("is being registered") && mountsBySecond == 0 && firstThrown == "-" && FakeEngine.Mounts.Count == b.index.Archives.Length && one,
+                      $"F-3 N4 a second registration while the first mounts throws before mounting ({secondThrown} · mounts by it {mountsBySecond}); the first registers the folder once (first={first} · {firstThrown} · mount calls {FakeEngine.Mounts.Count})");
+                Debug.Verbose = false;
+                for (int d = 0; d < 4; ++d) try { ContentService.UnregisterDirectory(d, force: true); } catch (Exception) { }   // whatever a broken run left registered
+                Debug.Verbose = true;
+                var a1 = System.IO.Path.Combine(folder, b.index.Archives[1].File);
+                var bytes1 = System.IO.File.ReadAllBytes(a1);
+                System.IO.File.WriteAllBytes(a1, new byte[3]);                                      // the size check refuses it (-1) before anything mounts
+                int refused = -9;
+                Debug.Verbose = false;
+                try { refused = ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (InvalidOperationException) { }
+                Debug.Verbose = true;
+                System.IO.File.WriteAllBytes(a1, bytes1);
+                int afterRefusal = -9; string retryThrown = "-";
+                try { afterRefusal = Reg45(folder); } catch (InvalidOperationException e) { retryThrown = e.Message; }
+                Check(refused == -1 && afterRefusal >= 0, $"F-3 N4 a registration refused before mounting (-1) leaves nothing marked: the next one registers ({refused} → {afterRefusal} · {retryThrown})");
+                if (afterRefusal >= 0) ContentService.UnregisterDirectory(afterRefusal, force: true);
+            }
+
+            // ── F-3 N4b · N4c: the mark is the folder, not its spelling — a trailing separator, another case ──
+            foreach (var (label, spell) in new (string, Func<string, string>)[] { ("N4b registered as 'folder/', refused as 'folder'", p => p + "/"), ("N4c registered in upper case, refused as written", p => p.ToUpperInvariant()) })
+            {
+                Fresh45();
+                var b = Build45(); var folder = System.IO.Path.Combine(root45, "n4" + label[2]); Write45(folder, b);
+                var spelled = spell(folder);
+                MountPath48(folder); MountPath48(spelled);
+                FakeEngine.MountFrames = 3;
+                var file0 = System.IO.Path.Combine(folder, b.index.Archives[0].File);
+                string thrown = "-"; bool once = false, seen = false, fileSeen = false; int mounts = -1;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    seen = ContentService.IsPackedFolderRegistered(folder); fileSeen = ContentService.IsMountedFile(file0);
+                    int m0 = FakeEngine.Mounts.Count;
+                    Debug.Verbose = false;
+                    try { ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (Exception e) { thrown = e.Message; }
+                    Debug.Verbose = true;
+                    mounts = FakeEngine.Mounts.Count - m0;
+                };
+                int first = -9;
+                Debug.Verbose = false;
+                try { first = ContentService.RegisterPackedDirectoryAsync(spelled).GetAwaiter().GetResult(); } catch (Exception) { }
+                Debug.Verbose = true;
+                FakeWeb.OnStep = null;
+                Check(once && seen && fileSeen && thrown.Contains("is being registered") && mounts == 0 && first >= 0,
+                      $"F-3 {label}: seen {seen}/{fileSeen} · second {thrown} · mounts by it {mounts} · first {first}");
+                Unregister48();
+            }
+
+            // ── F-3 N4d: two folders mounting at once — the one that finishes first leaves the other's mark ──
+            Fresh45();
+            {
+                var ba = Build45(seed: 31); var fa = System.IO.Path.Combine(root45, "n4da"); Write45(fa, ba);
+                var bb = Build45(seed: 32); var fb = System.IO.Path.Combine(root45, "n4db"); Write45(fb, bb);
+                MountPath48(fa); MountPath48(fb);
+                FakeEngine.MountFrames = 3;
+                bool once = false, aStill = false; int db = -9;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    Debug.Verbose = false;
+                    try { db = ContentService.RegisterPackedDirectoryAsync(fb).GetAwaiter().GetResult(); } catch (Exception) { }
+                    Debug.Verbose = true;
+                    aStill = ContentService.IsPackedFolderRegistered(fa);
+                };
+                int da = -9;
+                Debug.Verbose = false;
+                try { da = ContentService.RegisterPackedDirectoryAsync(fa).GetAwaiter().GetResult(); } catch (Exception) { }
+                Debug.Verbose = true;
+                FakeWeb.OnStep = null;
+                Check(once && db >= 0 && aStill && da >= 0, $"F-3 N4d a registration that finishes leaves another folder's mark ({db} · the other still marked {aStill} · {da})");
+                Unregister48();
+            }
+
+            // ── F-3 N5: while the cache folder mounts, ClearCache refuses and an archive in it counts as mounted ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                FakeEngine.MountFrames = 3;
+                var file0 = System.IO.Path.Combine(Dir45(), b.index.Archives[0].File);
+                bool once = false, cleared = true, folderSeen = false, fileSeen = false; int errors = 0;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    folderSeen = ContentService.IsPackedFolderRegistered(Dir45()); fileSeen = ContentService.IsMountedFile(file0);
+                    int e0 = Debug.Errors; Debug.Verbose = false;
+                    cleared = ContentRemote.ClearCache("Main", Opt45());
+                    Debug.Verbose = true; errors = Debug.Errors - e0;
+                };
+                int d = Reg45(Dir45());
+                FakeWeb.OnStep = null;
+                bool kept = true; foreach (var kv in b.files) kept &= Same45(System.IO.Path.Combine(Dir45(), kv.Key), kv.Value);
+                Check(once && folderSeen && fileSeen && !cleared && errors == 1 && kept && d >= 0,
+                      $"F-3 N5 while the folder mounts it counts as registered: ClearCache refuses with one error and deletes nothing, an archive in it counts as mounted (seen {folderSeen}/{fileSeen} · cleared {cleared} · registration {d})");
+                if (d >= 0) ContentService.UnregisterDirectory(d, force: true);
+                Fresh45(); Serve45(b); Get45(Check45());                                      // a whole cache again, whatever the part above left
+                FakeEngine.MountFrames = 3;
+                FakeEngine.FailMount.Add(b.index.Archives[0].File);
+                string failed = "-";
+                try { Reg45(Dir45()); } catch (InvalidOperationException e) { failed = e.Message; }
+                FakeEngine.FailMount.Clear();
+                bool after = !ContentService.IsPackedFolderRegistered(Dir45()) && !ContentService.IsMountedFile(file0);
+                Debug.Verbose = false; bool clearedAfter = ContentRemote.ClearCache("Main", Opt45()); Debug.Verbose = true;
+                Check(failed.Contains("did not mount") && after && clearedAfter && !System.IO.Directory.Exists(Dir45()),
+                      "F-3 N5 a registration that failed to mount leaves nothing marked: the folder is not registered and ClearCache clears it");
+            }
+
+            // ── F-3 N5c: the reset at the start of a session drops the mark of a registration still mounting (with domain reload off its await never resumes) ──
+            Fresh45();
+            {
+                var b = Build45(); var folder = System.IO.Path.Combine(root45, "n5c"); Write45(folder, b);
+                MountPath48(folder);
+                FakeEngine.MountFrames = 3;
+                bool once = false, during = false, afterReset = true;
+                FakeWeb.OnStep = () =>
+                {
+                    if (once) return; once = true;
+                    during = ContentService.IsPackedFolderRegistered(folder);
+                    Debug.Verbose = false; Init(typeof(ContentService), "ResetStatics"); Debug.Verbose = true;
+                    afterReset = ContentService.IsPackedFolderRegistered(folder);
+                };
+                Debug.Verbose = false;
+                try { ContentService.RegisterPackedDirectoryAsync(folder).GetAwaiter().GetResult(); } catch (Exception) { }
+                Debug.Verbose = true;
+                FakeWeb.OnStep = null;
+                Check(once && during && !afterReset, $"F-3 N5c the session reset drops the mark of a registration still mounting ({during} → {afterReset})");
+                Unregister48();
+            }
+
+            // ── F-3 N6 · N7 · N8: a mount that fails or gives up leaves nothing of itself mounted — the first fails while the others mount · all time out · the second fails ──
+            foreach (var (label, failAt, frames, seed) in new[] { ("N6 the first of three fails while the others mount", 0, 2, 61), ("N7 all three time out", -1, 700, 62), ("N8 the second of three fails", 1, 2, 63) })
+            {
+                Fresh45();
+                var b = Build45(count: 3, seed: seed);
+                var folder = System.IO.Path.Combine(root45, "n" + seed); Write45(folder, b);
+                FakeEngine.MountFrames = frames;
+                if (failAt >= 0) FakeEngine.FailMount.Add(b.index.Archives[failAt].File);
+                string thrown = "-"; int f0 = FakeEngine.Frame;
+                try { Reg45(folder); } catch (InvalidOperationException e) { thrown = e.Message; }
+                int waited = FakeEngine.Frame - f0;
+                bool sibling = failAt != 1 || FakeEngine.Mounts.Exists(m => m.Path.EndsWith(b.index.Archives[2].File, StringComparison.Ordinal) && m.ReadyFrame > FakeEngine.Frame);   // N8: the third was still mounting when the second failed
+                FakeEngine.FailMount.Clear();
+                int right = Listed48(folder);
+                for (int i = 0; i < 120; ++i) Awaitable.NextFrameAsync();
+                int later = Listed48(folder);
+                FakeEngine.MountFrames = 0;
+                int again = -9; string againThrown = "-";
+                try { again = Reg45(folder); } catch (InvalidOperationException e) { againThrown = e.Message; }
+                int retry = Listed48(folder);
+                if (again >= 0) ContentService.UnregisterDirectory(again, force: true);
+                int after = Listed48(folder);
+                bool expectedWait = failAt < 0 ? waited == 600 : waited == (failAt + 1) * frames;   // archives mount one after another: a failure is known when its turn comes
+                Check(thrown.Contains(failAt < 0 ? "(InProgress)" : "(Failed)") && expectedWait && sibling && right == 0 && later == 0 && again >= 0 && retry == 3 && after == 0,
+                      $"F-3 {label}: the exception after {waited} frames ({thrown.Substring(Math.Max(0, thrown.LastIndexOf('(')))}){(failAt == 1 ? $" with the third still mounting ({sibling})" : "")}, then nothing of it listed — right then {right}, 120 frames later {later}; a retry mounts the three once ({retry} · {againThrown}) and unregistering leaves {after}");
+            }
+
+            // ── F-3 N8b: a failed mount an earlier session left in our namespace is unmounted by the reset, and counted ──
+            Fresh45();
+            {
+                var folder = System.IO.Path.Combine(root45, "n8b"); System.IO.Directory.CreateDirectory(folder);
+                var space = Unity.Content.ContentNamespace.GetOrCreateNamespace(ContentArchives.NamespaceFor(folder));
+                Unity.IO.Archive.ArchiveFileInterface.MountAsync(space, System.IO.Path.Combine(folder, "gone.archive"), ContentArchives.MountPrefix);   // fails when its turn comes and stays listed
+                int listed = Listed48(folder);
+                int logs = Debug.Logs; Debug.Verbose = false;
+                Init(typeof(ContentService), "ResetStatics");
+                Debug.Verbose = true;
+                string log = Debug.Logs > logs ? Debug.LastLog : "";
+                Check(listed == 1 && Listed48(folder) == 0 && log.Contains("unmounted 1 archive(s)"),
+                      $"F-3 N8b the reset unmounts a failed mount an earlier session left and counts it (listed {listed} → {Listed48(folder)} · \"{log}\")");
+            }
+
+            // ── F-3 N8c: ContentArchives.Unmount given a handle already unmounted logs it and unmounts the rest (its filter reads no Status, which throws for an unmounted handle) ──
+            Fresh45();
+            {
+                var b = Build45(count: 3); var folder = System.IO.Path.Combine(root45, "n8c"); Write45(folder, b);
+                var handles = ContentArchives.MountAsync(folder, b.index).GetAwaiter().GetResult();
+                handles[1].Unmount();
+                int e0 = Debug.Errors; string thrown = "-";
+                Debug.Verbose = false;
+                try { ContentArchives.Unmount(handles); } catch (Exception e) { thrown = e.GetType().Name; }
+                Debug.Verbose = true;
+                Check(thrown == "-" && Debug.Errors - e0 == 1 && Listed48(folder) == 0,
+                      $"F-3 N8c Unmount over a handle already unmounted: no exception ({thrown}), one logged ({Debug.Errors - e0}), the others unmounted ({Listed48(folder)} left)");
+            }
+
+            // ── F-3 N9: the committed archives.json cannot be read — the check goes on without it ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                var idx = System.IO.Path.Combine(Dir45(), ContentArchives.IndexFile);
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48b", "Main"); Write45(builtIn, b);
+                string Try(Func<ContentRemote> check, out ContentRemote got) { got = null; Debug.Verbose = false; try { got = check(); return "-"; } catch (Exception e) { return e.GetType().Name; } finally { Debug.Verbose = true; } }
+                string ta = "-", lastA = ""; ContentRemote ra = null; int errorsA = 0; bool okA = true;
+                if (unix48)
+                {
+                    System.IO.File.SetUnixFileMode(idx, System.IO.UnixFileMode.None);
+                    int e0 = Debug.Errors;
+                    ta = Try(() => Check45(), out ra);
+                    errorsA = Debug.Errors - e0; lastA = Debug.LastError;
+                    okA = ra != null && Get45(ra) && Committed45("Main", b.json);
+                    if (System.IO.File.Exists(idx)) System.IO.File.SetUnixFileMode(idx, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite);
+                }
+                string tb, tc; ContentRemote rb, rc; int errorsB = -1;
+                using (new System.IO.FileStream(idx, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.None))
+                {
+                    FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                    int eb = Debug.Errors;
+                    tb = Try(() => Check45(Opt45(builtIn: builtIn)), out rb);
+                    errorsB = Debug.Errors - eb;
+                    FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                    tc = Try(() => Check45(), out rc);
+                    FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 0;
+                }
+                bool a = !unix48 || (ta == "-" && ra.Source == ContentRemoteSource.Remote && errorsA == 1 && lastA.Contains("could not be read") && lastA.Contains(ContentArchives.IndexFile) && okA);
+                Check(a && tb == "-" && rb.Source == ContentRemoteSource.BuiltIn && rb.Error.Contains("Cannot connect") && errorsB == 1 && tc == "-" && rc.Source == ContentRemoteSource.None && rc.Error != null,
+                      $"F-3 N9 a committed index that cannot be read is no index: mode 000 → {(ra == null ? ta : ra.Source.ToString())} with one error (and the download commits it again: {okA}) · held → {(rb == null ? tb : rb.Source.ToString())} (remote down, built-in) · {(rc == null ? tc : rc.Source.ToString())} (remote down, none)");
+            }
+
+            // ── F-3 N10: a file the cache cannot take fails the download with a reason — an archive's name is a folder · the index's · the cache root is a file · a built-in copy · a .part that cannot be made ──
+            Fresh45();
+            {
+                var v1 = Build45(seed: 21); Serve45(v1); Get45(Check45());
+                var v2 = Build45(seed: 22); FakeWeb.Reset(); Serve45(v2);
+                var r = Check45();
+                var blocked = v2.index.Archives[1];
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), blocked.File));
+                var res = Outcome48(() => r.DownloadAsync().GetAwaiter().GetResult());
+                var part = System.IO.Path.Combine(Dir45(), blocked.File + ".part");
+                bool partKept = System.IO.File.Exists(part) && new System.IO.FileInfo(part).Length == blocked.Bytes;
+                bool others = Same45(System.IO.Path.Combine(Dir45(), v2.index.Archives[0].File), v2.files[v2.index.Archives[0].File]) && Same45(System.IO.Path.Combine(Dir45(), v2.index.Archives[2].File), v2.files[v2.index.Archives[2].File]);
+                FakeWeb.Log.Clear();
+                int errorsBefore = Debug.Errors;
+                var again = Outcome48(() => r.DownloadAsync().GetAwaiter().GetResult());
+                int againErrors = Debug.Errors - errorsBefore;
+                Check(res == "false" && r.Error != null && r.Error.Contains("'" + blocked.File + "'") && r.Error.Contains("could not take its name") && partKept && others && Committed45("Main", v1.json) && again == "false" && FakeWeb.Log.Count == 0 && againErrors == 0,
+                      $"F-3 N10a an archive's name taken by a folder: false ({res}) and Error names it ({r.Error}); the others are in, the verified .part stays, the previous commit stays; the same instance again is false at once ({again} · {FakeWeb.Log.Count} requests · {againErrors} errors)");
+            }
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var r = Check45();
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), ContentArchives.IndexFile));
+                var (res, errors) = Run48(r);
+                var latch = Latched48(r);
+                Check(res == "false" && errors == 1 && r.Error != null && r.Error.Contains(ContentArchives.IndexFile) && r.Error.Contains("could not be committed") && Installed48(b.index) == 3
+                      && System.IO.File.Exists(System.IO.Path.Combine(Dir45(), ContentArchives.IndexFile + ".part")) && latch == "latched",
+                      $"F-3 N10b the index's name taken by a folder: false ({res}) · Error {r.Error} · the archives are in · archives.json.part stays (Windows' ReplaceFile may have removed the target) · {latch}");
+            }
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                System.IO.Directory.Delete(cache45, true); System.IO.File.WriteAllBytes(cache45, new byte[1]);
+                var r = Check45();
+                var (res, errors) = Run48(r);
+                var latch = Latched48(r);
+                System.IO.File.Delete(cache45); System.IO.Directory.CreateDirectory(cache45);
+                Check(res == "false" && errors == 1 && r.Error != null && r.Error.Contains("cache folder") && latch == "latched", $"F-3 N10c the cache root is a file: false ({res}) · Error {r.Error} · {latch}");
+            }
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48c", "Main"); Write45(builtIn, b);
+                FakeWeb.Serve(Base45 + "/archives.hash", new byte[0]).FailTimes = 1;
+                var r = Check45(Opt45(builtIn: builtIn));
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), b.index.Archives[0].File));
+                var (res, errors) = Run48(r);
+                var latch = Latched48(r);
+                Check(r.Source == ContentRemoteSource.BuiltIn && res == "false" && errors == 1 && r.Error != null && r.Error.Contains("could not be copied") && r.Error.Contains("could not take its name") && !r.Error.Contains("Cannot connect") && latch == "latched",
+                      $"F-3 N10d a built-in copy that cannot take its name: false ({res}) · Error carries the reason, not the check's ({r.Error}) · {latch}");
+            }
+            // ── F-3 N10e: one archive's .part cannot be made (a folder holds its name) — the handler throws: false naming it, the others not committed ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var r = Check45();
+                var a1 = b.index.Archives[1];
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), a1.File + ".part"));
+                var (res, errors) = Run48(r);
+                var latch = Latched48(r);
+                Check(res == "false" && errors == 1 && r.Error != null && r.Error.Contains(a1.File) && r.Error.Contains("Failed to create file")
+                      && !System.IO.File.Exists(System.IO.Path.Combine(Dir45(), ContentArchives.IndexFile)) && latch == "latched",
+                      $"F-3 N10e one .part that cannot be made: false ({res}) · Error {r.Error} · nothing committed · {latch}");
+            }
+
+            // ── F-3 N10f: a user callback that throws on an archive request still goes out of DownloadAsync, as it goes out of CheckAsync — the catch takes the handler only ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var o = Opt45(); o.WebRequestOverride = q => { if (q.url.EndsWith(".archive", StringComparison.Ordinal)) throw new InvalidOperationException("the override says no"); };
+                var r = Check45(o);
+                var res = Outcome48(() => r.DownloadAsync().GetAwaiter().GetResult());
+                Check(r.Source == ContentRemoteSource.Remote && res == "InvalidOperationException", $"F-3 N10f a WebRequestOverride that throws on an archive request: DownloadAsync throws it ({res})");
+            }
+
+            // ── F-3 N10g: the built-in source whose .part cannot be made (a folder holds its name) — the copy's handler throws: false with that reason ──
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48g", "Main"); Write45(builtIn, b);
+                FakeWeb.Serve(Base45 + "/archives.hash", new byte[0]).FailTimes = 1;
+                var r = Check45(Opt45(builtIn: builtIn));
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(Dir45(), b.index.Archives[0].File + ".part"));
+                var (res, errors) = Run48(r);
+                var latch = Latched48(r);
+                Check(r.Source == ContentRemoteSource.BuiltIn && res == "false" && errors == 1 && r.Error != null && r.Error.Contains("could not be copied") && r.Error.Contains("Failed to create file") && latch == "latched",
+                      $"F-3 N10g a built-in copy whose .part cannot be made: false ({res}) · Error {r.Error} · {latch}");
+            }
+
+            // ── F-3 N10h: a stale file under the archive's name that cannot be deleted (a read-only folder, the verified .part beside it) — false with a reason ──
+            if (unix48)
+            {
+                Fresh45();
+                var b = Build45(); Serve45(b);
+                var r = Check45();
+                var a0 = b.index.Archives[0];
+                System.IO.Directory.CreateDirectory(Dir45());
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), a0.File), new byte[10]);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir45(), a0.File + ".part"), b.files[a0.File]);
+                System.IO.File.SetUnixFileMode(Dir45(), System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);
+                var (res, errors) = Run48(r);
+                System.IO.File.SetUnixFileMode(Dir45(), System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                Check(res == "false" && errors == 1 && r.Error != null && r.Error.Contains(a0.File) && r.Error.Contains("could not take its name"),
+                      $"F-3 N10h a stale file under the name that cannot be deleted: false ({res}) · Error {r.Error}");
+            }
+
+            // ── F-3 N10i: a built-in copy whose request fails (the file is missing) — the Error carries that request's reason, not the check's ──
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48i", "Main"); Write45(builtIn, b);
+                System.IO.File.Delete(System.IO.Path.Combine(builtIn, b.index.Archives[1].File));
+                FakeWeb.Serve(Base45 + "/archives.hash", new byte[0]).FailTimes = 1;
+                var r = Check45(Opt45(builtIn: builtIn));
+                var (res, errors) = Run48(r);
+                Check(r.Source == ContentRemoteSource.BuiltIn && res == "false" && errors == 1 && r.Error != null && r.Error.Contains("could not be copied") && r.Error.Contains("404") && !r.Error.Contains("Cannot connect"),
+                      $"F-3 N10i a built-in copy whose request fails: Error carries its reason ({r.Error})");
+            }
+
+            // ── F-53 N3g: DownloadAsync with a token cancelled before the call, whose first built-in copy would fail (the file is
+            // missing) — OperationCanceledException and no .part left, as on the engine: the copy's request is still in flight when its loop
+            // sees the token, and removeFileOnAbort deletes the file at the abort ──
+            Fresh45();
+            {
+                var b = Build45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets50g", "Main"); Write45(builtIn, b);
+                System.IO.File.Delete(System.IO.Path.Combine(builtIn, b.index.Archives[0].File));
+                Debug.Verbose = false;
+                var r = Check45(Opt45(builtIn: builtIn));
+                var cts = new CancellationTokenSource(); cts.Cancel();
+                string got = "returned";
+                try { r.DownloadAsync(cts.Token).GetAwaiter().GetResult(); } catch (OperationCanceledException) { got = "OperationCanceledException"; }
+                Debug.Verbose = true;
+                Awaitable.NextFrameAsync();
+                Check(r.Source == ContentRemoteSource.BuiltIn && got == "OperationCanceledException" && Parts45() == 0,
+                      $"F-53 N3g a download with a token cancelled before the call throws even when its first built-in copy would fail, and leaves no .part ({r.Source} · {got} · .part files {Parts45()})");
+            }
+
+            // ── F-3 N17: an archives.json that is not an index — one error, the check goes on, the next download commits it again ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                var idx = System.IO.Path.Combine(Dir45(), ContentArchives.IndexFile);
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48d", "Main"); Write45(builtIn, b);
+                System.IO.File.WriteAllText(idx, "<html>not an index</html>");
+                int e0 = Debug.Errors; Debug.Verbose = false; var r = Check45(); Debug.Verbose = true; int errors = Debug.Errors - e0; var named = Debug.LastError;
+                bool ok = Get45(r) && Committed45("Main", b.json);
+                System.IO.File.WriteAllText(idx, "<html>not an index</html>");
+                FakeWeb.Files[Base45 + "/archives.hash"].FailTimes = 1;
+                Debug.Verbose = false; var down = Check45(Opt45(builtIn: builtIn)); Debug.Verbose = true;
+                Check(r.Source == ContentRemoteSource.Remote && errors == 1 && named.Contains(idx) && ok && down.Source == ContentRemoteSource.BuiltIn,
+                      $"F-3 N17 a committed archives.json that is not an index: one error, the remote is used and the download commits it again ({r.Source} · {ok}); the remote down → {down.Source}");
+            }
+
+            // ── F-3 N18: archives.hash answered by a captive portal (200 + HTML) — Cache · None · BuiltIn, each saying why ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b); Get45(Check45());
+                FakeWeb.Files[Base45 + "/archives.hash"].Data = System.Text.Encoding.UTF8.GetBytes("<html><body>Sign in to the Wi-Fi</body></html>");
+                FakeWeb.Log.Clear();
+                var whole = Check45(); int requests = FakeWeb.Log.Count;
+                ContentRemote.ClearCache("Main", Opt45());
+                var none = Check45();
+                var builtIn = System.IO.Path.Combine(root45, "StreamingAssets48e", "Main"); Write45(builtIn, b);
+                var bi = Check45(Opt45(builtIn: builtIn));
+                Check(whole.Source == ContentRemoteSource.Cache && requests == 1 && none.Source == ContentRemoteSource.None && bi.Source == ContentRemoteSource.BuiltIn
+                      && whole.Error.Contains("does not hold an MD5") && none.Error.Contains("does not hold an MD5") && bi.Error.Contains("does not hold an MD5"),
+                      $"F-3 N18 a captive portal's page for archives.hash: a whole cache → {whole.Source} (one request), none → {none.Source}, built-in → {bi.Source}; each Error says the hash was not an MD5");
+            }
+
+            // ── F-3 N19h: a server that ignores Range and drops twice (at a third) — the 200 to a Range is detected: one Range request, then plain ones (T46's shape) ──
+            Fresh45();
+            {
+                var b = Build45(); Serve45(b);
+                var a0 = b.index.Archives[0];
+                var file = FakeWeb.Files[Base45 + "/" + a0.File]; file.IgnoreRange = true; file.CutAfter = (int)(a0.Bytes / 3); file.CutTimes = 2;
+                var r = Check45(Opt45(retry: 2));
+                bool ok = Get45(r);
+                int ranged = FakeWeb.CountContaining(a0.File + " range=bytes="), all = FakeWeb.Count(Base45 + "/" + a0.File);
+                Check(ok && ranged == 1 && all == 3 && Same45(System.IO.Path.Combine(Dir45(), a0.File), b.files[a0.File]),
+                      $"F-3 N19h Range answered whole and cut: detected once — {ranged} Range request, {all} requests");
+            }
+
+            ContentRemote.ProfileFallback = null; ContentRemote.MaxConcurrentWebRequests = 3;
+            ContentArchives.EditorTarget = null; Application.platform = RuntimePlatform.OSXEditor; Application.unityVersion = "6000.6.0f1";
+            FakeWeb.Reset(); FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear(); FakeEngine.Registered.Clear(); FakeEngine.MountFrames = 1;
+            Init(typeof(ContentService), "ResetStatics");
+            if (System.IO.Directory.Exists(root45)) System.IO.Directory.Delete(root45, true);
+        }
+
+        Console.WriteLine("47) IMP018 F-2 — one catalog, one category: a catalog two categories resolve to is refused before anything is written");
+        {
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            UnityEditor.BuildPipeline.FailNextBuild = false; UnityEditor.BuildPipeline.ThrowNextBuild = false; UnityEditor.BuildPipeline.ManifestWithoutContentHash = false;
+            var tmp47 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-f2-" + Guid.NewGuid().ToString("N"));
+
+            // ── N10: the stub refuses one root asset given twice, like the engine — in another case, not side by side; it records the call and keeps FailNextBuild to one build ──
+            ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/n10.asset"); ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/m10.asset");
+            var out10 = System.IO.Path.Combine(tmp47, "n10");
+            int err10 = Debug.Errors; Debug.Verbose = false;
+            var p10a = new UnityEditor.BuildContentDirectoryParameters { outputPath = out10, rootAssetPaths = new[] { "Assets/Cat/n10.asset", "Assets/Cat/n10.asset" } };
+            var rep10a = UnityEditor.BuildPipeline.BuildContentDirectory(p10a);
+            var last10a = Debug.LastError; bool rec10 = ReferenceEquals(UnityEditor.BuildPipeline.LastParameters, p10a);
+            var rep10b = UnityEditor.BuildPipeline.BuildContentDirectory(new UnityEditor.BuildContentDirectoryParameters { outputPath = out10, rootAssetPaths = new[] { "Assets/Cat/N10.asset", "Assets/Cat/m10.asset", "Assets/Cat/n10.asset" } });
+            var last10b = Debug.LastError;
+            UnityEditor.BuildPipeline.FailNextBuild = true;
+            var rep10c = UnityEditor.BuildPipeline.BuildContentDirectory(new UnityEditor.BuildContentDirectoryParameters { outputPath = out10, rootAssetPaths = new[] { "Assets/Cat/n10.asset", "Assets/Cat/n10.asset" } });
+            bool consumed10 = !UnityEditor.BuildPipeline.FailNextBuild;
+            Debug.Verbose = true;
+            Check(rep10a.summary.result == UnityEditor.Build.Reporting.BuildResult.Failed && rep10b.summary.result == UnityEditor.Build.Reporting.BuildResult.Failed && rep10c.summary.result == UnityEditor.Build.Reporting.BuildResult.Failed
+                  && last10a == "Asset \"Assets/Cat/n10.asset\" has been specified more than once." && last10b == "Asset \"Assets/Cat/n10.asset\" has been specified more than once."
+                  && rec10 && consumed10 && Debug.Errors >= err10 + 2 && !System.IO.Directory.Exists(out10),
+                  $"F-2 N10 the stub fails a build given one root asset twice — in another case and not side by side too — records the call, writes nothing, and FailNextBuild fails one build (results={rep10a.summary.result},{rep10b.summary.result},{rep10c.summary.result} last='{last10b}' recorded={rec10} consumed={consumed10} errors=+{Debug.Errors - err10})");
+
+            var settings = ContentBuildSettings.instance;
+            settings.Active.OutputPath = System.IO.Path.Combine(tmp47, "main");
+            settings.Active.SourceRoot = "Assets/Main47";   // the default profile keeps out of the profile-to-profile checks below
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/a.png", new Texture2D { name = "a" });
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/b.png", new Texture2D { name = "b" });
+            FakeEngine.AddProjectAsset("Assets/Content/Materials/m.mat", new Object { name = "m" });
+            FakeEngine.AddProjectAsset("Assets/Content/A/B/x.png", new Texture2D { name = "x" });
+            FakeEngine.AddProjectAsset("Assets/Content/A.B/y.png", new Texture2D { name = "y" });
+            const string Same = "write the same catalog", Other = "also written by profile", NoCatalog = "has no catalog";
+            ContentBuildSettings.Profile P47(string name, params (string sub, string at)[] cats)
+            {
+                var p = settings.Add(name);
+                p.SourceRoot = "Assets/Content"; p.OutputPath = System.IO.Path.Combine(tmp47, name); p.Archive = ContentBuildSettings.ArchiveMode.None;
+                p.Catalogs = Array.ConvertAll(cats, c => new ContentBuildSettings.CatalogEntry { SubFolder = c.sub, CreateAt = c.at });
+                return p;
+            }
+            int Count47(ContentBuildSettings.Profile p, string what) { int n = 0; foreach (var e in settings.Validate(p)) if (e.Contains(what)) ++n; return n; }
+            bool Has47(ContentBuildSettings.Profile p, params string[] parts) => settings.Validate(p).Exists(e => Array.TrueForAll(parts, e.Contains));
+            string All47(ContentBuildSettings.Profile p) => string.Join(" | ", settings.Validate(p));
+            string Names47(string path)
+            {
+                if (!FakeEngine.MainAssetAt.TryGetValue(path, out var o) || !(o is ContentCatalog c)) return "(none)";
+                var l = new System.Collections.Generic.List<string>(); foreach (var e in c.Entries) l.Add(e.name); return string.Join(",", l);
+            }
+
+            // ── N1: two categories of one profile on one catalog — the first two, and pairs that do not start at the first ──
+            var n1 = P47("N1", ("Icons", "Assets/Cat/n1.asset"), ("Materials", "Assets/Cat/n1.asset"));
+            var e1 = settings.Validate(n1);
+            var n1b = P47("N1b", ("Icons", "Assets/Cat/n1a.asset"), ("Materials", "Assets/Cat/n1b.asset"), ("A/B", "Assets/Cat/n1a.asset"), ("A.B", "Assets/Cat/n1b.asset"));
+            var e1b = settings.Validate(n1b);
+            Check(e1.Count == 1 && e1[0].Contains(Same) && e1[0].Contains("categories 'Icons' and 'Materials'") && e1[0].Contains("'Assets/Cat/n1.asset'")
+                  && e1b.Count == 2 && e1b.Exists(e => e.Contains("categories 'Icons' and 'A/B'") && e.Contains("'Assets/Cat/n1a.asset'"))
+                  && e1b.Exists(e => e.Contains("categories 'Materials' and 'A.B'") && e.Contains("'Assets/Cat/n1b.asset'")),
+                  $"F-2 N1 two categories on one catalog → one error naming both and the catalog, also for pairs past the first category ({string.Join(" | ", e1)} // {string.Join(" | ", e1b)})");
+            settings.Remove("N1"); settings.Remove("N1b");
+
+            // ── N2: A/B and A.B through the window model share a default path ──
+            var n2 = P47("N2"); n2.Catalogs = Array.Empty<ContentBuildSettings.CatalogEntry>();
+            var m2 = new ContentBuildWindowModel(); m2.Select("N2");
+            var a2 = m2.AddCategory("A/B"); var b2 = m2.AddCategory("A.B");
+            Check(a2 == null && b2 == null && n2.Catalogs.Length == 2 && n2.Catalogs[0].CreateAt == "Assets/ContentCatalogs/N2.A.B.asset" && n2.Catalogs[1].CreateAt == n2.Catalogs[0].CreateAt
+                  && m2.Errors.Count == 1 && m2.Errors[0].Contains("categories 'A/B' and 'A.B'") && !m2.CanBuild,
+                  $"F-2 N2 'A/B' and 'A.B' get one default path; the window shows the error and cannot build (add={a2 ?? "ok"},{b2 ?? "ok"} errors={string.Join(" | ", m2.Errors)})");
+            settings.Remove("N2");
+
+            // ── N3: the same catalog in another case or with backslashes; a picked asset against a CreateAt in another case ──
+            var n3a = P47("N3a", ("Icons", "Assets/Cat/N3.UI.asset"), ("Materials", "Assets/Cat/n3.ui.asset"));
+            var n3b = P47("N3b", ("Icons", "Assets/Cat/n3b.asset"), ("Materials", "Assets\\Cat\\n3b.asset"));   // refused for its backslashes anyway — this pins the catalog key
+            var cat3 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/N3c.asset");
+            var n3c = P47("N3c", ("Icons", "Assets/Cat/n3c-own.asset"), ("Materials", "Assets/Cat/n3c.ASSET"));
+            n3c.Catalogs[0].Catalog.asset = cat3;
+            Check(Count47(n3a, Same) == 1 && Has47(n3a, "'Assets/Cat/N3.UI.asset' (as 'Assets/Cat/n3.ui.asset')") && Count47(n3b, Same) == 1 && Count47(n3c, Same) == 1,
+                  $"F-2 N3 case and separators do not make two catalogs; the error shows both spellings (case={All47(n3a)} backslash={Count47(n3b, Same)} picked-vs-CreateAt={Count47(n3c, Same)})");
+            settings.Remove("N3a"); settings.Remove("N3b"); settings.Remove("N3c");
+
+            // ── N4: rename a built category's sub-folder, then add one under the old name ──
+            var n4 = P47("N4"); n4.Catalogs = Array.Empty<ContentBuildSettings.CatalogEntry>();
+            var m4 = new ContentBuildWindowModel(); m4.Select("N4");
+            m4.AddCategory("Icons");
+            Debug.Verbose = false; var r4 = ContentBuildRunner.Build(n4, showProgress: false); Debug.Verbose = true;
+            m4.Edit(x => x.Catalogs[0].SubFolder = "Materials", "rename");
+            var add4 = m4.AddCategory("Icons");
+            Check(r4.Succeeded && n4.Catalogs[0].Catalog.isSet && add4 == null && n4.Catalogs.Length == 2 && m4.Errors.Count == 1 && m4.Errors[0].Contains("categories 'Materials' and 'Icons'") && !m4.CanBuild,
+                  $"F-2 N4 a renamed category and a new one under its old name share the catalog → error (built={r4.Succeeded} add={add4 ?? "ok"} errors={string.Join(" | ", m4.Errors)})");
+            settings.Remove("N4");
+
+            // ── N5: one catalog asset picked twice; a picked asset whose path is another category's CreateAt ──
+            var cat5 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/n5.asset");
+            var n5a = P47("N5a", ("Icons", "Assets/Cat/n5a-i.asset"), ("Materials", "Assets/Cat/n5a-m.asset"));
+            n5a.Catalogs[0].Catalog.asset = cat5; n5a.Catalogs[1].Catalog.asset = cat5;
+            int c5a = Count47(n5a, Same);
+            settings.Remove("N5a");
+            var n5b = P47("N5b", ("Icons", "Assets/Cat/x5.asset"), ("Materials", "Assets/Cat/n5.asset"));
+            n5b.Catalogs[0].Catalog.asset = cat5;
+            int c5b = Count47(n5b, Same);
+            settings.Remove("N5b");
+            Check(c5a == 1 && c5b == 1, $"F-2 N5 a catalog picked for two categories, and a picked catalog at another category's CreateAt → an error each (picked twice={c5a} picked-vs-CreateAt={c5b})");
+
+            // ── N6: a catalogs-only update refuses and leaves the catalog as it was ──
+            var p6 = P47("N6", ("Icons", "Assets/Cat/n6i.asset"), ("Materials", "Assets/Cat/n6m.asset"));
+            Debug.Verbose = false; bool seeded6 = ContentBuildRunner.UpdateCatalogs(p6, new System.Collections.Generic.List<string>()); Debug.Verbose = true;
+            var before6 = Names47("Assets/Cat/n6i.asset");
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/c.png", new Texture2D { name = "c" });   // a rewrite of the first category would now add Icons/c
+            p6.Catalogs[1].Catalog.asset = p6.Catalogs[0].Catalog.asset;   // the second category now picks the first one's catalog
+            var errs6 = new System.Collections.Generic.List<string>(); var paths6 = new System.Collections.Generic.List<string>();
+            Debug.Verbose = false; bool ok6 = ContentBuildRunner.UpdateCatalogs(p6, errs6, paths6); Debug.Verbose = true;
+            var after6 = Names47("Assets/Cat/n6i.asset");
+            Check(seeded6 && before6 == "Icons/a,Icons/b" && !ok6 && errs6.Exists(e => e.Contains(Same)) && paths6.Count == 0 && after6 == before6,
+                  $"F-2 N6 a catalogs-only update refuses and writes nothing (ok={ok6} paths={paths6.Count} before=[{before6}] after=[{after6}] errors={string.Join(" | ", errs6)})");
+            settings.Remove("N6");
+
+            // ── N7: a build refused at validation leaves the previous output and the catalog alone, and never reaches the engine ──
+            var p7 = P47("N7", ("Icons", "Assets/Cat/n7i.asset"), ("Materials", "Assets/Cat/n7m.asset"));
+            Debug.Verbose = false; var k7 = ContentBuildRunner.Build(p7, showProgress: false); Debug.Verbose = true;
+            int files7 = System.IO.Directory.Exists(p7.OutputPath) ? System.IO.Directory.GetFileSystemEntries(p7.OutputPath).Length : -1;
+            var before7 = Names47("Assets/Cat/n7i.asset");
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/d.png", new Texture2D { name = "d" });   // a rewrite of the first category would now add Icons/d
+            p7.Catalogs[1].Catalog.asset = p7.Catalogs[0].Catalog.asset;
+            UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; var r7 = ContentBuildRunner.Build(p7, showProgress: false); Debug.Verbose = true;
+            int files7b = System.IO.Directory.Exists(p7.OutputPath) ? System.IO.Directory.GetFileSystemEntries(p7.OutputPath).Length : -1;
+            Check(k7.Succeeded && files7 > 0 && before7 == "Icons/a,Icons/b,Icons/c" && !r7.Succeeded && r7.Errors.Exists(e => e.Contains(Same)) && UnityEditor.BuildPipeline.LastParameters == null
+                  && files7b == files7 && Names47("Assets/Cat/n7i.asset") == before7,
+                  $"F-2 N7 the build is refused before anything is written (ok={r7.Succeeded} engine={(UnityEditor.BuildPipeline.LastParameters == null ? "not called" : "called")} output {files7}→{files7b} catalog [{before7}]→[{Names47("Assets/Cat/n7i.asset")}] errors={string.Join(" | ", r7.Errors)})");
+            settings.Remove("N7");
+
+            // ── N8: another profile writes the catalog from another sub-folder or source root — each side gets its error, naming the other ──
+            var o8 = P47("O8", ("Icons", "Assets/Cat/n8.asset"));
+            var s8 = P47("S8", ("Materials", "Assets/Cat/n8.asset"));
+            bool sub8 = Count47(o8, Other) == 1 && Count47(s8, Other) == 1 && Has47(o8, Other, "'S8'", "category 'Materials'") && Has47(s8, Other, "'O8'", "category 'Icons'");
+            settings.Remove("S8");
+            var r8 = P47("R8", ("Icons", "Assets/Cat/n8.asset")); r8.SourceRoot = "Assets/content";   // the same folder in another case: the catalog records the root as written
+            bool root8 = Count47(o8, Other) == 1 && Count47(r8, Other) == 1;
+            settings.Remove("R8");
+            var cat8 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/n8.asset");
+            var k8 = P47("K8", ("Materials", "Assets/Cat/k8-own.asset")); k8.Catalogs[0].Catalog.asset = cat8;   // picks it, with another CreateAt
+            bool picked8 = Count47(o8, Other) == 1 && Has47(o8, Other, "'K8'");
+            settings.Remove("K8");
+            var two8p = P47("W8", ("Materials", "Assets/Cat/n8.asset"), ("A", "Assets/Cat/n8.asset"));
+            int two8 = Count47(o8, Other);
+            settings.Remove("W8"); settings.Remove("O8");
+            var c8a = P47("C8a", ("Icons", "Assets/Cat/c8.asset")); var c8b = P47("C8b", ("icons", "Assets/Cat/c8.asset"));
+            bool subCase8 = Count47(c8a, Other) == 1 && Count47(c8b, Other) == 1;
+            settings.Remove("C8a"); settings.Remove("C8b");
+            var pb8 = settings.Add("P8.B"); pb8.SourceRoot = "Assets/Content"; pb8.OutputPath = System.IO.Path.Combine(tmp47, "p8b"); pb8.Archive = ContentBuildSettings.ArchiveMode.None;
+            var pa8 = settings.Add("P8"); pa8.SourceRoot = "Assets/Content"; pa8.OutputPath = System.IO.Path.Combine(tmp47, "p8"); pa8.Archive = ContentBuildSettings.ArchiveMode.None;
+            pa8.Catalogs = Array.Empty<ContentBuildSettings.CatalogEntry>();
+            var m8 = new ContentBuildWindowModel(); m8.Select("P8"); m8.AddCategory("B");
+            bool six8 = pb8.Catalogs[0].CreateAt == "Assets/ContentCatalogs/P8.B.asset" && pa8.Catalogs[0].CreateAt == pb8.Catalogs[0].CreateAt && Count47(pb8, Other) == 1 && Count47(pa8, Other) == 1;
+            settings.Remove("P8.B"); settings.Remove("P8");
+            var y8 = P47("Y8", ("Icons", "Assets/Cat/y8.asset")); y8.NameStyle = ContentNameStyle.PathWithExtension;
+            var z8 = P47("Z8", ("Icons", "Assets/Cat/y8.asset"));
+            bool style8 = Count47(y8, Other) + Count47(z8, Other) == 0 && Count47(y8, "a root gives an asset one name") == 1 && Count47(z8, "a root gives an asset one name") == 1;
+            settings.Remove("Y8"); settings.Remove("Z8");
+            Check(sub8 && root8 && picked8 && two8 == 2 && subCase8 && six8 && style8,
+                  $"F-2 N8 a catalog another profile writes from another sub-folder or root (in another case too), picked or named, by default paths ('P8.B' and 'P8'/'B') → one error per other category, in both; another name style on one root is the name-style rule's (sub={sub8} root={root8} picked={picked8} two-categories={two8} sub-case={subCase8} default-paths={six8} style={style8})");
+
+            // ── N9: a category without a catalog — none at all, a null entry; a picked catalog with no CreateAt is one; a profile without categories is skipped ──
+            var p9 = P47("N9", ("", ""));
+            var m9 = new ContentBuildWindowModel(); m9.Select("N9");
+            bool empty9 = Count47(p9, NoCatalog) == 1 && !m9.CanBuild;
+            settings.Remove("N9");
+            var cat9 = ContentDirectoryBuilder.LoadOrCreateCatalog("Assets/Cat/n9.asset");
+            var q9 = P47("N9q", ("", "")); q9.Catalogs[0].Catalog.asset = cat9;
+            bool picked9 = Count47(q9, NoCatalog) == 0;
+            settings.Remove("N9q");
+            var z9 = P47("N9z"); z9.Catalogs = new ContentBuildSettings.CatalogEntry[] { null };
+            bool lone9 = Count47(z9, NoCatalog) == 1;
+            z9.Catalogs = new[] { null, new ContentBuildSettings.CatalogEntry { SubFolder = "Icons", CreateAt = "Assets/Cat/n9z.asset" } };
+            bool withOthers9 = Count47(z9, NoCatalog) == 1 && Count47(z9, "overlap") == 1;
+            settings.Remove("N9z");
+            var nul9 = settings.Add("N9nul"); nul9.Catalogs = null; nul9.OutputPath = System.IO.Path.Combine(tmp47, "n9nul");
+            var o9 = P47("N9o", ("Icons", "Assets/Cat/n9o.asset"));
+            bool nullOther9 = settings.Validate(o9).Count == 0;
+            settings.Remove("N9nul"); settings.Remove("N9o");
+            Check(empty9 && picked9 && lone9 && withOthers9 && nullOther9,
+                  $"F-2 N9 a category without a catalog (none, a null entry) is refused by validation, not first by the build; a picked catalog counts; a profile with no categories is skipped (none={empty9} picked={picked9} null={lone9} null+others={withOthers9} other-without-categories={nullOther9})");
+
+            // ── N13: a twin category of another profile may share the catalog — the second category's twin, a sub-folder written with a separator, a renamed profile and a new one under its old name (their output folders told apart) ──
+            var a13 = P47("A13", ("Icons", "Assets/Cat/n13i.asset"), ("Materials", "Assets/Cat/n13m.asset"));
+            var b13 = P47("B13", ("Materials/", "Assets/Cat/n13m.asset"));
+            int share13 = Count47(a13, Other) + Count47(b13, Other) + Count47(a13, Same) + Count47(b13, Same);
+            settings.Remove("A13"); settings.Remove("B13");
+            var m13 = settings.Add("Main13"); m13.SourceRoot = "Assets/Content"; m13.OutputPath = System.IO.Path.Combine(tmp47, "main13"); m13.Archive = ContentBuildSettings.ArchiveMode.None;
+            Debug.Verbose = false; var k13 = ContentBuildRunner.Build(m13, showProgress: false); Debug.Verbose = true;
+            m13.Name = "Old13";
+            var n13 = settings.Add("Main13"); n13.OutputPath = System.IO.Path.Combine(tmp47, "new13"); n13.Archive = ContentBuildSettings.ArchiveMode.None;
+            var e13a = settings.Validate(m13); var e13b = settings.Validate(n13);
+            Check(share13 == 0 && k13.Succeeded && m13.Catalogs[0].ResolvePath() == n13.Catalogs[0].ResolvePath() && e13a.Count == 0 && e13b.Count == 0,
+                  $"F-2 N13 twins share a catalog: same root, same sub-folder (shared={share13} same path={m13.Catalogs[0].ResolvePath() == n13.Catalogs[0].ResolvePath()} errors={string.Join(" | ", e13a)} / {string.Join(" | ", e13b)})");
+            settings.Remove("Old13"); settings.Remove("Main13");
+
+            // ── N14: distinct catalogs pass; three categories on one catalog give two errors ──
+            var d14 = P47("D14", ("Icons", "Assets/Cat/d14i.asset"), ("Materials", "Assets/Cat/d14m.asset"), ("A", "Assets/Cat/d14a.asset"));
+            var t14 = P47("T14", ("Icons", "Assets/Cat/t14.asset"), ("Materials", "Assets/Cat/t14.asset"), ("A", "Assets/Cat/t14.asset"));
+            var u14 = P47("U14", ("Icons", "Assets/Cat/u14.asset"), ("Icons", "Assets/Cat/u14.asset"));   // one sub-folder twice: the overlap says it, once
+            Check(settings.Validate(d14).Count == 0 && Count47(t14, Same) == 2 && Count47(u14, "overlap") == 1 && Count47(u14, Same) == 0,
+                  $"F-2 N14 one catalog per category passes; three on one catalog → one error per extra category; one sub-folder twice is the overlap's error alone (distinct={All47(d14)} three={Count47(t14, Same)} same-sub={All47(u14)})");
+            settings.Remove("D14"); settings.Remove("T14"); settings.Remove("U14");
+
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            FakeEngine.ClearProject();
+            ContentLinkEditorUtility.Invalidate();
+            if (System.IO.Directory.Exists(tmp47)) System.IO.Directory.Delete(tmp47, true);
+        }
+
+        Console.WriteLine("49) IMP018 §9-4 — the simulation's scene path answers as a build does: scene names, references, loads, the open-scene guard, bracketed names");
+        {
+            // Profiles Loc (Assets/Loc → Build/Loc) and Loc.ko (Assets/Loc.ko → Build/Loc.ko), no catalog in the project unless a test adds one.
+            // Both roots: Scenes/Title · Icons/flag · Icons/sheet2 (sprite t0). Loc only: Scenes/Solo · Icons/sheet (sprite s0) · Icons/sheet[s0].png ·
+            // Icons/a.png (no sprite named 1) · Icons/a[1].png.
+            var solo_49 = new UnityEditor.SceneAsset { name = "Solo" };
+            var titleBase_49 = new UnityEditor.SceneAsset { name = "Title" }; var titleKo_49 = new UnityEditor.SceneAsset { name = "Title" };
+            var flagBase_49 = new Texture2D { name = "flag" }; var flagKo_49 = new Texture2D { name = "flag" };
+            var sheet2Base_49 = new Texture2D { name = "sheet2" }; var t0Base_49 = new Sprite { name = "t0" };
+            var sheet2Ko_49 = new Texture2D { name = "sheet2" }; var t0Ko_49 = new Sprite { name = "t0" };
+            var sheet_49 = new Texture2D { name = "sheet" }; var s0_49 = new Sprite { name = "s0" }; var literal_49 = new Texture2D { name = "sheet[s0]" };
+            var aTex_49 = new Texture2D { name = "a" }; var a1Lit_49 = new Texture2D { name = "a[1]" };
+            const string TitleBase_49 = "Assets/Loc/Scenes/Title.unity", TitleKo_49 = "Assets/Loc.ko/Scenes/Title.unity", Solo_49 = "Assets/Loc/Scenes/Solo.unity";
+            void Setup49()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+                FakeEngine.LoadedScenes.Clear(); FakeEngine.PendingLoads.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkSimulation.Drop();
+                ContentLinkSimulation.Enabled = true;
+                FakeEngine.EditorServesAnyId = true;
+                Init(typeof(ContentLinkSimulation), "Install");
+                UnityEditor.EditorApplication.isPlaying = true;
+                FakeEngine.AddProjectAsset(Solo_49, solo_49); FakeEngine.SetGuid(Solo_49, "g49-solo");
+                FakeEngine.AddProjectAsset(TitleBase_49, titleBase_49); FakeEngine.SetGuid(TitleBase_49, "g49-title-base");
+                FakeEngine.AddProjectAsset(TitleKo_49, titleKo_49); FakeEngine.SetGuid(TitleKo_49, "g49-title-ko");
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/flag.png", flagBase_49); FakeEngine.SetGuid("Assets/Loc/Icons/flag.png", "g49-flag-base");
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/flag.png", flagKo_49); FakeEngine.SetGuid("Assets/Loc.ko/Icons/flag.png", "g49-flag-ko");
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet2.png", sheet2Base_49, t0Base_49); FakeEngine.SetGuid("Assets/Loc/Icons/sheet2.png", "g49-sheet2-base");
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet2.png", sheet2Ko_49, t0Ko_49); FakeEngine.SetGuid("Assets/Loc.ko/Icons/sheet2.png", "g49-sheet2-ko");
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.png", sheet_49, s0_49);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet[s0].png", literal_49);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/a.png", aTex_49);
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/a[1].png", a1Lit_49);
+                foreach (var o in new Object[] { solo_49, titleBase_49, titleKo_49, flagBase_49, flagKo_49, sheet2Base_49, t0Base_49, sheet2Ko_49, t0Ko_49, sheet_49, s0_49, literal_49, aTex_49, a1Lit_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;   // loadable, so a wrong answer shows
+                var st = ContentBuildSettings.instance;
+                var pb = st.Add("Loc"); pb.SourceRoot = "Assets/Loc"; pb.OutputPath = "Build/Loc";
+                pb.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/loc49.asset" } };
+                var pk = st.Add("Loc.ko"); pk.SourceRoot = "Assets/Loc.ko"; pk.OutputPath = "Build/Loc.ko";
+                pk.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/locko49.asset" } };
+                ContentLinkEditorUtility.Invalidate();
+                SceneManager.Open(NewScene(77, "Boot"));   // the engine cannot unload the last remaining scene
+            }
+            int Reg49(string path) { Debug.Verbose = false; int d = ContentService.RegisterDirectory(path); Debug.Verbose = true; return d; }
+            int Open49(string path) { int n = 0; foreach (var s in FakeEngine.LoadedScenes) if (s.path == path) ++n; return n; }
+            string Who49(Object o) => o == null ? "null" : ReferenceEquals(o, literal_49) ? "literal" : ReferenceEquals(o, s0_49) ? "sprite" : ReferenceEquals(o, flagBase_49) || ReferenceEquals(o, t0Base_49) ? "base"
+                : ReferenceEquals(o, flagKo_49) || ReferenceEquals(o, t0Ko_49) ? "ko" : o.GetType().Name + ":" + o.name;
+            Object Get49(string name) { Debug.Verbose = false; var h = ContentService.Acquire<Object>(name); Debug.Verbose = true; var a = h.IsValid ? h.Asset : null; h.Dispose(); Tick(); return a; }
+            Object Ref49<T>(string guid, string sub = "") where T : Object { Debug.Verbose = false; var h = ContentService.Acquire(new ContentRef<T>(guid, sub)); Debug.Verbose = true; var a = h.IsValid ? h.Asset : null; h.Dispose(); Tick(); return a; }
+            Scene Load49(Awaitable<Scene> load) { FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); return load.GetResult(); }
+            int InFlight49()   // loads of scenes the simulation still counts as in flight (s_ScenePathInFlight too, so the section also runs on code that keeps that field)
+            {
+                var t = typeof(ContentLinkSimulation);
+                var f = t.GetField("s_SceneLoadsInFlight", BindingFlags.Static | BindingFlags.NonPublic) ?? t.GetField("s_ScenePathInFlight", BindingFlags.Static | BindingFlags.NonPublic);
+                return ((System.Collections.IDictionary)f.GetValue(null)).Count;
+            }
+            int Leftover49()   // everything the simulation still keeps about scene loads — turns, flights per path, arrivals, results (s_ScenePathInFlight and s_SceneResult too, so the section also runs on code that keeps those fields)
+            {
+                int n = 0;
+                foreach (var field in new[] { "s_SceneLoadsInFlight", "s_FlightsByPath", "s_ScenesArrived", "s_ScenePathInFlight", "s_SceneResult" })
+                    if (typeof(ContentLinkSimulation).GetField(field, BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) is System.Collections.IDictionary d) n += d.Count;
+                return n;
+            }
+
+            // ── F-9 · D1: a scene's name is no asset's — the asset API refuses it with the player's hint ──
+            // N1: a scene's name through the asset API, a directory served from the project — refused as a build refuses it
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e1_49 = Debug.Errors; Debug.LastError = "";
+            bool c1_49 = ContentService.Contains("Scenes/Solo"); bool id1_49 = ContentService.TryGetLoadableObjectId("Scenes/Solo", out _);
+            var h1_49 = ContentService.Acquire<Object>("Scenes/Solo"); bool v1_49 = h1_49.IsValid; h1_49.Dispose(); Tick();
+            int errs1_49 = Debug.Errors - e1_49; string err1_49 = Debug.LastError;
+            Debug.Verbose = true;
+            var sc1_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            Check(!c1_49 && !id1_49 && !v1_49 && errs1_49 == 1 && err1_49.Contains("'Scenes/Solo' is a scene — use LoadSceneAsync.") && ContentService.ContainsScene("Scenes/Solo") && sc1_49.IsValid() && sc1_49.path == Solo_49,
+                  $"F-9 N1 a directory served from the project: a scene's name is no asset — Contains false · no id · the load is refused with the player's hint · the scene itself opens (contains={c1_49} id={id1_49} valid={v1_49} errors=+{errs1_49} '{err1_49}' scene={sc1_49.path})");
+
+            // N1b: the same under a real directory's root (the toggle on, the catalog without the scene)
+            Setup49();
+            var cat1b_49 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat1b_49.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/flag", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(flagBase_49) } });
+            cat1b_49.EditorSetSourceRoot("Assets/Loc");
+            FakeEngine.Dirs["Real/Loc49"] = new ScriptableObject[] { cat1b_49 }; FakeEngine.IdDir[FakeEngine.ObjectIdOf[flagBase_49]] = "Real/Loc49";
+            Reg49("Real/Loc49");
+            Debug.Verbose = false; int e1b_49 = Debug.Errors; Debug.LastError = "";
+            bool c1b_49 = ContentService.Contains("Scenes/Solo");
+            var h1b_49 = ContentService.Acquire<Object>("Scenes/Solo"); bool v1b_49 = h1b_49.IsValid; h1b_49.Dispose(); Tick();
+            int errs1b_49 = Debug.Errors - e1b_49; string err1b_49 = Debug.LastError;
+            Debug.Verbose = true;
+            Check(!c1b_49 && !v1b_49 && errs1b_49 == 1 && err1b_49.Contains("is a scene — use LoadSceneAsync.") && ContentService.ContainsScene("Scenes/Solo"),
+                  $"F-9 N1b under a real directory's root: the same refusal and hint (contains={c1b_49} valid={v1b_49} errors=+{errs1b_49} '{err1b_49}')");
+
+            // N1c: the profile's catalog in the project lists the scene — still no asset, and nothing to hide at the exit
+            Setup49();
+            var cat1c_49 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat1c_49.EditorSetScenes(new ContentCatalog.SceneEntry[] { new() { name = "Scenes/Solo", id = SceneId(4949), guid = "g49-solo" } });
+            cat1c_49.EditorSetSourceRoot("Assets/Loc");
+            FakeEngine.AddProjectAsset("Assets/Cat/loc49.asset", cat1c_49); ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e1c_49 = Debug.Errors;
+            bool c1c_49 = ContentService.Contains("Scenes/Solo");
+            var h1c_49 = ContentService.Acquire<Object>("Scenes/Solo"); bool v1c_49 = h1c_49.IsValid;
+            var sim1c_49 = new System.Collections.Generic.List<string>(); ContentService.SnapshotSimulated(sim1c_49);   // while the handle is held: a released slot lists nothing either way
+            h1c_49.Dispose(); Tick();
+            Debug.Verbose = true;
+            int l1c_49 = Debug.Logs; Debug.LastLog = "";
+            UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.ExitingPlayMode);
+            string sum1c_49 = Debug.Logs > l1c_49 ? Debug.LastLog : "";
+            Check(!c1c_49 && !v1c_49 && Debug.Errors - e1c_49 == 1 && !sim1c_49.Contains("Scenes/Solo") && !sum1c_49.Contains("Scenes/Solo"),
+                  $"F-9 N1c the profile's catalog lists the scene: the asset API still refuses it, and no summary has to hide it (contains={c1c_49} valid={v1c_49} simulated=[{string.Join(",", sim1c_49)}] summary='{sum1c_49}')");
+
+            // N9: an asset made during Play still resolves by the path search
+            Setup49();
+            Reg49("Build/Loc");
+            var fresh9_49 = new Texture2D { name = "fresh" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/fresh.png", fresh9_49); FakeEngine.Assets[FakeEngine.ObjectIdOf[fresh9_49]] = fresh9_49;
+            ContentLinkEditorUtility.Invalidate();
+            var g9_49 = Get49("Icons/fresh");
+            Check(ReferenceEquals(g9_49, fresh9_49), $"D1 N9 an asset made during Play still resolves through the path search (got {Who49(g9_49)})");
+
+            // ── F-45 · D6: a file named 'main[sub]' and the sprite of that name share one name space, root by root ──
+            // N8 · N8b · N8c · N13: a file named 'main[sub]' and the sprite of that name
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int w8_49 = Debug.Warnings; Debug.LastWarning = "";
+            var g8_49 = Get49("Icons/sheet[s0]"); bool cn8_49 = ContentService.Contains("Icons/sheet", "s0");
+            int warns8_49 = Debug.Warnings - w8_49; string warn8_49 = Debug.LastWarning;
+            var m8_49 = Get49("Icons/sheet");
+            var g8again_49 = Get49("Icons/sheet[s0]"); int warns8again_49 = Debug.Warnings - w8_49;
+            bool path8_49 = ContentLinkSimulation.TryGetPath("Icons/sheet[s0]", out var p8_49, out _);
+            Debug.Verbose = true;
+            Check(g8_49 == null && !cn8_49 && warns8_49 == 1 && warn8_49.Contains("Icons/sheet[s0]") && warn8_49.Contains("sheet.png") && warn8_49.Contains("sheet[s0].png") && ReferenceEquals(m8_49, sheet_49) && g8again_49 == null && warns8again_49 == 1 && !path8_49,
+                  $"F-45 N8 a file 'sheet[s0].png' beside 'sheet.png' with the sprite s0: the name resolves to neither, one warning naming both, the diagnostic lookup agrees; 'Icons/sheet' still resolves (got {Who49(g8_49)} contains={cn8_49} warnings=+{warns8_49} '{warn8_49}' main={Who49(m8_49)} again={Who49(g8again_49)} warnings now +{warns8again_49} TryGetPath={path8_49} {p8_49})");
+            Debug.Verbose = false; int w13_49 = Debug.Warnings; Debug.Verbose = true;
+            var aLit13_49 = Get49("Icons/a[1]");
+            Check(ReferenceEquals(aLit13_49, a1Lit_49) && Debug.Warnings == w13_49, $"F-45 N13 a file 'a[1].png' beside 'a.png' that has no sprite 1 resolves as before, with no warning (got {Who49(aLit13_49)})");
+            Setup49();
+            var sheetKo8_49 = new Texture2D { name = "sheet" }; var s0Ko8_49 = new Sprite { name = "s0" };
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet.png", sheetKo8_49, s0Ko8_49);
+            foreach (var o in new Object[] { sheetKo8_49, s0Ko8_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc"); Reg49("Build/Loc.ko");
+            var g8b_49 = Get49("Icons/sheet[s0]");
+            Setup49();
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet.png", sheetKo8_49, s0Ko8_49);
+            foreach (var o in new Object[] { sheetKo8_49, s0Ko8_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc.ko"); Reg49("Build/Loc");
+            Debug.Verbose = false; int w8b_49 = Debug.Warnings; Debug.Verbose = true;
+            var g8b2_49 = Get49("Icons/sheet[s0]");
+            int warns8b2_49 = Debug.Warnings - w8b_49;
+            Check(ReferenceEquals(g8b_49, s0Ko8_49) && g8b2_49 == null && warns8b2_49 == 1,
+                  $"F-45 N8b across roots the registration order picks: base then locale → the locale's sprite; locale then base → the base root holds both, so neither (got {(ReferenceEquals(g8b_49, s0Ko8_49) ? "ko sprite" : Who49(g8b_49))} / {Who49(g8b2_49)} warnings=+{warns8b2_49})");
+            Setup49();
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.png", new Texture2D { name = "sheet" });   // the base's sheet has no sprite s0: its root holds the literal alone
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet.png", sheetKo8_49, s0Ko8_49);
+            foreach (var o in new Object[] { sheetKo8_49, s0Ko8_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc");
+            var g8c1_49 = Get49("Icons/sheet[s0]");
+            Reg49("Build/Loc.ko");
+            var g8c2_49 = Get49("Icons/sheet[s0]");
+            Check(ReferenceEquals(g8c1_49, literal_49) && ReferenceEquals(g8c2_49, s0Ko8_49),
+                  $"F-45 N8c a later registration is seen: the base's literal (its sheet has no s0), then the locale's sprite once the locale is registered (got {Who49(g8c1_49)} → {(ReferenceEquals(g8c2_49, s0Ko8_49) ? "ko sprite" : Who49(g8c2_49))})");
+
+            // N8e: a literal that is already a duplicate (two files of that name) gets no second warning from the chain
+            Setup49();
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet[s0].mat", new Object { name = "sheet[s0]" });   // a second file named 'Icons/sheet[s0]'
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc");   // the scan warns once for the two files
+            Debug.Verbose = false; int w8e_49 = Debug.Warnings; Debug.Verbose = true;
+            var g8e_49 = Get49("Icons/sheet[s0]");
+            Check(g8e_49 == null && Debug.Warnings == w8e_49, $"F-45 N8e two files named 'sheet[s0]' beside the sprite: still neither, and the chain adds no second warning (got {Who49(g8e_49)} warnings=+{Debug.Warnings - w8e_49})");
+
+            // N8f: a main that is itself a duplicate (sheet.png with s0 and sheet.mat) — its bracketed name answers nothing, the literal included
+            Setup49();
+            FakeEngine.MainAssetAt.Remove("Assets/Loc/Icons/sheet.png");
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.mat", new Object { name = "sheet" });   // scanned before sheet.png: the duplicate entry is this file's
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.png", sheet_49, s0_49);
+            FakeEngine.Assets[FakeEngine.ObjectIdOf[s0_49]] = s0_49; FakeEngine.Assets[FakeEngine.ObjectIdOf[sheet_49]] = sheet_49;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc");
+            var g8f_49 = Get49("Icons/sheet[s0]"); var m8f_49 = Get49("Icons/sheet");
+            Check(g8f_49 == null && m8f_49 == null, $"F-45 N8f a duplicate main ('sheet.png' and 'sheet.mat'): neither 'Icons/sheet' nor 'Icons/sheet[s0]' answers — the literal included (got {Who49(g8f_49)} · main {Who49(m8f_49)})");
+
+            // N8d: a project change during Play is seen — a sprite '1' added to 'a.png' makes the file 'a[1].png' a duplicate
+            Setup49();
+            Reg49("Build/Loc");
+            var before8d_49 = Get49("Icons/a[1]");
+            var one8d_49 = new Sprite { name = "1" };
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/a.png", aTex_49, one8d_49);
+            foreach (var o in new Object[] { aTex_49, one8d_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            Debug.Verbose = false; int w8d_49 = Debug.Warnings; Debug.Verbose = true;
+            var after8d_49 = Get49("Icons/a[1]");
+            Check(ReferenceEquals(before8d_49, a1Lit_49) && after8d_49 == null && Debug.Warnings - w8d_49 == 1,
+                  $"F-45 N8d a sprite added during Play is seen: 'a[1]' was the file, then neither, with one warning (before={Who49(before8d_49)} after={Who49(after8d_49)} warnings=+{Debug.Warnings - w8d_49})");
+
+            // N13b: a main of that name in another root without the sprite holds nothing of the bracketed name — the literal still answers
+            Setup49();
+            FakeEngine.AddProjectAsset("Assets/Loc/Icons/sheet.png", new Texture2D { name = "sheet" });   // the base's sheet has no sprite s0: its root holds the literal alone
+            var sheetKo13b_49 = new Texture2D { name = "sheet" };
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet.png", sheetKo13b_49);                    // the locale's sheet has no s0 either
+            FakeEngine.Assets[FakeEngine.ObjectIdOf[sheetKo13b_49]] = sheetKo13b_49;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc"); Reg49("Build/Loc.ko");
+            Debug.Verbose = false; int w13b_49 = Debug.Warnings; Debug.Verbose = true;
+            var g13b_49 = Get49("Icons/sheet[s0]");
+            Check(ReferenceEquals(g13b_49, literal_49) && Debug.Warnings == w13b_49,
+                  $"F-45 N13b a later root whose 'sheet' has no sprite s0 does not take 'sheet[s0]' from the base's file (got {Who49(g13b_49)} warnings=+{Debug.Warnings - w13b_49})");
+
+            // N10c: resolving plain names adds nothing to the cache of bracketed names (it grows only with names that end in ']')
+            Setup49();
+            Reg49("Build/Loc");
+            var mos10c_49 = (System.Collections.IDictionary)typeof(ContentLinkSimulation).GetField("s_MainOfSub", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            int mos0_49 = mos10c_49.Count;
+            foreach (var n10c_49 in new[] { "Icons/flag", "Icons/sheet2", "Icons/sheet", "Icons/a" }) ContentService.Contains(n10c_49);
+            Check(mos10c_49.Count == mos0_49, $"D6 N10c resolving plain names leaves the bracketed-name cache alone (+{mos10c_49.Count - mos0_49})");
+
+            // ── F-10 · D3: a reference to the other profile's file misses while only one profile is served, built or not ──
+            // N2 · N2b: a scene reference to the other profile's file misses while only one profile is served
+            Setup49();
+            Reg49("Build/Loc.ko");
+            Debug.Verbose = false; int e2_49 = Debug.Errors;
+            bool cs2_49 = ContentService.ContainsScene(new ContentSceneRef("g49-title-base"));
+            var sc2_49 = Load49(ContentService.LoadSceneAsync(new ContentSceneRef("g49-title-base")));
+            int other2_49 = Open49(TitleKo_49);   // the file the base's name answers while only the locale is served
+            int errs2_49 = Debug.Errors - e2_49;
+            Debug.Verbose = true;
+            var own2_49 = Load49(ContentService.LoadSceneAsync(new ContentSceneRef("g49-title-ko")));
+            Check(!cs2_49 && !sc2_49.IsValid() && errs2_49 == 1 && other2_49 == 0 && own2_49.IsValid() && own2_49.path == TitleKo_49,
+                  $"F-10 N2 only the locale served: the base scene's reference misses as in a player — no other file opens; the locale's own reference opens its file (contains={cs2_49} loaded={(sc2_49.IsValid() ? sc2_49.path : "invalid")} errors=+{errs2_49} other file open={other2_49} own={own2_49.path})");
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e2b_49 = Debug.Errors;
+            bool cs2b_49 = ContentService.ContainsScene(new ContentSceneRef("g49-title-ko"));
+            var sc2b_49 = Load49(ContentService.LoadSceneAsync(new ContentSceneRef("g49-title-ko")));
+            int errs2b_49 = Debug.Errors - e2b_49;
+            Debug.Verbose = true;
+            var own2b_49 = Load49(ContentService.LoadSceneAsync(new ContentSceneRef("g49-title-base")));
+            Check(!cs2b_49 && !sc2b_49.IsValid() && errs2b_49 == 1 && own2b_49.IsValid() && own2b_49.path == TitleBase_49,
+                  $"F-10 N2b only the base served: the locale scene's reference misses; the base's own opens its file (contains={cs2b_49} loaded={(sc2b_49.IsValid() ? sc2b_49.path : "invalid")} errors=+{errs2b_49} own={own2b_49.path})");
+
+            // N3: the same for assets and sprites — the other profile was never built nor registered
+            Setup49();
+            Reg49("Build/Loc.ko");
+            var r3a_49 = Ref49<Texture2D>("g49-flag-base"); var r3s_49 = Ref49<Sprite>("g49-sheet2-base", "t0"); var r3own_49 = Ref49<Texture2D>("g49-flag-ko");
+            Setup49();
+            Reg49("Build/Loc");
+            var r3b_49 = Ref49<Texture2D>("g49-flag-ko"); var r3bs_49 = Ref49<Sprite>("g49-sheet2-ko", "t0"); var r3bown_49 = Ref49<Texture2D>("g49-flag-base");
+            Check(r3a_49 == null && r3s_49 == null && ReferenceEquals(r3own_49, flagKo_49) && r3b_49 == null && r3bs_49 == null && ReferenceEquals(r3bown_49, flagBase_49),
+                  $"D3 N3 an asset or sprite reference to the other profile's file misses while only one is served, built or not (base→{Who49(r3a_49)} · base sprite→{Who49(r3s_49)} · ko own→{Who49(r3own_49)} / ko→{Who49(r3b_49)} · ko sprite→{Who49(r3bs_49)} · base own→{Who49(r3bown_49)})");
+
+            // N3b: the guard looks at what Resolve will — a file 'pic[p0].png' in the base, the sprite p0 of 'pic.png' in the locale
+            var picLit_49 = new Texture2D { name = "pic[p0]" }; var picKo_49 = new Texture2D { name = "pic" }; var p0Ko_49 = new Sprite { name = "p0" };
+            void AddPic49(bool catalogs)
+            {
+                FakeEngine.AddProjectAsset("Assets/Loc/Icons/pic[p0].png", picLit_49); FakeEngine.SetGuid("Assets/Loc/Icons/pic[p0].png", "g49-piclit");
+                FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/pic.png", picKo_49, p0Ko_49); FakeEngine.SetGuid("Assets/Loc.ko/Icons/pic.png", "g49-picko");
+                foreach (var o in new Object[] { picLit_49, picKo_49, p0Ko_49 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+                if (catalogs)   // both profiles built once: both roots are scanned from the start
+                {
+                    var cb = ScriptableObject.CreateInstance<ContentCatalog>(); cb.EditorSetSourceRoot("Assets/Loc"); FakeEngine.AddProjectAsset("Assets/Cat/loc49.asset", cb);
+                    var ck = ScriptableObject.CreateInstance<ContentCatalog>(); ck.EditorSetSourceRoot("Assets/Loc.ko"); FakeEngine.AddProjectAsset("Assets/Cat/locko49.asset", ck);
+                }
+                ContentLinkEditorUtility.Invalidate();
+            }
+            string WhoPic49(Object o) => o == null ? "miss" : ReferenceEquals(o, picLit_49) ? "base literal" : ReferenceEquals(o, p0Ko_49) ? "ko sprite" : o.GetType().Name + ":" + o.name;
+            var got3b_49 = new System.Collections.Generic.List<string>(); var own3b_49 = new System.Collections.Generic.List<string>();
+            foreach (bool cats3b_49 in new[] { false, true })
+            {
+                Setup49(); AddPic49(cats3b_49); Reg49("Build/Loc.ko");
+                got3b_49.Add(WhoPic49(Ref49<Object>("g49-piclit"))); own3b_49.Add(WhoPic49(Ref49<Sprite>("g49-picko", "p0")));
+                Setup49(); AddPic49(cats3b_49); Reg49("Build/Loc");
+                got3b_49.Add(WhoPic49(Ref49<Sprite>("g49-picko", "p0"))); own3b_49.Add(WhoPic49(Ref49<Object>("g49-piclit")));
+            }
+            Check(got3b_49.TrueForAll(x => x == "miss") && own3b_49[0] == "ko sprite" && own3b_49[1] == "base literal" && own3b_49[2] == "ko sprite" && own3b_49[3] == "base literal",
+                  $"D3 N3b a reference to the base's file 'pic[p0].png' or to the locale's sprite 'pic[p0]' misses while only the other profile is served, its catalog in the project or not; each one's own profile served, it resolves (other's: {string.Join(" · ", got3b_49)} / own: {string.Join(" · ", own3b_49)})");
+
+            // N3c: a sprite reference whose composed name is a file of the other profile — the guard looks at what Resolve will
+            Setup49();
+            FakeEngine.MainAssetAt.Remove("Assets/Loc/Icons/sheet[s0].png");   // the base keeps sheet.png (s0) only
+            FakeEngine.SetGuid("Assets/Loc/Icons/sheet.png", "g49-sheet-base");
+            var koLit3c_49 = new Texture2D { name = "sheet[s0]" };
+            FakeEngine.AddProjectAsset("Assets/Loc.ko/Icons/sheet[s0].png", koLit3c_49); FakeEngine.Assets[FakeEngine.ObjectIdOf[koLit3c_49]] = koLit3c_49;
+            ContentLinkEditorUtility.Invalidate();
+            Reg49("Build/Loc.ko");
+            Debug.Verbose = false; bool c3c_49 = ContentService.Contains(new ContentRef<Sprite>("g49-sheet-base", "s0")); Debug.Verbose = true;
+            var o3c_49 = Ref49<Object>("g49-sheet-base", "s0");
+            Check(!c3c_49 && o3c_49 == null, $"D3 N3c only the locale served: a base sprite reference whose name 'Icons/sheet[s0]' is a file of the locale misses, as in a player (contains={c3c_49} got={(ReferenceEquals(o3c_49, koLit3c_49) ? "the locale's file" : Who49(o3c_49))})");
+
+            // N10: the own file of a served root, its name also another (unscanned) root's — resolves, and a repeat costs nothing
+            Setup49();
+            Reg49("Build/Loc");
+            var r10_49 = Ref49<Texture2D>("g49-flag-base");
+            var ref10_49 = new ContentRef<Texture2D>("g49-flag-base");
+            for (int i = 0; i < 10; ++i) ContentService.TryGetName(ref10_49, out _);
+            long a10_49 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i) ContentService.TryGetName(ref10_49, out _);
+            long alloc10_49 = GC.GetAllocatedBytesForCurrentThread() - a10_49;
+            Check(ReferenceEquals(r10_49, flagBase_49) && alloc10_49 == 0, $"D3 N10 a reference to a served root's own file resolves though an unscanned root has the name; a repeated lookup allocates nothing (got {Who49(r10_49)} · {alloc10_49} B over 1000)");
+
+            // N10b: both served, base then locale — the base scene's reference opens the locale's file (the registration order)
+            Setup49();
+            Reg49("Build/Loc"); Reg49("Build/Loc.ko");
+            var sc10b_49 = Load49(ContentService.LoadSceneAsync(new ContentSceneRef("g49-title-base")));
+            Check(sc10b_49.IsValid() && sc10b_49.path == TitleKo_49, $"D3 N10b both served: a base scene's reference takes the most recently registered file, as for assets (got {sc10b_49.path})");
+
+            // ── F-11 · F-46 · F-23 · O-10 · D4: each scene load its own turn, and an instance of its path that arrived while it flew ──
+            // N4 · N4b · N4c · N4d: loads of one scene name at once — each gets its own instance, as built scenes do
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e4_49 = Debug.Errors;
+            var l4a_49 = ContentService.LoadSceneAsync("Scenes/Title"); var l4b_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var r4a_49 = l4a_49.GetResult(); var r4b_49 = l4b_49.GetResult();
+            int errs4_49 = Debug.Errors - e4_49;
+            Debug.Verbose = true;
+            Check(r4a_49.IsValid() && r4b_49.IsValid() && r4a_49.handle != r4b_49.handle && errs4_49 == 0 && ContentService.LoadedSceneCount == 2 && Open49(TitleBase_49) == 2,
+                  $"F-11 N4 two loads of one name at once: two instances, both tracked, no error (a={r4a_49.IsValid()} b={r4b_49.IsValid()} errors=+{errs4_49} tracked={ContentService.LoadedSceneCount} open={Open49(TitleBase_49)})");
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false;
+            var l4_49 = new[] { ContentService.LoadSceneAsync("Scenes/Title"), ContentService.LoadSceneAsync("Scenes/Title"), ContentService.LoadSceneAsync("Scenes/Title") };
+            FakeEngine.CompleteLoads();
+            var hs4_49 = new System.Collections.Generic.HashSet<ulong>(); foreach (var l in l4_49) { var r = l.GetResult(); if (r.IsValid()) hs4_49.Add(r.handle.GetRawData()); }
+            Debug.Verbose = true;
+            Check(hs4_49.Count == 3 && ContentService.LoadedSceneCount == 3, $"F-11 N4b three at once: three distinct instances, all tracked (distinct valid={hs4_49.Count} tracked={ContentService.LoadedSceneCount})");
+            Setup49();
+            Reg49("Build/Loc");
+            var sa4_49 = ContentScope.Root.CreateChild("A49"); var sb4_49 = ContentScope.Root.CreateChild("B49");
+            Debug.Verbose = false;
+            var la4_49 = sa4_49.LoadSceneAsync("Scenes/Title"); var lb4_49 = sb4_49.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var ra4_49 = la4_49.GetResult(); var rb4_49 = lb4_49.GetResult();
+            Debug.Verbose = true;
+            int ownA4_49 = sa4_49.SceneCount, ownB4_49 = sb4_49.SceneCount;
+            sa4_49.Dispose(); FakeEngine.CompleteLoads(); int left4_49 = Open49(TitleBase_49);
+            sb4_49.Dispose(); FakeEngine.CompleteLoads(); Tick();
+            Check(ra4_49.IsValid() && rb4_49.IsValid() && ownA4_49 == 1 && ownB4_49 == 1 && left4_49 == 1 && Open49(TitleBase_49) == 0 && ContentService.LoadedSceneCount == 0,
+                  $"F-46 N4c two scopes: each owns one instance and unloads its own; none is left (owned={ownA4_49}/{ownB4_49} after A={left4_49} after both={Open49(TitleBase_49)} tracked={ContentService.LoadedSceneCount})");
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e4d_49 = Debug.Errors;
+            var d4a_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            Reg49("Build/Loc.ko");   // the name is the locale's from now on
+            var d4b_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var rd4a_49 = d4a_49.GetResult(); var rd4b_49 = d4b_49.GetResult();
+            int errs4d_49 = Debug.Errors - e4d_49;
+            Debug.Verbose = true;
+            Check(rd4a_49.path == TitleBase_49 && rd4b_49.path == TitleKo_49 && errs4d_49 == 0 && ContentService.LoadedSceneCount == 2,
+                  $"F-11 N4d a registration between two loads of one name: each load gets the file it asked for (first={rd4a_49.path ?? "invalid"} second={rd4b_49.path ?? "invalid"} errors=+{errs4d_49} tracked={ContentService.LoadedSceneCount})");
+
+            // N4f: N4d with the second file finishing first — loads of two files need not end in the order they started
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e4f_49 = Debug.Errors;
+            var a4f_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            Reg49("Build/Loc.ko");
+            var b4f_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.PendingLoads.Reverse();
+            FakeEngine.CompleteLoads();
+            var ra4f_49 = a4f_49.GetResult(); var rb4f_49 = b4f_49.GetResult();
+            int errs4f_49 = Debug.Errors - e4f_49;
+            Debug.Verbose = true;
+            Check(ra4f_49.path == TitleBase_49 && rb4f_49.path == TitleKo_49 && errs4f_49 == 0 && ContentService.LoadedSceneCount == 2 && Leftover49() == 0,
+                  $"F-11 N4f a registration between two loads and the second file finishing first: each load still gets the file it asked for (first={ra4f_49.path ?? "invalid"} second={rb4f_49.path ?? "invalid"} errors=+{errs4f_49} tracked={ContentService.LoadedSceneCount} kept={Leftover49()})");
+
+            // N4g: an Additive and a Single load of one name at once
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e4g_49 = Debug.Errors;
+            var a4g_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            var s4g_49 = ContentService.LoadSceneAsync("Scenes/Title", LoadSceneMode.Single);
+            FakeEngine.CompleteLoads(); Tick();
+            var ra4g_49 = a4g_49.GetResult(); var rs4g_49 = s4g_49.GetResult();
+            int errs4g_49 = Debug.Errors - e4g_49;
+            Debug.Verbose = true;
+            Check(ra4g_49.IsValid() && rs4g_49.IsValid() && ra4g_49.handle != rs4g_49.handle && errs4g_49 == 0 && Leftover49() == 0,
+                  $"F-11 N4g an Additive and a Single load of one name at once each get their instance (additive={ra4g_49.IsValid()} single={rs4g_49.IsValid()} errors=+{errs4g_49} kept={Leftover49()})");
+
+            // N5: a cancelled load and a retry before the first completes
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e5_49 = Debug.Errors;
+            var cts5_49 = new System.Threading.CancellationTokenSource();
+            var c5_49 = ContentService.LoadSceneAsync("Scenes/Title", LoadSceneMode.Additive, cts5_49.Token);
+            cts5_49.Cancel();
+            bool oce5_49 = false; try { c5_49.GetResult(); } catch (OperationCanceledException) { oce5_49 = true; }
+            var c5b_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); Tick();
+            var r5_49 = c5b_49.GetResult();
+            int errs5_49 = Debug.Errors - e5_49;
+            Debug.Verbose = true;
+            Check(oce5_49 && r5_49.IsValid() && r5_49.isLoaded && errs5_49 == 0 && Open49(TitleBase_49) == 1 && ContentService.LoadedSceneCount == 1,
+                  $"F-23 N5 cancel, then retry before the first load completes: the retry gets its instance, the cancelled one is unloaded (oce={oce5_49} retry={r5_49.IsValid()} errors=+{errs5_49} open={Open49(TitleBase_49)} tracked={ContentService.LoadedSceneCount})");
+
+            // N5c: a scope ends mid-load (its token), another scope loads the name before the first load completes
+            Setup49();
+            Reg49("Build/Loc");
+            var scA5c_49 = ContentScope.Root.CreateChild("A5c49"); var scB5c_49 = ContentScope.Root.CreateChild("B5c49");
+            Debug.Verbose = false; int e5c_49 = Debug.Errors;
+            var lA5c_49 = scA5c_49.LoadSceneAsync("Scenes/Title");
+            scA5c_49.Dispose();
+            bool oce5c_49 = false; try { lA5c_49.GetResult(); } catch (OperationCanceledException) { oce5c_49 = true; }
+            var lB5c_49 = scB5c_49.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); Tick();
+            var rB5c_49 = lB5c_49.GetResult();
+            int errs5c_49 = Debug.Errors - e5c_49;
+            Debug.Verbose = true;
+            Check(oce5c_49 && rB5c_49.IsValid() && scB5c_49.SceneCount == 1 && Open49(TitleBase_49) == 1 && errs5c_49 == 0,
+                  $"F-23 N5c a scope that ends mid-load, another scope loading the name: the second gets its instance, the first one's is unloaded (oce={oce5c_49} retry={rB5c_49.IsValid()} owned={scB5c_49.SceneCount} open={Open49(TitleBase_49)} errors=+{errs5c_49})");
+            scB5c_49.Dispose(); FakeEngine.CompleteLoads(); Tick();
+
+            // N6: a cancelled Single load leaves nothing in flight; a later outside load of the path is not taken
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false;
+            var cts6_49 = new System.Threading.CancellationTokenSource();
+            var c6_49 = ContentService.LoadSceneAsync("Scenes/Title", LoadSceneMode.Single, cts6_49.Token);
+            cts6_49.Cancel();
+            bool oce6_49 = false; try { c6_49.GetResult(); } catch (OperationCanceledException) { oce6_49 = true; }
+            FakeEngine.CompleteLoads(); Tick();
+            Debug.Verbose = true;
+            int flying6_49 = InFlight49();
+            SceneManager.Open(NewScene(78, "Boot2"));
+            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneAsyncInPlayMode(TitleBase_49, new LoadSceneParameters(LoadSceneMode.Additive)); FakeEngine.CompleteLoads();
+            Scene outside6_49 = default; foreach (var s in FakeEngine.LoadedScenes) if (s.path == TitleBase_49) outside6_49 = s;
+            int kept6_49 = Leftover49();   // no load of the path flies: the outside instance is nobody's to keep
+            var r6_49 = Load49(ContentService.LoadSceneAsync("Scenes/Title"));
+            Check(oce6_49 && flying6_49 == 0 && r6_49.IsValid() && r6_49.handle != outside6_49.handle && InFlight49() == 0,
+                  $"O-10 N6 a cancelled Single load leaves nothing in flight; the next load gets its own instance, not an outside one (oce={oce6_49} in flight after={flying6_49} next distinct={r6_49.handle != outside6_49.handle} in flight={InFlight49()})");
+            Check(kept6_49 == 0 && Leftover49() == 0, $"O-10 N6b an outside load of the path while none of ours flies is not kept, and a finished load keeps nothing (kept after the outside load={kept6_49} after ours={Leftover49()})");
+
+            // N4e: a cancelled Single load takes its own turn when its operation completes — not, at the cancel, the turn of an earlier load still in flight
+            Setup49();
+            Reg49("Build/Loc");
+            Debug.Verbose = false; int e4e_49 = Debug.Errors;
+            var a4e_49 = ContentService.LoadSceneAsync("Scenes/Title");   // the base's file
+            Reg49("Build/Loc.ko");   // the name is the locale's from now on
+            var cts4e_49 = new System.Threading.CancellationTokenSource();
+            var s4e_49 = ContentService.LoadSceneAsync("Scenes/Title", LoadSceneMode.Single, cts4e_49.Token);   // the locale's file
+            cts4e_49.Cancel();
+            bool oce4e_49 = false; try { s4e_49.GetResult(); } catch (OperationCanceledException) { oce4e_49 = true; }
+            FakeEngine.CompleteLoads(); Tick();
+            var r4e_49 = a4e_49.GetResult();
+            int errs4e_49 = Debug.Errors - e4e_49;
+            Debug.Verbose = true;
+            Check(oce4e_49 && r4e_49.path == TitleBase_49 && errs4e_49 == 0 && InFlight49() == 0,
+                  $"O-10 N4e a Single load cancelled behind an earlier load of the name: the earlier load still gets its file, and the cancelled one leaves nothing in flight (first={r4e_49.path ?? "invalid"} errors=+{errs4e_49} in flight={InFlight49()})");
+
+            // N6d: an outside load of another file that arrives while ours flies is not kept
+            Setup49();
+            Reg49("Build/Loc");
+            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneAsyncInPlayMode(Solo_49, new LoadSceneParameters(LoadSceneMode.Additive));   // the user's, ahead in the queue
+            var l6d_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var r6d_49 = l6d_49.GetResult();
+            Check(r6d_49.IsValid() && r6d_49.path == TitleBase_49 && Open49(Solo_49) == 1 && Leftover49() == 0,
+                  $"O-10 N6d an outside load of another file that arrives while ours flies is not kept (ours={r6d_49.path ?? "invalid"} outside open={Open49(Solo_49)} kept={Leftover49()})");
+
+            // N11: a user's own load of the path before ours is never taken; a load that cannot start leaves nothing
+            Setup49();
+            Reg49("Build/Loc");
+            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneAsyncInPlayMode(TitleBase_49, new LoadSceneParameters(LoadSceneMode.Additive));
+            var l11_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var r11_49 = l11_49.GetResult();
+            Scene user11_49 = default; foreach (var s in FakeEngine.LoadedScenes) if (s.path == TitleBase_49) { user11_49 = s; break; }   // the user's load started first: its instance arrived first
+            ContentService.TryUnloadScene(r11_49); FakeEngine.CompleteLoads(); Tick();
+            bool userStays11_49 = user11_49.IsValid() && user11_49.isLoaded;
+            FakeEngine.MainAssetAt.Remove(Solo_49);   // the name is known, the file gone
+            Debug.Verbose = false; int e11_49 = Debug.Errors;
+            var f11_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            int errs11_49 = Debug.Errors - e11_49;
+            Debug.Verbose = true;
+            Check(r11_49.IsValid() && r11_49.handle != user11_49.handle && userStays11_49 && !f11_49.IsValid() && errs11_49 == 1 && InFlight49() == 0,
+                  $"D4 N11 a user's instance of the path opened before ours is not taken (ours unloaded, theirs stays={userStays11_49}); a load that cannot start fails once and leaves nothing in flight (errors=+{errs11_49} in flight={InFlight49()})");
+            Check(Leftover49() == 0, $"D4 N11b when the last load of a path ends, the user's instance that arrived during it is let go — no flight or arrival is kept (kept={Leftover49()})");
+
+            // N11c: an instance a sceneLoaded handler starts unloading before its load completes is no answer — as ContentService.Claim skips it
+            Setup49();
+            Reg49("Build/Loc");
+            UnityEngine.Events.UnityAction<Scene, LoadSceneMode> guard11c_49 = (s, m) => { if (s.path == TitleBase_49) SceneManager.UnloadSceneAsync(s); };
+            SceneManager.sceneLoaded += guard11c_49;
+            Debug.Verbose = false; int e11c_49 = Debug.Errors;
+            var r11c_49 = Load49(ContentService.LoadSceneAsync("Scenes/Title"));
+            int errs11c_49 = Debug.Errors - e11c_49;
+            Debug.Verbose = true;
+            SceneManager.sceneLoaded -= guard11c_49;
+            Check(!r11c_49.IsValid() && errs11c_49 == 1 && Open49(TitleBase_49) == 0 && ContentService.LoadedSceneCount == 0 && Leftover49() == 0,
+                  $"D4 N11c a load whose instance is unloading before the load completes gets none, as a built scene's Claim (got {(r11c_49.IsValid() ? r11c_49.path : "invalid")} errors=+{errs11c_49} open={Open49(TitleBase_49)} tracked={ContentService.LoadedSceneCount} kept={Leftover49()})");
+
+            // N11d: of two loads of one name (two files), the first gets no instance — a sceneLoaded handler unloads it — and the second still gets its own
+            Setup49();
+            Reg49("Build/Loc");
+            UnityEngine.Events.UnityAction<Scene, LoadSceneMode> guard11d_49 = (s, m) => { if (s.path == TitleBase_49) SceneManager.UnloadSceneAsync(s); };
+            SceneManager.sceneLoaded += guard11d_49;
+            Debug.Verbose = false; int e11d_49 = Debug.Errors;
+            var a11d_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            Reg49("Build/Loc.ko");   // the name is the locale's from now on
+            var b11d_49 = ContentService.LoadSceneAsync("Scenes/Title");
+            FakeEngine.CompleteLoads();
+            var ra11d_49 = a11d_49.GetResult(); var rb11d_49 = b11d_49.GetResult();
+            int errs11d_49 = Debug.Errors - e11d_49;
+            Debug.Verbose = true;
+            SceneManager.sceneLoaded -= guard11d_49;
+            FakeEngine.CompleteLoads(); Tick();
+            Check(!ra11d_49.IsValid() && rb11d_49.path == TitleKo_49 && errs11d_49 == 1 && Leftover49() == 0,
+                  $"D4 N11d the first of two loads of one name gets no instance, the second still gets its own file (first={(ra11d_49.IsValid() ? ra11d_49.path : "invalid")} second={rb11d_49.path ?? "invalid"} errors=+{errs11d_49} kept={Leftover49()})");
+
+            // N14: a Play that ends with a load in flight leaves nothing for the next Play (Drop) — the next Play's load gets its own file
+            Setup49();
+            Reg49("Build/Loc");
+            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneAsyncInPlayMode(TitleBase_49, new LoadSceneParameters(LoadSceneMode.Additive));   // a user's load of the path, ahead in the queue
+            var l14_49 = ContentService.LoadSceneAsync("Scenes/Title");   // ours — in flight when Play ends
+            { var first = FakeEngine.PendingLoads[0]; FakeEngine.PendingLoads.RemoveAt(0); first(); }   // one frame: the user's instance arrives during our flight
+            Debug.Verbose = false; UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.ExitingPlayMode); Debug.Verbose = true;   // the end of Play drops the await: no SceneResult
+            Setup49();   // the next Play
+            Reg49("Build/Loc.ko");   // the name answers the locale's file now
+            Debug.Verbose = false; int e14_49 = Debug.Errors;
+            var r14_49 = Load49(ContentService.LoadSceneAsync("Scenes/Title"));
+            int errs14_49 = Debug.Errors - e14_49;
+            Debug.Verbose = true;
+            Check(r14_49.IsValid() && r14_49.path == TitleKo_49 && errs14_49 == 0 && Leftover49() == 0,
+                  $"D4 N14 a load in flight when Play ends leaves no turn, flight or arrival behind: the next Play's load gets its own file (got {(r14_49.IsValid() ? r14_49.path : "invalid")} errors=+{errs14_49} kept={Leftover49()})");
+
+            // N15: the toggle turned off during Play with only a real directory — a load in flight completes, the exit summary still names what was served
+            Setup49();
+            var cat15_49 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat15_49.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/flag", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(flagBase_49) } });
+            cat15_49.EditorSetSourceRoot("Assets/Loc");
+            FakeEngine.Dirs["Real/Loc49c"] = new ScriptableObject[] { cat15_49 }; FakeEngine.IdDir[FakeEngine.ObjectIdOf[flagBase_49]] = "Real/Loc49c";
+            Reg49("Real/Loc49c");
+            Debug.Verbose = false;
+            var h15_49 = ContentService.Acquire<Object>("Icons/a"); bool v15_49 = h15_49.IsValid; h15_49.Dispose(); Tick();
+            int e15_49 = Debug.Errors;
+            var l15_49 = ContentService.LoadSceneAsync("Scenes/Solo");
+            ContentLinkSimulation.Enabled = false;   // mid-Play, no directory served from the project
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads();
+            var r15_49 = l15_49.GetResult();
+            int errs15_49 = Debug.Errors - e15_49;
+            bool after15_49 = ContentService.Contains("Icons/fresh15");   // the toggle off: nothing new is answered under the real root
+            Debug.Verbose = true;
+            int lg15_49 = Debug.Logs; Debug.LastLog = "";
+            UnityEditor.EditorApplication.RaisePlayModeStateChanged(UnityEditor.PlayModeStateChange.ExitingPlayMode);
+            string sum15_49 = Debug.Logs > lg15_49 ? Debug.LastLog : "";
+            ContentLinkSimulation.Enabled = true;
+            Check(v15_49 && r15_49.IsValid() && errs15_49 == 0 && ContentService.LoadedSceneCount == 1 && !after15_49 && sum15_49.Contains("Icons/a") && sum15_49.Contains("Scenes/Solo"),
+                  $"D4 N15 the toggle turned off during Play: a scene load in flight still completes and is tracked, and the exit summary still names what was served (load={r15_49.IsValid()} errors=+{errs15_49} tracked={ContentService.LoadedSceneCount} summary='{sum15_49}')");
+
+            // ── F-24 · D5: a directory served from the project holds the open scenes of its files ──
+            // N7 · N7b · N7c: a scene a served directory holds keeps it registered
+            Setup49();
+            int d7_49 = Reg49("Build/Loc");
+            var s7_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            var snap7_49 = new System.Collections.Generic.List<ContentService.SceneInfo>(); ContentService.SnapshotScenes(snap7_49);
+            Debug.Verbose = false; int e7_49 = Debug.Errors; Debug.LastError = "";
+            bool u7_49 = ContentService.UnregisterDirectory(d7_49); bool u7f_49 = ContentService.UnregisterDirectory(d7_49, force: true);
+            int errs7_49 = Debug.Errors - e7_49; string err7_49 = Debug.LastError;
+            Debug.Verbose = true;
+            ContentService.TryUnloadScene(s7_49); FakeEngine.CompleteLoads(); Tick();
+            bool u7after_49 = ContentService.UnregisterDirectory(d7_49);
+            Check(s7_49.IsValid() && !u7_49 && !u7f_49 && errs7_49 == 2 && err7_49.Contains("Scenes/Solo") && u7after_49,
+                  $"F-24 N7 a served directory with its scene open refuses to go, forced or not, naming the scene; after the unload it goes (open={s7_49.IsValid()} unregister={u7_49} forced={u7f_49} errors=+{errs7_49} '{err7_49}' after={u7after_49})");
+            Check(snap7_49.Count == 1 && snap7_49[0].Dir == d7_49, $"F-24 N7b SnapshotScenes says which directory holds the simulated scene (dir={(snap7_49.Count > 0 ? snap7_49[0].Dir : -9)} expected {d7_49})");
+            Setup49();
+            int b7_49 = Reg49("Build/Loc"); int k7_49 = Reg49("Build/Loc.ko");
+            var t7_49 = Load49(ContentService.LoadSceneAsync("Scenes/Title"));
+            Debug.Verbose = false;
+            bool uk7_49 = ContentService.UnregisterDirectory(k7_49); bool ub7_49 = ContentService.UnregisterDirectory(b7_49);
+            Debug.Verbose = true;
+            Check(t7_49.path == TitleKo_49 && !uk7_49 && ub7_49, $"F-24 N7c the locale's scene open: the locale refuses, the base goes — the file decides, as ids do (scene={t7_49.path} locale={uk7_49} base={ub7_49})");
+
+            // N7d: a directory registered after the scene opened holds it too when it covers the file — a built directory's ids are indexed when it registers
+            Setup49();
+            int a7d_49 = Reg49("Build/Loc");
+            var s7d_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            var p7d_49 = ContentBuildSettings.instance.Add("Loc2"); p7d_49.SourceRoot = "Assets/Loc"; p7d_49.OutputPath = "Build/Loc2";
+            p7d_49.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/loc2_49.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            int b7d_49 = Reg49("Build/Loc2");
+            Debug.Verbose = false; bool u7d_49 = ContentService.UnregisterDirectory(b7d_49); Debug.Verbose = true;
+            Check(s7d_49.IsValid() && b7d_49 > a7d_49 && !u7d_49, $"F-24 N7d a directory registered after the scene opened holds it too when it covers the file — a built directory's ids are indexed when it registers (open={s7d_49.IsValid()} later directory unregistered={u7d_49})");
+
+            // N7e: SnapshotScenes names the first live directory that covers the file — as a built scene's first carrier (not an unregistered one, not the last)
+            Setup49();
+            foreach (var n in new[] { "Loc2", "Loc3" })
+            {
+                var p = ContentBuildSettings.instance.Add(n); p.SourceRoot = "Assets/Loc"; p.OutputPath = "Build/" + n;
+                p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = $"Assets/Cat/{n}_49.asset" } };
+            }
+            ContentLinkEditorUtility.Invalidate();
+            int a7e_49 = Reg49("Build/Loc"), b7e_49 = Reg49("Build/Loc2"), c7e_49 = Reg49("Build/Loc3");
+            Debug.Verbose = false; bool gone7e_49 = ContentService.UnregisterDirectory(a7e_49); Debug.Verbose = true;   // before any scene opens
+            var s7e_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            var snap7e_49 = new System.Collections.Generic.List<ContentService.SceneInfo>(); ContentService.SnapshotScenes(snap7e_49);
+            Check(gone7e_49 && s7e_49.IsValid() && snap7e_49.Count == 1 && snap7e_49[0].Dir == b7e_49,
+                  $"F-24 N7e SnapshotScenes names the first live directory covering the file (dir={(snap7e_49.Count > 0 ? snap7e_49[0].Dir : -9)} expected {b7e_49} — not the unregistered {a7e_49} nor the later {c7e_49})");
+
+            // N7f: nested roots — one file under two names, loaded at once; both directories hold it, as both builds carry it
+            Setup49();
+            var in7f_49 = ContentBuildSettings.instance.Add("Inner"); in7f_49.SourceRoot = "Assets/Loc/Scenes"; in7f_49.OutputPath = "Build/Inner";
+            in7f_49.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/inner49.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            int out7f_49 = Reg49("Build/Loc"); int inn7f_49 = Reg49("Build/Inner");
+            Debug.Verbose = false; int e7f_49 = Debug.Errors;
+            var x7f_49 = ContentService.LoadSceneAsync("Scenes/Title"); var y7f_49 = ContentService.LoadSceneAsync("Title");
+            FakeEngine.CompleteLoads();
+            var rx7f_49 = x7f_49.GetResult(); var ry7f_49 = y7f_49.GetResult();
+            bool ui7f_49 = ContentService.UnregisterDirectory(inn7f_49); bool uo7f_49 = ContentService.UnregisterDirectory(out7f_49);
+            int errs7f_49 = Debug.Errors - e7f_49;
+            Debug.Verbose = true;
+            Check(rx7f_49.path == TitleBase_49 && ry7f_49.path == TitleBase_49 && rx7f_49.handle != ry7f_49.handle && ContentService.LoadedSceneCount == 2 && !ui7f_49 && !uo7f_49 && errs7f_49 == 2,
+                  $"F-24 N7f nested roots, one file as 'Scenes/Title' and 'Title' at once: two instances; both directories refuse to go (distinct={rx7f_49.handle != ry7f_49.handle} tracked={ContentService.LoadedSceneCount} inner={ui7f_49} outer={uo7f_49} errors=+{errs7f_49})");
+
+            // N5b: the instance of a cancelled Additive load is tracked until its unload ends — as a built one is
+            Setup49();
+            int d5b_49 = Reg49("Build/Loc");
+            var cts5b_49 = new System.Threading.CancellationTokenSource();
+            var c5bl_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive, cts5b_49.Token);
+            cts5b_49.Cancel(); try { c5bl_49.GetResult(); } catch (OperationCanceledException) { }
+            FakeEngine.CompleteLoads();   // the load completes; its unload starts
+            int tracked5b_49 = ContentService.LoadedSceneCount;
+            Debug.Verbose = false; bool during5b_49 = ContentService.UnregisterDirectory(d5b_49); Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick();   // the unload ends
+            int after5b_49 = ContentService.LoadedSceneCount; bool open5b_49 = Open49(Solo_49) > 0;
+            Debug.Verbose = false; bool then5b_49 = ContentService.UnregisterDirectory(d5b_49); Debug.Verbose = true;
+            Check(tracked5b_49 == 1 && !during5b_49 && after5b_49 == 0 && !open5b_49 && then5b_49,
+                  $"F-24 N5b a cancelled Additive load's instance is tracked while its unload runs — the directory stays until it ends (tracked={tracked5b_49} unregister during={during5b_49} · after: tracked={after5b_49} open={open5b_49} unregister={then5b_49})");
+
+            // N6c: a cancelled Single load's scene stays loaded — and tracked, so its directory stays, as a built one's
+            Setup49();
+            int d6c_49 = Reg49("Build/Loc");
+            var cts6c_49 = new System.Threading.CancellationTokenSource();
+            var c6cl_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Single, cts6c_49.Token);
+            Debug.Verbose = false; cts6c_49.Cancel(); Debug.Verbose = true;
+            try { c6cl_49.GetResult(); } catch (OperationCanceledException) { }
+            FakeEngine.CompleteLoads(); Tick();
+            var snap6c_49 = new System.Collections.Generic.List<ContentService.SceneInfo>(); ContentService.SnapshotScenes(snap6c_49);
+            Debug.Verbose = false; bool u6c_49 = ContentService.UnregisterDirectory(d6c_49); Debug.Verbose = true;
+            Check(Open49(Solo_49) == 1 && ContentService.LoadedSceneCount == 1 && snap6c_49.Count == 1 && snap6c_49[0].Dir == d6c_49 && !u6c_49,
+                  $"F-24 N6c a cancelled Single load's scene stays loaded and tracked: its directory refuses to go (open={Open49(Solo_49)} tracked={ContentService.LoadedSceneCount} snapshot={snap6c_49.Count} unregister={u6c_49})");
+
+            // N12: a scene resolved under a real directory's root does not hold that directory
+            Setup49();
+            var cat12_49 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat12_49.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/flag", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(flagBase_49) } });
+            cat12_49.EditorSetSourceRoot("Assets/Loc");
+            FakeEngine.Dirs["Real/Loc49b"] = new ScriptableObject[] { cat12_49 }; FakeEngine.IdDir[FakeEngine.ObjectIdOf[flagBase_49]] = "Real/Loc49b";
+            int d12_49 = Reg49("Real/Loc49b");
+            var s12_49 = Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            Debug.Verbose = false; bool u12_49 = ContentService.UnregisterDirectory(d12_49); Debug.Verbose = true;
+            Check(s12_49.IsValid() && u12_49, $"D5 N12 a scene the simulation resolved under a real directory's root does not keep that directory (a player could not have opened it) (open={s12_49.IsValid()} unregister={u12_49})");
+
+            // N12b: quitting with a simulated scene open logs nothing
+            Setup49();
+            Reg49("Build/Loc");
+            Load49(ContentService.LoadSceneAsync("Scenes/Solo"));
+            int e12b_49 = Debug.Errors;
+            Debug.Verbose = false; ContentService.Shutdown(); Debug.Verbose = true;
+            bool sim12b_49 = ContentService.HasSimulatedDirectories;
+            Check(Debug.Errors == e12b_49 && !sim12b_49, $"D5 N12b quitting with a simulated scene open unregisters its directory too — it holds no engine directory, and a Play's end must not leave it answering in edit mode (errors=+{Debug.Errors - e12b_49} still simulated={sim12b_49})");
+
+            // ── a simulated scene load in flight holds the directory served from the project, as a built one's does ──
+            Setup49();
+            int d9a_49 = Reg49("Build/Loc");
+            var p9a_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive);
+            bool fly9a_49 = !p9a_49.GetAwaiter().IsCompleted;
+            Debug.Verbose = false; int e9a_49 = Debug.Errors; Debug.LastError = "";
+            bool u9a_49 = ContentService.UnregisterDirectory(d9a_49); bool f9a_49 = ContentService.UnregisterDirectory(d9a_49, force: true);
+            int errs9a_49 = Debug.Errors - e9a_49; string err9a_49 = Debug.LastError; Debug.Verbose = true;
+            var s9a_49 = Load49(p9a_49);
+            ContentService.TryUnloadScene(s9a_49); FakeEngine.CompleteLoads(); Tick();
+            bool after9a_49 = ContentService.UnregisterDirectory(d9a_49);
+            Check(fly9a_49 && !u9a_49 && !f9a_49 && errs9a_49 == 2 && err9a_49.Contains("scene load(s) in flight") && err9a_49.Contains(Solo_49) && s9a_49.IsValid() && after9a_49,
+                  $"S49a a simulated scene load in flight: the directory served from the project is refused, forced or not, as a player refuses a built one · the error names the file — after the load and its unload it goes (in flight={fly9a_49} unregister={u9a_49} forced={f9a_49} errors=+{errs9a_49} '{err9a_49.Split('—')[0].Trim()}' after={after9a_49})");
+            Setup49();
+            int d9b_49 = Reg49("Build/Loc");
+            var cts9b_49 = new System.Threading.CancellationTokenSource();
+            var p9b_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive, cts9b_49.Token);
+            cts9b_49.Cancel(); string a9b_49; try { p9b_49.GetResult(); a9b_49 = "no OCE"; } catch (OperationCanceledException) { a9b_49 = "OCE"; }
+            Debug.Verbose = false; bool u9b_49 = ContentService.UnregisterDirectory(d9b_49); Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();   // the load ends; its instance is handed back and unloaded
+            bool after9b_49 = ContentService.UnregisterDirectory(d9b_49);
+            Check(a9b_49 == "OCE" && !u9b_49 && after9b_49 && Open49(Solo_49) == 0,
+                  $"S49b a cancelled simulated scene load: the caller is answered at once; the directory stays until the load has ended and its instance was handed back ({a9b_49} · unregister={u9b_49} · after={after9b_49} open={Open49(Solo_49)})");
+            Setup49();
+            int b9c_49 = Reg49("Build/Loc"); int k9c_49 = Reg49("Build/Loc.ko");
+            var p9c_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive);
+            Debug.Verbose = false; bool uk9c_49 = ContentService.UnregisterDirectory(k9c_49); bool ub9c_49 = ContentService.UnregisterDirectory(b9c_49); Debug.Verbose = true;
+            var s9c_49 = Load49(p9c_49); ContentService.TryUnloadScene(s9c_49); FakeEngine.CompleteLoads(); Tick();
+            Check(uk9c_49 && !ub9c_49 && s9c_49.path == Solo_49,
+                  $"S49c the file decides: the locale that does not cover the loading file goes, the base that does is refused (locale={uk9c_49} base={ub9c_49} scene={s9c_49.path})");
+            Setup49();
+            Reg49("Build/Loc");
+            var p9d_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive);
+            ContentLinkSimulation.Drop();   // what ExitingPlayMode does — it comes before quitting (measured)
+            Debug.Verbose = false; int e9d_49 = Debug.Errors; ContentService.Shutdown(); int errs9d_49 = Debug.Errors - e9d_49; Debug.Verbose = true;
+            Check(errs9d_49 == 0 && !ContentService.HasSimulatedDirectories,
+                  $"S49d Play ends with a simulated scene load in flight: the simulation drops its flights at ExitingPlayMode, and quitting lets the served directory go without an error (errors=+{errs9d_49} simulated dirs={ContentService.HasSimulatedDirectories})");
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); Tick();
+            Setup49();
+            int b9e_49 = Reg49("Build/Loc"); int k9e_49 = Reg49("Build/Loc.ko");
+            var p9e_49 = ContentService.LoadSceneAsync("Scenes/Title", LoadSceneMode.Additive);   // the locale's file: registered last
+            Debug.Verbose = false; bool ub9e_49 = ContentService.UnregisterDirectory(b9e_49); bool uk9e_49 = ContentService.UnregisterDirectory(k9e_49, force: true); Debug.Verbose = true;
+            var s9e_49 = Load49(p9e_49); ContentService.TryUnloadScene(s9e_49); FakeEngine.CompleteLoads(); Tick();
+            bool after9e_49 = ContentService.UnregisterDirectory(k9e_49);
+            Check(ub9e_49 && !uk9e_49 && s9e_49.path == TitleKo_49 && after9e_49,
+                  $"S49e … the other way (T69's): a locale's file in flight — the base, which does not cover it, goes; the locale is refused, forced or not; after the load and its unload it goes (base={ub9e_49} locale={uk9e_49} scene={s9e_49.path} after={after9e_49})");
+            Setup49();
+            FakeEngine.Dirs["Real/S49f"] = new ScriptableObject[] { ScriptableObject.CreateInstance<ContentCatalog>() };
+            int r9f_49 = Reg49("Real/S49f"); Reg49("Build/Loc");
+            var p9f_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive);
+            string u9f_49; Debug.Verbose = false;
+            try { u9f_49 = ContentService.UnregisterDirectory(r9f_49) ? "unregistered" : "refused"; } catch (Exception ex9f_49) { u9f_49 = ex9f_49.GetType().Name; }
+            Debug.Verbose = true;
+            var s9f_49 = Load49(p9f_49); ContentService.TryUnloadScene(s9f_49); FakeEngine.CompleteLoads(); Tick();
+            Check(u9f_49 == "unregistered" && s9f_49.IsValid(), $"S49f a real directory goes while a simulated scene load is in flight — the simulated answer is for directories served from the project only ({u9f_49})");
+            Setup49();
+            Reg49("Build/Loc");
+            var p9g_49 = ContentService.LoadSceneAsync("Scenes/Solo", LoadSceneMode.Additive);
+            Debug.Verbose = false; int e9g_49 = Debug.Errors; ContentService.Shutdown(); int errs9g_49 = Debug.Errors - e9g_49; Debug.Verbose = true;
+            bool left9g_49 = ContentService.HasSimulatedDirectories;
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); Tick();
+            Check(errs9g_49 == 0 && !left9g_49, $"S49g a Shutdown called during Play with a simulated scene load in flight lets the served directory go without an error — it holds no engine directory, as with an open simulated scene (errors=+{errs9g_49} left={left9g_49})");
+            Setup49();
+            var cat9h_49 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat9h_49.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/flag", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(flagBase_49) } });
+            cat9h_49.EditorSetSourceRoot("Assets/Loc");
+            FakeEngine.Dirs["Real/S49h"] = new ScriptableObject[] { cat9h_49 }; FakeEngine.IdDir[FakeEngine.ObjectIdOf[flagBase_49]] = "Real/S49h";
+            Reg49("Real/S49h");
+            var a9h_49 = ContentService.AcquireAsync<Object>("Icons/a");   // served from the project under the real root: no engine directory
+            bool fly9h_49 = !a9h_49.GetAwaiter().IsCompleted;
+            Debug.Verbose = false; int e9h_49 = Debug.Errors; ContentService.Shutdown(); int errs9h_49 = Debug.Errors - e9h_49; Debug.Verbose = true;
+            bool reg9h_49 = FakeEngine.Registered.Contains("Real/S49h");
+            FakeEngine.CompleteLoads(); Tick();
+            Check(fly9h_49 && errs9h_49 == 0 && !reg9h_49, $"S49h quit with a simulated asset load in flight under a real directory's root: the real directory still goes — that load holds no engine directory (in flight={fly9h_49} errors=+{errs9h_49} still registered={reg9h_49})");
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); Tick();
+
+            ContentLinkSimulation.Drop();
+            UnityEditor.EditorApplication.isPlaying = false;
+            FakeEngine.EditorServesAnyId = false;
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneLoadsInFlightFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.LoadedScenes.Clear();
+            Init(typeof(ContentService), "ResetStatics");
+            ContentLinkEditorUtility.Invalidate();
+        }
+
+        Console.WriteLine("50) IMP018 §9-5 — the stubs answer as the engine does: a cancelled wait, mounts one after another, request outcomes, the file handler");
+        {
+            FakeWeb.Reset();
+            var dir_50 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clverify-50-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(dir_50);
+            UnityEngine.Networking.UnityWebRequest Slow_50(string name)
+            {
+                FakeWeb.Serve("https://stub.test/" + name, new byte[100]).BytesPerFrame = 10;   // ten frames of body
+                return new UnityEngine.Networking.UnityWebRequest("https://stub.test/" + name, "GET", new UnityEngine.Networking.DownloadHandlerBuffer(), null);
+            }
+            (Func<string> Outcome, Action Start) Waiter_50(AsyncOperation op, CancellationToken ct)
+            {
+                string outcome = "pending";
+                async void Run() { try { await Awaitable.FromAsyncOperation(op, ct); outcome = "completed"; } catch (OperationCanceledException) { outcome = "OCE"; } }
+                return (() => outcome, Run);
+            }
+
+            // ── F-13: Awaitable.FromAsyncOperation(op, ct) — measured on 6000.6: the editor, Mono and IL2CPP players ──
+            // N1: a token cancelled before the call throws at the call; the request goes on
+            var r1_50 = Slow_50("n1"); var op1_50 = r1_50.SendWebRequest();
+            var c1_50 = new CancellationTokenSource(); c1_50.Cancel();
+            var w1_50 = Waiter_50(op1_50, c1_50.Token); w1_50.Start();
+            string at1_50 = w1_50.Outcome();
+            for (int i = 0; i < 100 && !op1_50.isDone; ++i) Awaitable.NextFrameAsync();
+            Check(at1_50 == "OCE" && r1_50.result == UnityEngine.Networking.UnityWebRequest.Result.Success,
+                  $"F-13 N1 a token cancelled before the call: OperationCanceledException at the call, and the request goes on (at the call {at1_50} · {r1_50.result})");
+            r1_50.Dispose();
+
+            // N1b: a cancel while a request flies aborts it — the awaiter learns it when the aborted request completes, not at the cancel
+            var r1b_50 = Slow_50("n1b"); var op1b_50 = r1b_50.SendWebRequest();
+            var c1b_50 = new CancellationTokenSource();
+            var w1b_50 = Waiter_50(op1b_50, c1b_50.Token); w1b_50.Start();
+            Awaitable.NextFrameAsync();
+            c1b_50.Cancel();
+            string at1b_50 = w1b_50.Outcome(); bool done1b_50 = op1b_50.isDone;
+            for (int i = 0; i < 50 && !op1b_50.isDone; ++i) Awaitable.NextFrameAsync();
+            Check(at1b_50 == "pending" && !done1b_50 && w1b_50.Outcome() == "OCE" && r1b_50.error == "Request aborted",
+                  $"F-13 N1b a cancel while a request flies aborts it, and the awaiter gets OperationCanceledException when the aborted request completes (at the cancel {at1b_50} · done {done1b_50} · then {w1b_50.Outcome()} · '{r1b_50.error}')");
+            r1b_50.Dispose();
+
+            // N1c: a cancel while another operation flies is ignored — the awaiter resumes normally (measured: a scene load or unload, a Resources load, UnloadUnusedAssets)
+            var wrong1c_50 = new System.Collections.Generic.List<string>();
+            foreach (var (label, start) in new (string, Func<AsyncOperation>)[] { ("a Resources load", () => UnityEngine.Resources.LoadAsync("stub50/none")), ("UnloadUnusedAssets", UnityEngine.Resources.UnloadUnusedAssets), ("an operation", () => new AsyncOperation()) })
+            {
+                var op = start();
+                var cts = new CancellationTokenSource();
+                var w = Waiter_50(op, cts.Token); w.Start();
+                bool flying = !op.isDone;
+                cts.Cancel();
+                string atCancel = w.Outcome();
+                FakeEngine.CompleteLoads();
+                if (!op.isDone) op.Complete();
+                if (!flying || atCancel != "pending" || w.Outcome() != "completed") wrong1c_50.Add($"{label} (flying {flying} · at the cancel {atCancel} · then {w.Outcome()})");
+            }
+            Check(wrong1c_50.Count == 0,
+                  $"F-13 N1c a cancel while another operation flies (a scene load or unload, a Resources load, UnloadUnusedAssets) is ignored: the awaiter resumes normally when it completes (wrong: {string.Join(", ", wrong1c_50)})");
+
+            // N1d: a cancel after the operation is done changes nothing
+            var op1d_50 = new AsyncOperation(); op1d_50.Complete();
+            var c1d_50 = new CancellationTokenSource();
+            var w1d_50 = Waiter_50(op1d_50, c1d_50.Token); w1d_50.Start();
+            c1d_50.Cancel();
+            Check(w1d_50.Outcome() == "completed", $"F-13 N1d a wait on an operation already done completes at once, and a cancel after it changes nothing (then {w1d_50.Outcome()})");
+
+            // N1e: a token cancelled before the call throws at the call itself — not when awaited — on an operation in flight and on one already done (measured)
+            var c1e_50 = new CancellationTokenSource(); c1e_50.Cancel();
+            string Call1e_50(AsyncOperation op) { try { Awaitable.FromAsyncOperation(op, c1e_50.Token); return "returned"; } catch (OperationCanceledException) { return "threw"; } }
+            var r1e_50 = Slow_50("n1e"); var op1e_50 = r1e_50.SendWebRequest();
+            var flying1e_50 = Call1e_50(op1e_50);
+            var done1e_50 = new AsyncOperation(); done1e_50.Complete();
+            var finished1e_50 = Call1e_50(done1e_50);
+            Check(flying1e_50 == "threw" && finished1e_50 == "threw", $"F-13 N1e a token cancelled before the call throws at the call itself, on an operation in flight and on one already done ({flying1e_50} · {finished1e_50})");
+            r1e_50.Dispose();
+
+            // ── F-52: archives mount one after another, in the order they were started; a failure says so when its turn comes ──
+            var ns_50 = Unity.Content.ContentNamespace.GetOrCreateNamespace("stub50");
+            string File_50(string n) { var p = System.IO.Path.Combine(dir_50, n); System.IO.File.WriteAllBytes(p, new byte[4]); return p; }
+            Unity.IO.Archive.ArchiveHandle Mount_50(string path) => Unity.IO.Archive.ArchiveFileInterface.MountAsync(ns_50, path, "p");
+            string Rows_50(Unity.IO.Archive.ArchiveHandle[] hs, int frames)
+            {
+                var rows = new System.Collections.Generic.List<string>();
+                for (int f = 0; ; ++f)
+                {
+                    var row = new System.Text.StringBuilder();
+                    foreach (var h in hs) row.Append(h.Status == Unity.IO.Archive.ArchiveStatus.Complete ? 'C' : h.Status == Unity.IO.Archive.ArchiveStatus.Failed ? 'F' : '.');
+                    rows.Add(row.ToString());
+                    if (f == frames) break;
+                    Awaitable.NextFrameAsync();
+                }
+                foreach (var h in hs) h.Unmount();
+                return string.Join(" ", rows);
+            }
+            FakeEngine.MountFrames = 1;
+            // N2: three archives, one frame each — they complete one after another
+            var rows2_50 = Rows_50(new[] { Mount_50(File_50("a.archive")), Mount_50(File_50("b.archive")), Mount_50(File_50("c.archive")) }, 3);
+            Check(rows2_50 == "... C.. CC. CCC", $"F-52 N2 three archives, one frame each, complete one after another in the order they were started ({rows2_50} · expected ... C.. CC. CCC)");
+            // N2b: a missing file and an archive the knob fails are InProgress until their turn, then Failed
+            FakeEngine.FailMount.Add("knob.archive");
+            var rows2b_50 = Rows_50(new[] { Mount_50(File_50("d.archive")), Mount_50(System.IO.Path.Combine(dir_50, "gone.archive")), Mount_50(File_50("knob.archive")), Mount_50(File_50("e.archive")) }, 4);
+            FakeEngine.FailMount.Remove("knob.archive");
+            Check(rows2b_50 == ".... C... CF.. CFF. CFFC", $"F-52 N2b a missing file and a failing archive say Failed when their turn comes, after the ones before them ({rows2b_50} · expected .... C... CF.. CFF. CFFC)");
+            // N2c: MountFramesOf gives one archive its own frames — the ones after it wait for it
+            var knob_50 = typeof(FakeEngine).GetField("MountFramesOf")?.GetValue(null) as System.Collections.Generic.Dictionary<string, int>;
+            string rows2c_50 = "no MountFramesOf";
+            if (knob_50 != null)
+            {
+                knob_50["slow.archive"] = 3;
+                rows2c_50 = Rows_50(new[] { Mount_50(File_50("slow.archive")), Mount_50(File_50("quick.archive")) }, 4);
+                knob_50.Remove("slow.archive");
+            }
+            Check(rows2c_50 == ".. .. .. C. CC", $"F-52 N2c MountFramesOf gives an archive its own frames, and the archive after it waits for it ({rows2c_50} · expected .. .. .. C. CC)");
+            // N2d: archives of two namespaces mount in one line (measured: the second namespace's archive waits for the first's)
+            var ns2d_50 = Unity.Content.ContentNamespace.GetOrCreateNamespace("stub50b");
+            var rows2d_50 = Rows_50(new[] { Mount_50(File_50("f.archive")), Unity.IO.Archive.ArchiveFileInterface.MountAsync(ns2d_50, File_50("g.archive"), "q"), Mount_50(File_50("h.archive")) }, 3);
+            Check(rows2d_50 == "... C.. CC. CCC", $"F-52 N2d archives of two namespaces mount in one line, in the order they were started ({rows2d_50} · expected ... C.. CC. CCC)");
+            // N2e: a mount unmounted while in progress leaves the line — the next one does not wait for it
+            FakeEngine.MountFrames = 3;
+            Mount_50(File_50("i.archive")).Unmount();
+            FakeEngine.MountFrames = 1;
+            var rows2e_50 = Rows_50(new[] { Mount_50(File_50("j.archive")) }, 1);
+            Check(rows2e_50 == ". C", $"F-52 N2e a mount unmounted while in progress leaves the line: the next one does not wait for it ({rows2e_50} · expected . C)");
+
+            // ── F-53: a request is never done inside SendWebRequest, Abort or Dispose — measured: an error, an abort and a dispose are known in a later frame ──
+            // N3: 404 · a connection error · a status · file:// missing · a Range past the end
+            FakeWeb.Serve("https://stub.test/fail", new byte[10]).FailTimes = 1;
+            FakeWeb.Serve("https://stub.test/500", new byte[10]).Status = 500;
+            FakeWeb.Serve("https://stub.test/ten", new byte[10]);
+            var wrong3_50 = new System.Collections.Generic.List<string>();
+            foreach (var (label, url, range) in new[] { ("404", "https://stub.test/none", (string)null), ("connection error", "https://stub.test/fail", null), ("500", "https://stub.test/500", null),
+                                                        ("file:// missing", "file://" + System.IO.Path.Combine(dir_50, "none.bin"), null), ("416", "https://stub.test/ten", "bytes=100-") })
+            {
+                var r = new UnityEngine.Networking.UnityWebRequest(url, "GET", new UnityEngine.Networking.DownloadHandlerBuffer(), null);
+                if (range != null) r.SetRequestHeader("Range", range);
+                var op = r.SendWebRequest();
+                bool inCall = op.isDone, ran = false; op.completed += _ => ran = true;
+                bool ranInCall = ran;
+                Awaitable.NextFrameAsync();
+                if (inCall || ranInCall || !op.isDone || !ran || r.result == UnityEngine.Networking.UnityWebRequest.Result.Success) wrong3_50.Add($"{label}({inCall}/{ranInCall}/{op.isDone}/{r.result})");
+                r.Dispose();
+            }
+            Check(wrong3_50.Count == 0, $"F-53 N3 a request that fails — 404, a connection error, a status, file:// missing, a Range past the end — is done in the next frame, never inside SendWebRequest (wrong: {string.Join(", ", wrong3_50)})");
+            // N3b: Abort is known in a later frame too
+            var r3b_50 = Slow_50("n3b"); var op3b_50 = r3b_50.SendWebRequest();
+            Awaitable.NextFrameAsync();
+            ulong bytes3b_50 = r3b_50.downloadedBytes;
+            r3b_50.Abort();
+            bool inAbort3b_50 = op3b_50.isDone;
+            Awaitable.NextFrameAsync();
+            Check(!inAbort3b_50 && op3b_50.isDone && r3b_50.error == "Request aborted" && bytes3b_50 > 0 && r3b_50.downloadedBytes == bytes3b_50,
+                  $"F-53 N3b an aborted request is done in the next frame, not inside Abort, and receives nothing after it (in the call {inAbort3b_50} · then {op3b_50.isDone} '{r3b_50.error}' · bytes {bytes3b_50} → {r3b_50.downloadedBytes})");
+            r3b_50.Dispose();
+            // N3d: a request disposed while it flies is not done in the call; it is done, and completed fires, in a later frame (measured)
+            var r3d_50 = Slow_50("n3d"); var op3d_50 = r3d_50.SendWebRequest();
+            Awaitable.NextFrameAsync();
+            bool fired3d_50 = false; op3d_50.completed += _ => fired3d_50 = true;
+            r3d_50.Dispose();
+            bool inCall3d_50 = op3d_50.isDone || fired3d_50;
+            Awaitable.NextFrameAsync();
+            Check(!inCall3d_50 && op3d_50.isDone && fired3d_50, $"F-53 N3d a request disposed while it flies is done in the next frame, and completed fires then — not inside Dispose (in the call {inCall3d_50} · then {op3d_50.isDone}/{fired3d_50})");
+            // N3e: removeFileOnAbort deletes the file at the Abort or the Dispose, not when the request is done — a new handler and request on
+            // the path right after (ContentRemote.CopyOne called again) keep their file; without it the received bytes stay (measured)
+            var p3e_50 = System.IO.Path.Combine(dir_50, "n3e.part");
+            FakeWeb.Serve("https://stub.test/n3e-retry", new byte[10]);
+            var wrong3e_50 = new System.Collections.Generic.List<string>();
+            foreach (var (label, abort, dispose, remove) in new[] { ("Abort", true, false, true), ("Dispose", false, true, true), ("Abort + Dispose", true, true, true), ("Abort, removeFileOnAbort off", true, false, false) })
+            {
+                FakeWeb.Serve("https://stub.test/n3e", new byte[100]).BytesPerFrame = 10;
+                var first = new UnityEngine.Networking.UnityWebRequest("https://stub.test/n3e", "GET", new UnityEngine.Networking.DownloadHandlerFile(p3e_50) { removeFileOnAbort = remove }, null);
+                var firstOp = first.SendWebRequest();
+                Awaitable.NextFrameAsync();
+                if (abort) first.Abort();
+                if (dispose) first.Dispose();
+                bool atCall = System.IO.File.Exists(p3e_50);
+                UnityEngine.Networking.UnityWebRequest retry = null;
+                if (remove) retry = new UnityEngine.Networking.UnityWebRequest("https://stub.test/n3e-retry", "GET", new UnityEngine.Networking.DownloadHandlerFile(p3e_50) { removeFileOnAbort = true }, null);
+                var retryOp = retry?.SendWebRequest();
+                for (int i = 0; i < 50 && !(firstOp.isDone && (retryOp == null || retryOp.isDone)); ++i) Awaitable.NextFrameAsync();
+                bool firstDone = firstOp.isDone;
+                if (!dispose) first.Dispose();
+                Awaitable.NextFrameAsync();
+                long bytes = System.IO.File.Exists(p3e_50) ? new System.IO.FileInfo(p3e_50).Length : -1;
+                if (remove ? atCall || !firstDone || retry.result != UnityEngine.Networking.UnityWebRequest.Result.Success || bytes != 10 : !atCall || !firstDone || bytes != 10)
+                    wrong3e_50.Add($"{label} (the file at the call {atCall} · the first done {firstDone} · {(retry != null ? $"the retry {retry.result} · " : "")}the file {bytes} B)");
+                retry?.Dispose();
+                if (System.IO.File.Exists(p3e_50)) System.IO.File.Delete(p3e_50);
+            }
+            Check(wrong3e_50.Count == 0, $"F-53 N3e removeFileOnAbort deletes the file at the Abort or the Dispose, so a retry on the path right after keeps its file; without it the received bytes stay (wrong: {string.Join(", ", wrong3e_50)})");
+            // N3f: a request cut in the frame of its send ends aborted, whatever the server would have answered — removeFileOnAbort deletes
+            // the file there and InFlight drops there (measured: 404, a refused connection, file:// missing, a held 200 — "Request aborted")
+            var p3f_50 = System.IO.Path.Combine(dir_50, "n3f.part");
+            FakeWeb.Serve("https://stub.test/n3f-fail", new byte[10]).FailTimes = 1;
+            FakeWeb.Serve("https://stub.test/n3f-ok", new byte[10]);
+            var wrong3f_50 = new System.Collections.Generic.List<string>();
+            foreach (var (label, url, how) in new[] { ("404", "https://stub.test/none", "Abort"), ("a connection error", "https://stub.test/n3f-fail", "Abort"), ("file:// missing", "file://" + System.IO.Path.Combine(dir_50, "none.bin"), "Abort"), ("200", "https://stub.test/n3f-ok", "Abort"), ("404", "https://stub.test/none", "Dispose") })
+            {
+                var r = new UnityEngine.Networking.UnityWebRequest(url, "GET", new UnityEngine.Networking.DownloadHandlerFile(p3f_50) { removeFileOnAbort = true }, null);
+                var op = r.SendWebRequest();
+                int flying = FakeWeb.InFlight;
+                if (how == "Abort") r.Abort(); else r.Dispose();
+                bool atCut = System.IO.File.Exists(p3f_50), inCall = op.isDone; int left = FakeWeb.InFlight;
+                Awaitable.NextFrameAsync();
+                string end = how == "Abort" ? $"{r.result} '{r.error}'" : "-";
+                if (atCut || inCall || left != flying - 1 || !op.isDone || (how == "Abort" && end != "ConnectionError 'Request aborted'")) wrong3f_50.Add($"{label} · {how} (the file at the cut {atCut} · done in the call {inCall} · in flight {flying} → {left} · then {op.isDone} {end})");
+                if (how == "Abort") r.Dispose();
+                if (System.IO.File.Exists(p3f_50)) System.IO.File.Delete(p3f_50);
+            }
+            Check(wrong3f_50.Count == 0, $"F-53 N3f a request cut in the frame of its send ends \"Request aborted\" in the next frame whatever the server would have answered; removeFileOnAbort deletes the file and InFlight drops at the cut (wrong: {string.Join(", ", wrong3f_50)})");
+            // N3c: CheckAsync with a token cancelled before the call throws OperationCanceledException whatever the server answers
+            var cache_50 = System.IO.Path.Combine(dir_50, "cache");
+            var c3c_50 = new CancellationTokenSource(); c3c_50.Cancel();
+            string Check3c_50(ContentRemoteOptions o)
+            {
+                Debug.Verbose = false;
+                try { ContentRemote.CheckAsync("Main", "https://stub.test/remote", o, c3c_50.Token).GetAwaiter().GetResult(); return "returned"; }
+                catch (OperationCanceledException) { return "OCE"; }
+                finally { Debug.Verbose = true; }
+            }
+            var a3c_50 = Check3c_50(new ContentRemoteOptions { CacheRoot = cache_50 });
+            int asked3c_50 = FakeWeb.Count("https://stub.test/remote/archives.hash");
+            var b3c_50 = Check3c_50(new ContentRemoteOptions { CacheRoot = cache_50, BuiltInDirectory = System.IO.Path.Combine(dir_50, "no-built-in") });
+            asked3c_50 = FakeWeb.Count("https://stub.test/remote/archives.hash") - asked3c_50;   // the built-in index is read first: its loop sees the token before the server is asked
+            FakeWeb.Serve("https://stub.test/remote/archives.hash", System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef\n"));
+            var s3c_50 = Check3c_50(new ContentRemoteOptions { CacheRoot = cache_50 });
+            Check(a3c_50 == "OCE" && b3c_50 == "OCE" && asked3c_50 == 0 && s3c_50 == "OCE",
+                  $"F-53 N3c CheckAsync with a token cancelled before the call throws OperationCanceledException whatever the server answers — nothing served (404), a missing built-in folder (the server not asked), the hash served (200) — as on the engine ({a3c_50} · {b3c_50}, asked {asked3c_50} · {s3c_50})");
+
+            // ── F-54: the file handler makes its file when it is made, and only then ──
+            // N4: the file deleted while the transfer runs is not made again when the request ends (measured: it is not)
+            var p4_50 = System.IO.Path.Combine(dir_50, "n4.part");
+            FakeWeb.Serve("https://stub.test/n4", new byte[100]).BytesPerFrame = 10;
+            var r4_50 = new UnityEngine.Networking.UnityWebRequest("https://stub.test/n4", "GET", new UnityEngine.Networking.DownloadHandlerFile(p4_50), null);
+            bool made4_50 = System.IO.File.Exists(p4_50);
+            var op4_50 = r4_50.SendWebRequest();
+            Awaitable.NextFrameAsync();
+            System.IO.File.Delete(p4_50);
+            while (!op4_50.isDone) Awaitable.NextFrameAsync();
+            Check(made4_50 && r4_50.result == UnityEngine.Networking.UnityWebRequest.Result.Success && !System.IO.File.Exists(p4_50),
+                  $"F-54 N4 the file handler makes its file when it is made; deleted while the transfer runs, it is not there when the request ends (made {made4_50} · {r4_50.result} · there after {System.IO.File.Exists(p4_50)})");
+            r4_50.Dispose();
+
+            // N4b: a request that fails by itself — 404, a connection error, a drop, file:// missing — ends with the file deleted under
+            // removeFileOnAbort and kept otherwise; a success keeps it either way (measured)
+            var p4b_50 = System.IO.Path.Combine(dir_50, "n4b.part");
+            var wrong4b_50 = new System.Collections.Generic.List<string>();
+            foreach (bool remove in new[] { false, true })
+            foreach (var (label, url) in new[] { ("404", "https://stub.test/none"), ("a connection error", "https://stub.test/n4b-fail"), ("a drop", "https://stub.test/n4b-drop"), ("file:// missing", "file://" + System.IO.Path.Combine(dir_50, "none.bin")), ("200", "https://stub.test/n4b-ok") })
+            {
+                FakeWeb.Serve("https://stub.test/n4b-fail", new byte[10]).FailTimes = 1;
+                FakeWeb.Serve("https://stub.test/n4b-drop", new byte[100]).CutAfter = 40;
+                FakeWeb.Serve("https://stub.test/n4b-ok", new byte[10]);
+                var r = new UnityEngine.Networking.UnityWebRequest(url, "GET", new UnityEngine.Networking.DownloadHandlerFile(p4b_50) { removeFileOnAbort = remove }, null);
+                var op = r.SendWebRequest();
+                for (int i = 0; i < 50 && !op.isDone; ++i) Awaitable.NextFrameAsync();
+                bool kept = System.IO.File.Exists(p4b_50), ok = r.result == UnityEngine.Networking.UnityWebRequest.Result.Success;
+                if (!op.isDone || kept != (ok || !remove)) wrong4b_50.Add($"{label} · removeFileOnAbort {remove} ({r.result} · the file {kept})");
+                r.Dispose();
+                if (System.IO.File.Exists(p4b_50)) System.IO.File.Delete(p4b_50);
+            }
+            Check(wrong4b_50.Count == 0, $"F-54 N4b a request that fails by itself deletes the file under removeFileOnAbort and keeps it otherwise; a success keeps it (wrong: {string.Join(", ", wrong4b_50)})");
+
+            FakeWeb.Reset();
+            FakeEngine.MountFrames = 1;
+            if (System.IO.Directory.Exists(dir_50)) System.IO.Directory.Delete(dir_50, true);
+        }
+
+        Console.WriteLine("51) IMP018 §9-6 — one place drops every cache: an atlas imported again reaches the simulation, an asset imported again its statuses");
+        {
+            const string Prefab51 = AtlasFx.R + "/Prefabs/enemy.prefab", Model51 = AtlasFx.R + "/Models/hero.fbx", Cat51 = "Assets/Cat/atlas.asset";
+            const string GPrefab51 = "dd000000000000000000000000000001", GModel51 = "dd000000000000000000000000000002";
+            static NameStatus St51(string guid, Type t) => ContentLinkEditorUtility.ValidateRef(guid, "", t, false, out _);
+            AtlasFx fx51 = null; GameObject enemy51 = null, hero51 = null;
+            void Project51()
+            {
+                fx51 = AtlasProject();
+                enemy51 = new GameObject(true) { name = "enemy" }; FakeEngine.AddProjectAsset(Prefab51, enemy51); FakeEngine.SetGuid(Prefab51, GPrefab51);
+                hero51 = new GameObject(true) { name = "hero" }; FakeEngine.AddProjectAsset(Model51, hero51); FakeEngine.SetGuid(Model51, GModel51);
+                CatalogFx(Cat51);
+            }
+            static void Drop51(GameObject go) { go.components.RemoveAll(c => c is RefEnemy); }
+
+            // ① the statuses: an asset imported again with no project change — a prefab saved, a model refreshed after a version-control update
+            Project51();
+            var p0_51 = St51(GPrefab51, typeof(RefEnemy));
+            enemy51.AddComponent<RefEnemy>();
+            FakeEngine.Import(new[] { Prefab51 });
+            var p1_51 = St51(GPrefab51, typeof(RefEnemy));
+            Check(p0_51 == NameStatus.TypeMismatch && p1_51 == NameStatus.Ok, $"N1 a catalogued prefab gains the field's component and is imported again (no projectChanged — measured): ValidateRef {p0_51} → {p1_51}");
+            ContentLinkEditorUtility.Invalidate();
+            var p1b_51 = St51(GPrefab51, typeof(RefEnemy));
+            Drop51(enemy51);
+            FakeEngine.Import(new[] { Prefab51 });
+            var p2_51 = St51(GPrefab51, typeof(RefEnemy));
+            Check(p1b_51 == NameStatus.Ok && p2_51 == NameStatus.TypeMismatch, $"N1b … and loses it again: {p1b_51} → {p2_51} (the inspector said Ok while a load fails the type)");
+            var m0_51 = St51(GModel51, typeof(RefEnemy));
+            hero51.AddComponent<RefEnemy>();
+            FakeEngine.Import(new[] { Model51 });
+            var m1_51 = St51(GModel51, typeof(RefEnemy));
+            Check(m0_51 == NameStatus.TypeMismatch && m1_51 == NameStatus.Ok, $"N1c any kind of asset, not prefabs only — a model: {m0_51} → {m1_51}");
+
+            int gen2_51 = ContentLinkEditorUtility.Generation; var cats2_51 = ContentLinkEditorUtility.LoadCatalogs();
+            FakeEngine.Import(new[] { Prefab51 });
+            Check(ContentLinkEditorUtility.Generation == gen2_51 && ReferenceEquals(ContentLinkEditorUtility.LoadCatalogs(), cats2_51),
+                  "N2 … and only the statuses: the name index stays (a full drop costs 7 ms at 2,000 entries, 28 ms at 20,000 on the next repaint — measured — and Prefab Mode may save at every edit)");
+            FakeEngine.AddProjectAsset("Assets/Data/tuning.asset", new UnityEditor.DefaultAsset { name = "tuning" });
+            int gen2b_51 = ContentLinkEditorUtility.Generation; var cats2b_51 = ContentLinkEditorUtility.LoadCatalogs();
+            FakeEngine.Import(new[] { "Assets/Data/tuning.asset" });
+            Check(ContentLinkEditorUtility.Generation == gen2b_51 && ReferenceEquals(ContentLinkEditorUtility.LoadCatalogs(), cats2b_51), "N2b … a .asset that is not a catalog (a ScriptableObject saved): the statuses only too");
+
+            ContentLinkEditorUtility.Invalidate();
+            var e0_51 = St51(GPrefab51, typeof(RefEnemy));
+            enemy51.AddComponent<RefEnemy>();
+            FakeEngine.Import(new string[0], new[] { Model51 });   // a batch with nothing imported: an asset removed (the engine raises projectChanged with it — measured)
+            var e1_51 = St51(GPrefab51, typeof(RefEnemy));
+            Check(e0_51 == NameStatus.TypeMismatch && e1_51 == NameStatus.TypeMismatch, $"N8 a batch that imports nothing drops no status: {e0_51} → {e1_51} (the save it would stand for never came)");
+            Drop51(enemy51); ContentLinkEditorUtility.Invalidate();
+            var q0_51 = St51(GPrefab51, typeof(RefEnemy));   // TypeMismatch, cached
+            enemy51.AddComponent<RefEnemy>();                 // no signal
+            NameStatus seen_51 = NameStatus.Empty; int raised_51 = 0;
+            Action probe_51 = () => { ++raised_51; seen_51 = St51(GPrefab51, typeof(RefEnemy)); };
+            var ev_51 = typeof(ContentLinkEditorUtility).GetEvent("Invalidated", BindingFlags.Static | BindingFlags.NonPublic);   // by reflection: section 51 also builds on code without this event
+            ev_51?.GetAddMethod(true).Invoke(null, new object[] { probe_51 });
+            ContentLinkEditorUtility.Invalidate();
+            ev_51?.GetRemoveMethod(true).Invoke(null, new object[] { probe_51 });
+            Check(q0_51 == NameStatus.TypeMismatch && raised_51 == 1 && seen_51 == NameStatus.Ok, $"N4b a listener of Invalidated reads the new answers — raised once, after the caches are dropped: {q0_51} → {seen_51} (raised {raised_51})");
+            Drop51(enemy51); ContentLinkEditorUtility.Invalidate();
+
+            int gen7_51 = ContentLinkEditorUtility.Generation;
+            FakeEngine.Import(new[] { Cat51 });
+            int gen7b_51 = ContentLinkEditorUtility.Generation;
+            FakeEngine.Import(new string[0], new[] { AtlasFx.Zone });
+            int gen7c_51 = ContentLinkEditorUtility.Generation;
+            FakeEngine.Import(new string[0], null, new[] { AtlasFx.Var }, new[] { AtlasFx.R + "/Atlas/Old.spriteatlasv2" });
+            Check(gen7b_51 == gen7_51 + 1 && gen7c_51 == gen7b_51 + 1 && ContentLinkEditorUtility.Generation == gen7c_51 + 1, "N7 a catalog imported again, an atlas removed, an atlas moved: everything goes, as before");
+            int gen7d_51 = ContentLinkEditorUtility.Generation;
+            FakeEngine.Import(new[] { Prefab51, AtlasFx.Main });
+            int gen7e_51 = ContentLinkEditorUtility.Generation;
+            FakeEngine.Import(new[] { Prefab51 }, new[] { AtlasFx.Zone });
+            Check(gen7e_51 == gen7d_51 + 1 && ContentLinkEditorUtility.Generation == gen7e_51 + 1, $"N7b one batch, an atlas behind another asset (a texture imported with the atlas that packs it — measured) · a prefab saved and an atlas removed: everything goes ({gen7e_51 - gen7d_51} · {ContentLinkEditorUtility.Generation - gen7e_51})");
+
+            // ② the simulation: whatever drops the editor utility's caches drops its answers — an atlas saved during Play
+            FakeEngine.MainAssetAt.Remove(Cat51);
+            Init(typeof(ContentLinkEditorUtility), "Install");   // what N5 stands on: projectChanged → Invalidate — not left to section 21
+            typeof(ContentLinkEditorUtility).GetField("Invalidated", BindingFlags.Static | BindingFlags.NonPublic)?.SetValue(null, null);   // a domain load: no listener left over from the sections before
+            ContentLinkSimulation.Drop(); ContentLinkSimulation.Enabled = false;
+            Init(typeof(ContentLinkSimulation), "Install"); Init(typeof(ContentLinkSimulation), "Install");   // at a domain load with the toggle off · again: a Play without a domain reload
+            int answers51 = 0, guids51 = 0;
+            if (typeof(ContentLinkEditorUtility).GetField("Invalidated", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) is Action inv51) foreach (var d in inv51.GetInvocationList()) if (d.Method.Name == "ForgetAnswers") ++answers51;
+            if (typeof(UnityEditor.EditorApplication).GetField("projectChanged", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) is Action pc51) foreach (var d in pc51.GetInvocationList()) if (d.Method.Name == "ForgetGuids") ++guids51;
+            Check(answers51 == 1 && guids51 == 1, $"N4c installed with the toggle off, and twice: what the simulation read off the files listens to Invalidated once, its GUID → names to projectChanged once ({answers51} · {guids51})");
+            ContentLinkSimulation.Enabled = true; FakeEngine.EditorServesAnyId = true;
+            UnityEditor.EditorApplication.isPlaying = true;
+            foreach (var o in new Object[] { fx51.a1, fx51.a2, fx51.s0, fx51.s1, fx51.o1, fx51.f1, fx51.f2 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            var sim51 = ContentBuildSettings.instance.Add("Sim51"); sim51.SourceRoot = AtlasFx.R; sim51.OutputPath = "Build/Content/Sim51";
+            sim51.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Atlas", CreateAt = "Assets/Cat/s51A.asset" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Icons", CreateAt = "Assets/Cat/s51I.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            int dir51 = ContentService.RegisterDirectory("Build/Content/Sim51");
+            var sc51 = ContentScope.ForScene(sceneA).CreateChild("Sim51");
+
+            bool a0_51 = ContentService.Contains("Atlas/MainAtlas[a2]");
+            bool r0_51 = ContentService.TryGetName(new ContentRef<Sprite>(AtlasFx.GMain, "a2"), out var rn0_51) && ContentService.Contains(rn0_51);
+            fx51.main.Packables = new Object[] { fx51.a1t, fx51.sheet, fx51.s0, fx51.o1t, fx51.a2t }; fx51.main.Bound.Add(fx51.a2);
+            FakeEngine.Import(new[] { AtlasFx.Main });   // saving an atlas raises no projectChanged (measured)
+            bool inspector3_51 = ContentLinkEditorUtility.ResolveRefAsset(AtlasFx.GMain, "a2") == fx51.a2;
+            bool a1_51 = ContentService.Contains("Atlas/MainAtlas[a2]");
+            bool r1_51 = ContentService.TryGetName(new ContentRef<Sprite>(AtlasFx.GMain, "a2"), out var rn1_51) && ContentService.Contains(rn1_51);
+            var l1_51 = sc51.Load<Sprite>("Atlas/MainAtlas[a2]");
+            Check(!a0_51 && inspector3_51 && a1_51, $"N3 an atlas gains a texture during Play and is saved: the inspector follows ({inspector3_51}) — and so does the simulation: Contains 'Atlas/MainAtlas[a2]' {a0_51} → {a1_51}");
+            Check(!r0_51 && r1_51 && rn1_51 == "Atlas/MainAtlas[a2]", $"N3b … through a reference (atlas GUID, a2): {r0_51} → {r1_51} ('{rn1_51}')");
+            Check(l1_51 == fx51.a2, "N3c … and a load in a scope gets the sprite");
+
+            bool o0_51 = ContentService.Contains("Atlas/MainAtlas[o1]");
+            fx51.main.Packables = new Object[] { fx51.a1t, fx51.sheet, fx51.s0, fx51.a2t }; fx51.main.Bound.Remove(fx51.o1);
+            FakeEngine.Import(new[] { AtlasFx.Main });
+            bool o1_51 = ContentService.Contains("Atlas/MainAtlas[o1]");
+            Check(o0_51 && !o1_51, $"N3d … and the other way: a texture taken out of the atlas — its name stops answering, as in a build: {o0_51} → {o1_51}");
+
+            // every Invalidate, by hand too: a sheet that gained a slice with no project change in the stub
+            bool h0_51 = ContentService.Contains("Icons/sheet[s9]");
+            var s9x51 = new Sprite { name = "s9" };
+            const string Sheet51 = AtlasFx.R + "/Icons/sheet.png";
+            FakeEngine.SubAssetsAt[Sheet51].Add(s9x51); FakeEngine.PathOf[s9x51] = Sheet51; FakeEngine.IsSub.Add(s9x51); FakeEngine.ObjectIdOf[s9x51] = 99051; FakeEngine.ObjectById[99051] = s9x51; FakeEngine.Assets[99051] = s9x51;
+            bool h1_51 = ContentService.Contains("Icons/sheet[s9]");
+            FakeEngine.Import(new[] { Prefab51 });
+            bool hp_51 = ContentService.Contains("Icons/sheet[s9]");
+            Check(!h1_51 && !hp_51, "N2c … a prefab saved during Play leaves the simulation's answers too (the statuses only)");
+            ContentLinkEditorUtility.Invalidate();
+            bool h2_51 = ContentService.Contains("Icons/sheet[s9]");
+            Check(!h0_51 && !h1_51 && h2_51, $"N4 the utility's Invalidate — 'safe to call by hand' — drops the simulation's answers too: {h0_51} · {h1_51} → {h2_51}");
+
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            bool g0_51 = ContentService.Contains("Icons/sheet[s9]");
+            FakeEngine.SubAssetsAt[Sheet51].Remove(s9x51);
+            bool g1_51 = ContentService.Contains("Icons/sheet[s9]");
+            UnityEditor.EditorApplication.RaiseProjectChanged();
+            bool g2_51 = ContentService.Contains("Icons/sheet[s9]");
+            Check(g0_51 && g1_51 && !g2_51, $"N5 a project change still reaches the simulation: {g0_51} · the slice gone, nothing said {g1_51} → projectChanged {g2_51}");
+
+            sc51.Dispose(); Tick();
+            ContentService.UnregisterDirectory(dir51, force: true);
+            UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false; ContentLinkSimulation.Drop();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests(); Init(typeof(ContentService), "ResetStatics");
+            ContentService.DirectoryFallback = null; ContentService.NameFallback = null; ContentService.RefFallback = null;
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
+            ContentLinkEditorUtility.Invalidate();
+
+            // ③ the stamp: settings with no profile yet make their default one when the static view is read — the revision read before it was stale
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentLinkEditorUtility.LoadCatalogs(); int st0_51 = ContentLinkEditorUtility.Generation;
+            ContentLinkEditorUtility.LoadCatalogs(); ContentLinkEditorUtility.LoadCatalogs();
+            Check(ContentLinkEditorUtility.Generation == st0_51, $"N9 the stamp reads the static view first: settings with no profile make their default one there, and the next reads drop nothing ({st0_51} → {ContentLinkEditorUtility.Generation})");
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests(); ContentLinkEditorUtility.Invalidate();
+        }
+
+        Console.WriteLine("52) IMP018 §9-7 7-2 — a cancellation carries its token and wins over the cache and a miss · a null key or owner · a waiter's continuation that re-enters · a scene load in flight · quit while loads are in flight");
+        {
+            const int A52 = 952001, B52 = 952002, C52 = 952003, SC52 = 952101, SCE52 = 952102;
+            Init(typeof(ContentService), "ResetStatics");
+            Init(typeof(ContentScope), "ResetStatics");
+            FakeEngine.ClearProject(); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+            FakeEngine.LoadedScenes.Clear(); FakeEngine.PendingLoads.Clear();
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            ContentService.NameFallback = null; ContentService.RefFallback = null; ContentService.DirectoryFallback = null; ContentService.SceneLoadsInFlightFallback = null;
+            FakeEngine.Assets[A52] = new Sprite { name = "a" }; FakeEngine.Assets[B52] = new Sprite { name = "b" }; FakeEngine.Assets[C52] = new Sprite { name = "c" };
+            foreach (var id52 in new[] { A52, B52, C52 }) FakeEngine.IdDir[id52] = "D52";
+            FakeEngine.SceneDir[SC52] = "D52"; FakeEngine.SceneNames[SC52] = "S52";
+            var cat52 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat52.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/a", id = new LoadableObjectId { value = A52 } }, new() { name = "Icons/b", id = new LoadableObjectId { value = B52 } }, new() { name = "Icons/c", id = new LoadableObjectId { value = C52 } } });
+            cat52.EditorSetScenes(new ContentCatalog.SceneEntry[] { new() { name = "Scenes/S52", id = SceneId(SC52) } });
+            FakeEngine.Dirs["D52"] = new ScriptableObject[] { cat52 };
+            int dir52 = ContentService.RegisterDirectory("D52");
+            var lobby52 = NewScene(952, "Lobby52"); SceneManager.Active = lobby52; SceneManager.Open(lobby52);   // a loaded scene, so a cancelled additive scene is not the last one
+
+            // ① an in-flight cancellation carries the token that cancelled, as one before the call does
+            var ctsA52 = new CancellationTokenSource();
+            var wA52 = ContentService.AcquireAsync<Sprite>("Icons/a", ctsA52.Token);
+            ctsA52.Cancel();
+            CancellationToken gotA52 = default; try { wA52.GetResult(); } catch (OperationCanceledException e) { gotA52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick();
+            Check(gotA52 == ctsA52.Token && Ref(A52) == 0, $"N1 a raw load cancelled in flight: the exception carries the caller's token ({(gotA52 == CancellationToken.None ? "None" : gotA52 == ctsA52.Token ? "the caller's" : "another")}), nothing held (ref={Ref(A52)})");
+            var scB52 = ContentScope.Root.CreateChild("N1b"); var tokB52 = scB52.DisposedToken;
+            var pB52 = scB52.LoadAsync<Sprite>("Icons/b");
+            scB52.Dispose();
+            CancellationToken gotB52 = default; try { pB52.GetResult(); } catch (OperationCanceledException e) { gotB52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick();
+            Check(gotB52 == tokB52 && Ref(B52) == 0, $"N1b a scope load its scope's end cancels in flight: the scope's token (DisposedToken read before Dispose) — {(gotB52 == CancellationToken.None ? "None" : gotB52 == tokB52 ? "the scope's" : "another")}");
+            Check(gotB52 == scB52.DisposedToken, $"N1l … and the scope's DisposedToken read after its end is that same token — the scope's end tells itself from the caller's cancel after the fact ({(gotB52 == scB52.DisposedToken ? "the same" : "another")})");
+            var scM_52 = ContentScope.Root.CreateChild("N1m"); scM_52.Dispose();   // its token never read before its end: no source yet
+            Check(scM_52.DisposedToken.IsCancellationRequested, $"N1m … a scope that ended before anyone read its DisposedToken still answers a cancelled one (cancelled={scM_52.DisposedToken.IsCancellationRequested})");
+            var scC52 = ContentScope.Root.CreateChild("N1c"); var ctsC52 = new CancellationTokenSource();
+            var pC52 = scC52.LoadAsync<Sprite>("Icons/b", ctsC52.Token);
+            ctsC52.Cancel();
+            CancellationToken gotC52 = default; try { pC52.GetResult(); } catch (OperationCanceledException e) { gotC52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick(); scC52.Dispose(); Tick();
+            Check(gotC52 == ctsC52.Token && Ref(B52) == 0, $"N1c a scope load its caller cancels in flight: the caller's token — {(gotC52 == CancellationToken.None ? "None" : gotC52 == ctsC52.Token ? "the caller's" : "another")}");
+            var scF52 = ContentScope.Root.CreateChild("N1f"); var ctsF52 = new CancellationTokenSource();
+            var pF52 = scF52.LoadAsync<Sprite>("Icons/b", ctsF52.Token);
+            ctsF52.Token.Register(() => scF52.Dispose());   // registered after the load's own: runs first, so the scope ends inside the caller's cancellation
+            ctsF52.Cancel();
+            CancellationToken gotF52 = default; try { pF52.GetResult(); } catch (OperationCanceledException e) { gotF52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick();
+            Check(gotF52 == ctsF52.Token && Ref(B52) == 0, $"N1f both tokens cancelled when the waiter wakes: the caller's wins, as for a load that completes meanwhile — {(gotF52 == CancellationToken.None ? "None" : gotF52 == ctsF52.Token ? "the caller's" : "the scope's")}");
+            var ctsS52 = new CancellationTokenSource();
+            var pS52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive, ctsS52.Token);
+            ctsS52.Cancel();
+            CancellationToken gotS52 = default; try { pS52.GetResult(); } catch (OperationCanceledException e) { gotS52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();   // the late instance arrives and is handed back
+            Check(gotS52 == ctsS52.Token && ContentService.LoadedSceneCount == 0, $"N1d a scene load cancelled in flight: the caller's token, and the late instance is still handed back — {(gotS52 == CancellationToken.None ? "None" : gotS52 == ctsS52.Token ? "the caller's" : "another")} (tracked={ContentService.LoadedSceneCount})");
+            ContentService.SceneFallback = (k, prm) => { var op = new AsyncOperation(); FakeEngine.PendingLoads.Add(op.Complete); return op; };
+            ContentService.SceneResultFallback = k => default;
+            var ctsM52 = new CancellationTokenSource();
+            var pM52 = ContentService.LoadSceneAsync("Scenes/Sim52", LoadSceneMode.Additive, ctsM52.Token);
+            ctsM52.Cancel();
+            CancellationToken gotM52 = default; try { pM52.GetResult(); } catch (OperationCanceledException e) { gotM52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick();
+            ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            Check(gotM52 == ctsM52.Token, $"N1e … the editor simulation's scene load too — {(gotM52 == CancellationToken.None ? "None" : gotM52 == ctsM52.Token ? "the caller's" : "another")}");
+            var scI_52 = ContentScope.Root.CreateChild("N1i"); var tokI_52 = scI_52.DisposedToken;
+            var pI_52 = scI_52.LoadSceneAsync("Scenes/S52");
+            scI_52.Dispose();
+            CancellationToken gotI_52 = default; try { pI_52.GetResult(); } catch (OperationCanceledException e) { gotI_52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();
+            Check(gotI_52 == tokI_52 && ContentService.LoadedSceneCount == 0, $"N1i … a scope's scene load its scope's end cancels in flight: the scope's token, the late instance handed back — {(gotI_52 == CancellationToken.None ? "None" : gotI_52 == tokI_52 ? "the scope's" : gotI_52 == CancellationToken.None ? "None" : "another")} (tracked={ContentService.LoadedSceneCount})");
+            ContentService.SceneFallback = (k, prm) => { var op = new AsyncOperation(); FakeEngine.PendingLoads.Add(op.Complete); return op; };
+            ContentService.SceneResultFallback = k => default;
+            var scJ_52 = ContentScope.Root.CreateChild("N1j"); var tokJ_52 = scJ_52.DisposedToken;
+            var pJ_52 = scJ_52.LoadSceneAsync("Scenes/Sim52");
+            scJ_52.Dispose();
+            CancellationToken gotJ_52 = default; try { pJ_52.GetResult(); } catch (OperationCanceledException e) { gotJ_52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick();
+            ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            Check(gotJ_52 == tokJ_52, $"N1j … the editor simulation's scene load through a scope too — {(gotJ_52 == CancellationToken.None ? "None" : gotJ_52 == tokJ_52 ? "the scope's" : gotJ_52 == CancellationToken.None ? "None" : "another")}");
+            var scK_52 = ContentScope.Root.CreateChild("N1k"); var ctsK_52 = new CancellationTokenSource(); var tokK_52 = scK_52.DisposedToken;
+            var pK_52 = scK_52.LoadSceneAsync("Scenes/S52", ctsK_52.Token);
+            ctsK_52.Token.Register(() => scK_52.Dispose());   // registered after the load's own: runs first, so the scope ends inside the caller's cancellation
+            ctsK_52.Cancel();
+            CancellationToken gotK_52 = default; try { pK_52.GetResult(); } catch (OperationCanceledException e) { gotK_52 = e.CancellationToken; }
+            FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();
+            Check(gotK_52 == ctsK_52.Token && ContentService.LoadedSceneCount == 0, $"N1k both tokens cancelled when a scene waiter wakes: the caller's wins, as for an asset — {(gotK_52 == CancellationToken.None ? "None" : gotK_52 == ctsK_52.Token ? "the caller's" : gotK_52 == tokK_52 ? "the scope's" : "another")} (tracked={ContentService.LoadedSceneCount})");
+
+            // ② a cancelled token wins over the scope's cache, as over a miss
+            var sc2_52 = ContentScope.Root.CreateChild("N2");
+            var held2_52 = Run(sc2_52.LoadAsync<Sprite>("Icons/a"));
+            var cts2_52 = new CancellationTokenSource(); cts2_52.Cancel();
+            string hit2_52; try { var v2_52 = Run(sc2_52.LoadAsync<Sprite>("Icons/a", cts2_52.Token)); hit2_52 = v2_52 != null ? "the asset" : "null"; } catch (OperationCanceledException e) { hit2_52 = e.CancellationToken == cts2_52.Token ? "OCE" : "OCE(another token)"; }
+            Check(held2_52 != null && hit2_52 == "OCE" && sc2_52.Contains("Icons/a") && Ref(A52) == 1, $"N2 a key the scope holds, asked with a cancelled token: OperationCanceledException with that token, as for a key it does not hold — the held key stays ({hit2_52})");
+            var scD2_52 = ContentScope.Root.CreateChild("N2b"); scD2_52.Dispose();
+            string d2b_52; try { Run(scD2_52.LoadAsync<Sprite>("Icons/a", cts2_52.Token)); d2b_52 = "no exception"; } catch (ObjectDisposedException) { d2b_52 = "ODE"; } catch (OperationCanceledException) { d2b_52 = "OCE"; }
+            Check(d2b_52 == "ODE", $"N2b … a disposed scope asked with a cancelled token: ObjectDisposedException — destruction first, then the token ({d2b_52})");
+            string d2c_52; try { Run(scD2_52.LoadAsync(new ContentRef<Sprite>("ee520000000000000000000000000002"), cts2_52.Token)); d2c_52 = "no exception"; } catch (ObjectDisposedException) { d2c_52 = "ODE"; } catch (OperationCanceledException) { d2c_52 = "OCE"; }
+            Check(d2c_52 == "ODE", $"N2c … through a reference too ({d2c_52})");
+            sc2_52.Dispose(); Tick();
+
+            // ③ a null key is false, not a throw from the dictionary
+            var a3_52 = ContentScope.Root.CreateChild("N3a"); var b3_52 = ContentScope.Root.CreateChild("N3b");
+            Run(a3_52.LoadAsync<Sprite>("Icons/a"));
+            string share3_52; try { share3_52 = a3_52.ShareTo(b3_52, null) ? "true" : "false"; } catch (Exception e) { share3_52 = e.GetType().Name; }
+            Check(share3_52 == "false" && !a3_52.Release(null) && !a3_52.Contains(null) && Ref(A52) == 1, $"N3 ShareTo with a null key is false, as Release and Contains are ({share3_52})");
+            a3_52.Dispose(); b3_52.Dispose(); Tick();
+
+            // ④ a cancelled token wins over a scene miss, as over an asset miss (30: the asset side)
+            var sc4_52 = ContentScope.Root.CreateChild("N4"); var cts4_52 = new CancellationTokenSource(); cts4_52.Cancel();
+            var noScene4_52 = new ContentSceneRef("ee520000000000000000000000000001");
+            string Scene4_52(Func<Awaitable<Scene>> f)
+            {
+                int e0 = Debug.Errors; string r;
+                try { var s = Run(f()); r = s.IsValid() ? "scene" : "invalid"; } catch (OperationCanceledException e) { r = e.CancellationToken == cts4_52.Token ? "OCE" : "OCE(another token)"; }
+                return Debug.Errors == e0 ? r : $"{r}+error";
+            }
+            Debug.Verbose = false;
+            string r4a_52 = Scene4_52(() => sc4_52.LoadSceneAsync(noScene4_52, cts4_52.Token)), r4b_52 = Scene4_52(() => sc4_52.LoadSceneAsync("Scenes/Nope", cts4_52.Token)), r4c_52 = Scene4_52(() => sc4_52.LoadSceneAsync((string)null, cts4_52.Token));
+            string r4d_52 = Scene4_52(() => ContentService.LoadSceneAsync(noScene4_52, LoadSceneMode.Additive, cts4_52.Token)), r4e_52 = Scene4_52(() => ContentService.LoadSceneAsync("Scenes/Nope", LoadSceneMode.Additive, cts4_52.Token));
+            ContentService.SceneFallback = (k, prm) => null; ContentService.SceneContainsFallback = k => false;   // the editor's: a name no catalog has goes to the simulation
+            string r4f_52 = Scene4_52(() => sc4_52.LoadSceneAsync(noScene4_52, cts4_52.Token)), r4g_52 = Scene4_52(() => ContentService.LoadSceneAsync("Scenes/Nope", LoadSceneMode.Additive, cts4_52.Token));
+            ContentService.SceneFallback = null; ContentService.SceneContainsFallback = null;
+            Debug.Verbose = true;
+            Check(r4a_52 == "OCE" && r4b_52 == "OCE" && r4c_52 == "OCE", $"N4 a scope scene load with a cancelled token: OperationCanceledException, not a miss — a reference ({r4a_52}) · a name no catalog has ({r4b_52}) · null ({r4c_52})");
+            Check(r4d_52 == "OCE" && r4e_52 == "OCE", $"N4b … ContentService's scene loads too — a reference ({r4d_52}) · a name ({r4e_52})");
+            Check(r4f_52 == "OCE" && r4g_52 == "OCE", $"N4c … and with the editor's scene fallback installed, the same answer as a player — a scope reference ({r4f_52}) · a service name ({r4g_52})");
+            var sc4dd_52 = ContentScope.Root.CreateChild("N4d"); sc4dd_52.Dispose();
+            string r4dd_52; try { Run(sc4dd_52.LoadSceneAsync(noScene4_52, cts4_52.Token)); r4dd_52 = "no exception"; } catch (ObjectDisposedException) { r4dd_52 = "ODE"; } catch (OperationCanceledException) { r4dd_52 = "OCE"; }
+            Check(r4dd_52 == "ODE", $"N4d … a disposed scope's scene load through a reference, with a cancelled token: ObjectDisposedException first ({r4dd_52})");
+            string r4ee_52; try { Run(sc4dd_52.LoadSceneAsync("Scenes/S52", cts4_52.Token)); r4ee_52 = "no exception"; } catch (ObjectDisposedException) { r4ee_52 = "ODE"; } catch (OperationCanceledException) { r4ee_52 = "OCE"; }
+            Check(r4ee_52 == "ODE", $"N4e … and by name ({r4ee_52})");
+            sc4_52.Dispose(); Tick();
+
+            // ⑤ a null owner throws ArgumentNullException, as ContentLink<T> does
+            string sl5_52; try { _ = new ContentSceneLink("Scenes/S52").LoadAsync((Component)null); sl5_52 = "nothing"; } catch (ArgumentNullException e) { sl5_52 = $"ArgumentNullException({e.ParamName})"; } catch (Exception e) { sl5_52 = e.GetType().Name; }
+            Check(sl5_52 == "ArgumentNullException(owner)", $"N5 ContentSceneLink.LoadAsync with a null owner: ArgumentNullException naming the owner, as ContentLink<T> ({sl5_52})");
+
+            // ⑥ a waiter's continuation re-enters while FinishLoad wakes the others (the net under ① and ⑦)
+            var scA6_52 = ContentScope.Root.CreateChild("N6a"); var scB6_52 = ContentScope.Root.CreateChild("N6b");
+            var pa6_52 = scA6_52.LoadAsync<Sprite>("Icons/a"); var pb6_52 = scB6_52.LoadAsync<Sprite>("Icons/a");
+            pa6_52.OnCompleted(() => scB6_52.Dispose());
+            FakeEngine.CompleteLoads();
+            string b6_52; try { b6_52 = pb6_52.GetResult() != null ? "the asset" : "null"; } catch (OperationCanceledException) { b6_52 = "OCE"; }
+            Tick();
+            Check(pa6_52.GetResult() != null && b6_52 == "OCE" && Ref(A52) == 1 && scA6_52.Contains("Icons/a") && ContentService.LiveAssetCount == 1, $"N6 A's continuation ends B's scope, B waiting on the same slot: A holds the asset, B is cancelled and holds nothing (B={b6_52} ref={Ref(A52)} live={ContentService.LiveAssetCount})");
+            scA6_52.Dispose(); Tick();
+            var ra6_52 = ContentService.AcquireAsync<Sprite>("Icons/a"); var rb6_52 = ContentService.AcquireAsync<Sprite>("Icons/a");
+            bool forced6_52 = false;
+            ra6_52.OnCompleted(() => { Debug.Verbose = false; forced6_52 = ContentService.UnregisterDirectory(dir52, force: true); Debug.Verbose = true; });
+            int esc6_52 = FakeEngine.AsyncVoidExceptions.Count;
+            FakeEngine.CompleteLoads();
+            bool doneA6_52 = ra6_52.GetAwaiter().IsCompleted, doneB6_52 = rb6_52.GetAwaiter().IsCompleted;
+            var ha6_52 = ra6_52.GetResult(); var hb6_52 = rb6_52.GetResult();
+            Tick();
+            Check(forced6_52 && doneA6_52 && doneB6_52 && !ha6_52.IsValid && !hb6_52.IsValid && Ref(A52) == 0 && ContentService.LiveAssetCount == 0 && !FakeEngine.Registered.Contains("D52"), $"N6b A's continuation force-unregisters the directory: A's lease is killed, B is answered with nothing, the slot is freed once (forced={forced6_52} B answered={doneB6_52} ref={Ref(A52)} live={ContentService.LiveAssetCount})");
+            Check(FakeEngine.AsyncVoidExceptions.Count == esc6_52, $"N6e … and the wake loop ends cleanly over the slot freed under it: nothing escaped the load's continuation ({(FakeEngine.AsyncVoidExceptions.Count == esc6_52 ? "none" : FakeEngine.AsyncVoidExceptions[FakeEngine.AsyncVoidExceptions.Count - 1].GetType().Name)})");
+            dir52 = ContentService.RegisterDirectory("D52");
+            var rc6_52 = ContentService.AcquireAsync<Sprite>("Icons/a"); var rd6_52 = ContentService.AcquireAsync<Sprite>("Icons/a");
+            Awaitable<AssetHandle<Sprite>> again6_52 = null;
+            rc6_52.OnCompleted(() => { Debug.Verbose = false; ContentService.UnregisterDirectory(dir52, force: true); Debug.Verbose = true; dir52 = ContentService.RegisterDirectory("D52"); again6_52 = ContentService.AcquireAsync<Sprite>("Icons/a"); });
+            FakeEngine.CompleteLoads();
+            bool doneD6_52 = rd6_52.GetAwaiter().IsCompleted;
+            var hd6_52 = rd6_52.GetResult();
+            var hAgain6_52 = again6_52 != null ? Run(again6_52) : default;
+            Check(doneD6_52 && !hd6_52.IsValid && hAgain6_52.IsValid && hAgain6_52.Asset != null && Ref(A52) == 1, $"N6c … and loads the same key again: the slot is reused, the old waiter is answered with nothing, the new load completes (old answered={doneD6_52} again valid={hAgain6_52.IsValid} ref={Ref(A52)})");
+            hAgain6_52.Dispose(); Tick();
+            Check(Ref(A52) == 0 && ContentService.LiveAssetCount == 0, $"N6d released; nothing left (ref={Ref(A52)} live={ContentService.LiveAssetCount})");
+
+            // ⑦ a directory with a scene load in flight is refused, not unregistered: unregistering under a scene load crashes the engine (measured on 6000.6)
+            int eN2_52 = Debug.Errors;
+            var pN2_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive);
+            string unN2_52; Debug.Verbose = false;
+            try { unN2_52 = ContentService.UnregisterDirectory(dir52, force: true) ? "unregistered" : "refused"; } catch (InvalidOperationException e) { unN2_52 = e.Message.Split('—')[0].Trim(); }
+            Debug.Verbose = true; string errN2_52 = Debug.LastError;
+            FakeEngine.CompleteLoads(); var sN2_52 = pN2_52.GetResult(); Tick();
+            Check(unN2_52 == "refused" && Debug.Errors == eN2_52 + 1 && errN2_52.Contains("scene load(s) in flight") && errN2_52.Contains("Scenes/S52") && sN2_52.IsValid() && FakeEngine.Registered.Contains("D52"), $"N7 a scene load in flight: its directory is refused, forced or not — the engine is not asked (it crashes) · the error names the load — and the load arrives ({unN2_52})");
+            SceneManager.UnloadSceneAsync(sN2_52); FakeEngine.CompleteLoads(); Tick();
+            var ctsN2_52 = new CancellationTokenSource();
+            var qN2_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive, ctsN2_52.Token);
+            ctsN2_52.Cancel();
+            string ansN2b_52; try { qN2_52.GetResult(); ansN2b_52 = "no OCE"; } catch (OperationCanceledException) { ansN2b_52 = "OCE"; }
+            string unN2b_52; Debug.Verbose = false;
+            try { unN2b_52 = ContentService.UnregisterDirectory(dir52) ? "unregistered" : "refused"; } catch (InvalidOperationException e) { unN2b_52 = e.Message.Split('—')[0].Trim(); }
+            Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();   // the engine's load ends; the late instance is handed back
+            bool afterN2b_52 = ContentService.UnregisterDirectory(dir52);
+            Check(ansN2b_52 == "OCE" && unN2b_52 == "refused" && afterN2b_52 && !FakeEngine.Registered.Contains("D52"), $"N7b a cancelled scene load: the caller is answered at once, the directory is refused until the engine's load has ended and its instance was handed back ({ansN2b_52} · {unN2b_52} → {afterN2b_52})");
+            dir52 = ContentService.RegisterDirectory("D52");
+            var heldC_52 = Run(ContentService.AcquireAsync<Sprite>("Icons/b"));   // an asset of D52 actually held
+            var pC7_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive);
+            bool uC7_52; Debug.Verbose = false;
+            try { uC7_52 = ContentService.UnregisterDirectory(dir52, force: true); } catch (InvalidOperationException) { uC7_52 = true; }   // the stub's engine throws where the real one crashes
+            Debug.Verbose = true;
+            bool aliveC7_52 = heldC_52.IsValid;
+            FakeEngine.CompleteLoads(); var sC7_52 = pC7_52.GetResult(); Tick();
+            SceneManager.UnloadSceneAsync(sC7_52); FakeEngine.CompleteLoads(); Tick();
+            heldC_52.Dispose(); Tick();
+            Check(!uC7_52 && aliveC7_52 && FakeEngine.Registered.Contains("D52"), $"N7c a forced unregister refused for a scene load in flight kills nothing first: the asset held stays valid (refused={!uC7_52} held valid={aliveC7_52})");
+            FakeEngine.Dirs["G52"] = new ScriptableObject[] { ScriptableObject.CreateInstance<ContentCatalog>() };
+            int g7d_52 = ContentService.RegisterDirectory("G52");
+            var p7d_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive);
+            Debug.Verbose = false; int e7d_52 = Debug.Errors; bool u7d_52 = ContentService.UnregisterDirectory(g7d_52); int de7d_52 = Debug.Errors - e7d_52; Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); var s7d_52 = p7d_52.GetResult(); Tick();
+            if (s7d_52.IsValid()) { SceneManager.UnloadSceneAsync(s7d_52); FakeEngine.CompleteLoads(); Tick(); }
+            Check(u7d_52 && de7d_52 == 0 && s7d_52.IsValid(), $"N7d a scene load in flight holds only the directories that carry the scene: another one goes (unregistered={u7d_52} errors=+{de7d_52})");
+            var cat7e_52 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat7e_52.EditorSetScenes(new ContentCatalog.SceneEntry[] { new() { name = "Scenes/S52", id = SceneId(SC52) } });
+            FakeEngine.Dirs["D52b"] = new ScriptableObject[] { cat7e_52 };
+            Debug.Verbose = false; int b7e_52 = ContentService.RegisterDirectory("D52b"); Debug.Verbose = true;
+            var p7e_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive);
+            bool u7e_52; Debug.Verbose = false; try { u7e_52 = ContentService.UnregisterDirectory(b7e_52, force: true); } catch (InvalidOperationException) { u7e_52 = true; } Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); var s7e_52 = p7e_52.GetResult(); Tick();
+            if (s7e_52.IsValid()) { SceneManager.UnloadSceneAsync(s7e_52); FakeEngine.CompleteLoads(); Tick(); }
+            Debug.Verbose = false; bool after7e_52 = u7e_52 || ContentService.UnregisterDirectory(b7e_52); Debug.Verbose = true;
+            Check(!u7e_52 && after7e_52 && s7e_52.IsValid(), $"N7e a scene two directories carry, in flight: each of them is refused, not only the first (refused={!u7e_52} after={after7e_52})");
+            var query7f_52 = typeof(ContentService).GetMethod("HasSceneLoadsInFlight", BindingFlags.Public | BindingFlags.Static);
+            string q7f_52;
+            if (query7f_52 == null) q7f_52 = "no public query";
+            else
+            {
+                bool Ask7f_52(int d) => (bool)query7f_52.Invoke(null, new object[] { d });
+                var cts7f_52 = new CancellationTokenSource();
+                bool before7f_52 = Ask7f_52(dir52);
+                var p7f_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Additive, cts7f_52.Token);
+                bool during7f_52 = Ask7f_52(dir52);
+                cts7f_52.Cancel(); try { p7f_52.GetResult(); } catch (OperationCanceledException) { }
+                bool cancelled7f_52 = Ask7f_52(dir52);
+                int e7f_52 = Debug.Errors;
+                FakeEngine.CompleteLoads(); Tick(); FakeEngine.CompleteLoads(); Tick();
+                q7f_52 = $"{before7f_52}/{during7f_52}/{cancelled7f_52}/{Ask7f_52(dir52)}/{Ask7f_52(-1)}/{Ask7f_52(9999)} errors+{Debug.Errors - e7f_52}";
+            }
+            Check(q7f_52 == "False/True/True/False/False/False errors+0", $"N7f ContentService.HasSceneLoadsInFlight(dir) answers what UnregisterDirectory refuses for, without an error — before · in flight · cancelled · after · -1 · 9999 = {q7f_52}");
+
+            // ⑧ quit while loads are in flight: a held raw handle is still reported, a load in flight is not, and its directory's release logs no error
+            var held7_52 = Run(ContentService.AcquireAsync<Sprite>("Icons/a"));   // a raw handle actually held at quit: a leak, reported
+            var raw7_52 = ContentService.AcquireAsync<Sprite>("Icons/c");          // in flight: its caller has no handle yet
+            var p7_52 = ContentScope.ForScene(lobby52).LoadAsync<Sprite>("Icons/b");   // a scope load in flight
+            FakeEngine.SceneDir[SCE52] = "E52"; FakeEngine.SceneNames[SCE52] = "SE52";
+            var catE52 = ScriptableObject.CreateInstance<ContentCatalog>();
+            catE52.EditorSetScenes(new ContentCatalog.SceneEntry[] { new() { name = "Scenes/E52", id = SceneId(SCE52) } });
+            FakeEngine.Dirs["E52"] = new ScriptableObject[] { catE52 };
+            ContentService.RegisterDirectory("E52");
+            var sceneE52 = ContentService.LoadSceneAsync("Scenes/E52", LoadSceneMode.Additive);   // a directory whose only load in flight is a scene's
+            int w7_52 = Debug.Warnings, e7_52 = Debug.Errors;
+            string quit8_52 = "clean"; try { Application.Quit(); } catch (Exception e) { quit8_52 = e.Message.Split('—')[0].Trim(); }
+            Check(Debug.Warnings - w7_52 == 1 && Debug.LastWarning.Contains("'Icons/a'") && held7_52.IsValid == false, $"N8 quit: the raw handle actually held is reported, the load still in flight is not (warnings +{Debug.Warnings - w7_52}, last: {Debug.LastWarning.Split('\n')[0]})");
+            Check(quit8_52 == "clean" && FakeEngine.Registered.Contains("E52"), $"N8e … a directory whose only load in flight is a scene's is let go too — not unregistered under the load ({quit8_52})");
+            Check(Debug.Errors == e7_52 && FakeEngine.Registered.Contains("D52"), $"N8b … the directory with a load in flight is let go without an error and stays registered for the next session to release (errors +{Debug.Errors - e7_52})");
+            string scope7_52; try { scope7_52 = p7_52.GetResult() != null ? "the asset" : "null"; } catch (OperationCanceledException) { scope7_52 = "OCE"; }
+            Check(scope7_52 == "OCE", $"N8c … the scope load in flight ends with the scope ({scope7_52})");
+            FakeEngine.PendingLoads.Clear(); FakeEngine.Refs.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.ScenesInFlight.Clear(); FakeEngine.Transitioning = 0;   // the session's end: the engine lets its loads and scenes go (measured on 6000.6)
+            Init(typeof(ContentService), "ResetStatics");
+            int again7_52 = ContentService.RegisterDirectory("D52");
+            Check(FakeEngine.Registered.Contains("D52") && again7_52 == 0 && !FakeEngine.Registered.Contains("E52"), "N8d next session: the directories left at quit are released, and one registers again");
+            ContentService.UnregisterDirectory(again7_52);
+            FakeEngine.IdDir[952004] = "D52"; FakeEngine.Assets[952004] = new Sprite { name = "d" };   // in D52's files, in no catalog
+            FakeEngine.Dirs["F52"] = new ScriptableObject[] { ScriptableObject.CreateInstance<ContentCatalog>() };
+            ContentService.RegisterDirectory("F52");
+            _ = ContentService.AcquireAsync<Sprite>(new LoadableObjectId { value = 952004 });   // a load by an id no catalog lists: its directory is unknown, so it holds every directory
+            int e8_52 = Debug.Errors;
+            string quitF_52 = "clean"; try { Application.Quit(); } catch (Exception e) { quitF_52 = e.Message.Split('—')[0].Trim(); }
+            Check(quitF_52 == "clean" && Debug.Errors == e8_52 && FakeEngine.Registered.Contains("F52"), $"N8f quit with a load in flight by an id no catalog lists: it holds every directory, as UnregisterDirectory counts it — no error, the directory left for the next session (errors +{Debug.Errors - e8_52})");
+            FakeEngine.PendingLoads.Clear(); FakeEngine.Refs.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.ScenesInFlight.Clear(); FakeEngine.Transitioning = 0;
+            Init(typeof(ContentService), "ResetStatics");
+            FakeEngine.IdDir.Remove(952004); FakeEngine.Assets.Remove(952004);
+
+            // ① (cont.) N1g · N1h — a Single-mode scene load cancelled in flight carries the caller's token too: the catch's Single branch, built and simulated
+            FakeEngine.PendingLoads.Clear(); FakeEngine.Refs.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.ScenesInFlight.Clear(); FakeEngine.Transitioning = 0;   // a session of its own: a Single load replaces every scene
+            Init(typeof(ContentService), "ResetStatics");
+            ContentService.RegisterDirectory("D52");
+            var ctsG_52 = new CancellationTokenSource(); int wG_52 = Debug.Warnings; Debug.Verbose = false;
+            var pG_52 = ContentService.LoadSceneAsync("Scenes/S52", LoadSceneMode.Single, ctsG_52.Token);
+            ctsG_52.Cancel();
+            CancellationToken gotG_52 = default; try { pG_52.GetResult(); } catch (OperationCanceledException e) { gotG_52 = e.CancellationToken; }
+            int warnG_52 = Debug.Warnings - wG_52; Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick();
+            Check(gotG_52 == ctsG_52.Token && warnG_52 == 1 && ContentService.LoadedSceneCount == 1, $"N1g … a Single-mode scene load cancelled in flight: the caller's token too — the scene stays (one warning) and is tracked ({(gotG_52 == CancellationToken.None ? "None" : gotG_52 == ctsG_52.Token ? "the caller's" : "another")} · warnings +{warnG_52} · tracked={ContentService.LoadedSceneCount})");
+            ContentService.SceneFallback = (k, prm) => { var op = new AsyncOperation(); FakeEngine.PendingLoads.Add(op.Complete); return op; };
+            ContentService.SceneResultFallback = k => default;
+            var ctsH_52 = new CancellationTokenSource(); int wH_52 = Debug.Warnings; Debug.Verbose = false;
+            var pH_52 = ContentService.LoadSceneAsync("Scenes/Sim52", LoadSceneMode.Single, ctsH_52.Token);
+            ctsH_52.Cancel();
+            CancellationToken gotH_52 = default; try { pH_52.GetResult(); } catch (OperationCanceledException e) { gotH_52 = e.CancellationToken; }
+            int warnH_52 = Debug.Warnings - wH_52; Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick();
+            ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            Check(gotH_52 == ctsH_52.Token && warnH_52 == 1, $"N1h … and the editor simulation's Single-mode load too ({(gotH_52 == CancellationToken.None ? "None" : gotH_52 == ctsH_52.Token ? "the caller's" : "another")} · warnings +{warnH_52})");
+            var rawG8_52 = ContentService.AcquireAsync<Sprite>("Icons/a");
+            Debug.Verbose = false; int wG8_52 = Debug.Warnings; ContentService.Shutdown(); int dwG8_52 = Debug.Warnings - wG8_52; Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick();
+            bool doneG8_52 = rawG8_52.GetAwaiter().IsCompleted; var rG8_52 = rawG8_52.GetResult();
+            Check(doneG8_52 && !rG8_52.IsValid && dwG8_52 == 0 && Ref(A52) == 0, $"N8g Shutdown with a raw load in flight: not reported, its lease returned — the load lands with nothing (done={doneG8_52} valid={rG8_52.IsValid} warnings=+{dwG8_52} ref={Ref(A52)})");
+            FakeEngine.PendingLoads.Clear(); FakeEngine.Refs.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.ScenesInFlight.Clear(); FakeEngine.Transitioning = 0;
+            Init(typeof(ContentService), "ResetStatics");
+            Init(typeof(ContentScope), "ResetStatics");
+        }
+
+        Console.WriteLine("53) IMP018 §9-7 7-1 — the scope owner: a clone touched before its Awake takes its keys · an explicit Dispose empties the key list · while the object is destroyed Scope() is the ended scope");
+        {
+            const int A53 = 953001, B53 = 953002;
+            Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");
+            FakeEngine.ClearProject(); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+            FakeEngine.LoadedScenes.Clear(); FakeEngine.PendingLoads.Clear();
+            ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+            ContentService.NameFallback = null; ContentService.RefFallback = null; ContentService.DirectoryFallback = null; ContentService.SceneLoadsInFlightFallback = null;
+            FakeEngine.Assets[A53] = new Sprite { name = "a" }; FakeEngine.Assets[B53] = new Sprite { name = "b" };
+            FakeEngine.IdDir[A53] = "D53"; FakeEngine.IdDir[B53] = "D53";
+            var cat53 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat53.EditorSetEntries(new ContentCatalog.Entry[] { new() { name = "Icons/a", id = new LoadableObjectId { value = A53 } }, new() { name = "Icons/b", id = new LoadableObjectId { value = B53 } } });
+            FakeEngine.Dirs["D53"] = new ScriptableObject[] { cat53 };
+            ContentService.RegisterDirectory("D53");
+            var scene53 = NewScene(953, "Scene53"); SceneManager.Active = scene53; SceneManager.Open(scene53);
+            // ⓪ the stub's Destroy runs every OnDestroy before any component is null — the engine's order (measured on 6000.6)
+            var o0_53 = NewGO("K0", scene53); o0_53.Scope();
+            var t0_53 = o0_53.AddComponent<ScopeToucher>();
+            bool ownerAlive0_53 = false; t0_53.whenDestroyed = () => ownerAlive0_53 = o0_53.GetComponent<ContentScopeOwner>() != null;
+            string ex0_53 = "none"; try { Object.Destroy(o0_53); } catch (Exception e) { ex0_53 = e.GetType().Name; }
+            Tick();
+            Check(ownerAlive0_53 && ex0_53 == "none", $"K0 a sibling's OnDestroy still sees the owner, which ran its own OnDestroy first: the engine nulls a destroyed object's components after all of them (owner seen={ownerAlive0_53} · {ex0_53})");
+            var o0b_53 = NewGO("K0b", scene53);
+            var t0b_53 = o0b_53.AddComponent<ScopeToucher>();
+            string added0b_53 = "-"; t0b_53.whenDestroyed = () => { var c0b_53 = o0b_53.AddComponent<ScopeToucher>(); added0b_53 = ReferenceEquals(c0b_53, null) ? "null" : "a component"; };
+            Object.Destroy(o0b_53); Tick();
+            Check(added0b_53 == "null", $"K0b … and an object being destroyed adds no component: AddComponent answers null, as the engine does (got {added0b_53})");
+
+            var fldK_53 = typeof(ContentScopeOwner).GetField("m_InheritKeys", BindingFlags.Instance | BindingFlags.NonPublic);
+            var fldS_53 = typeof(ContentScopeOwner).GetField("m_Scope", BindingFlags.Instance | BindingFlags.NonPublic);
+            string Keys_53(GameObject g) { var raw = (string[])fldK_53.GetValue(g.GetComponent<ContentScopeOwner>()); var l = new System.Collections.Generic.List<string>(); foreach (var k in raw) if (!string.IsNullOrEmpty(k)) l.Add(k); l.Sort(StringComparer.Ordinal); return string.Join(",", l); }
+            bool HasScope_53(GameObject g) => fldS_53.GetValue(g.GetComponent<ContentScopeOwner>()) != null;
+            int Kids_53() => ContentScope.ForScene(scene53).Children.Count;
+            string What_53(ContentScope got, ContentScope old) => got == null ? "null" : ReferenceEquals(got, old) ? (got.IsDisposed ? "the ended scope" : "the old scope, live") : got.IsDisposed ? "another, ended" : "a NEW live scope";
+
+            // ① a clone created inactive and touched before its Awake takes the original's keys at the touch
+            var o1_53 = NewGO("K1", scene53); o1_53.Scope().Load<Sprite>("Icons/a");
+            o1_53.SetActive(false); var c1_53 = Object.Instantiate(o1_53); o1_53.SetActive(true);
+            c1_53.Scope().Load<Sprite>("Icons/b");   // the pooled clone's initialisation, before it is first activated
+            Object.Destroy(o1_53); Tick();
+            int r1_53 = Ref(A53); string k1_53 = Keys_53(c1_53);
+            int kids1_53 = Kids_53(); c1_53.SetActive(true); Tick();
+            Check(r1_53 == 1 && k1_53 == "Icons/a,Icons/b" && c1_53.Scope().Contains("Icons/a") && Kids_53() == kids1_53, $"K1 a clone touched before its Awake takes the original's keys at the touch: the original's asset stays held after it is destroyed, the clone's list keeps them with its own (ref(a)={r1_53} keys=[{k1_53}] contains(a)={c1_53.Scope().Contains("Icons/a")})");
+            Object.Destroy(c1_53); Tick();
+            Check(Ref(A53) == 0 && Ref(B53) == 0, $"K1b … its Awake took no second reference: destroying the clone releases both (ref(a)={Ref(A53)} ref(b)={Ref(B53)})");
+            var o1c_53 = NewGO("K1c", scene53); o1c_53.Scope().Load<Sprite>("Icons/a");
+            o1c_53.SetActive(false); var c1c_53 = Object.Instantiate(o1c_53); o1c_53.SetActive(true);
+            c1c_53.Scope();   // touched only
+            Object.Destroy(o1c_53); Tick();
+            var cc1c_53 = Object.Instantiate(c1c_53); Tick();
+            Check(Ref(A53) == 1 && c1c_53.Scope().Contains("Icons/a") && cc1c_53.Scope().Contains("Icons/a"), $"K1c a clone only touched holds the keys too, and a clone of it inherits them (ref(a)={Ref(A53)})");
+            c1c_53.SetActive(true); cc1c_53.SetActive(true);   // never activated, a clone gets no OnDestroy: the scene would reclaim it
+            Object.Destroy(c1c_53); Object.Destroy(cc1c_53); Tick();
+            var f1d_53 = new GameObject[34]; var w1d_53 = new ContentScopeOwner[34]; var alone1d_53 = new ContentScope[17];
+            for (int i = 0; i < f1d_53.Length; ++i) { f1d_53[i] = NewGO("K1d", scene53); w1d_53[i] = ContentScopeOwner.Get(f1d_53[i]); }
+            var grow1d_53 = new ContentScope[48]; for (int i = 0; i < grow1d_53.Length; ++i) grow1d_53[i] = ContentScope.CreateForGameObject(f1d_53[0]);
+            foreach (var sg1d_53 in grow1d_53) sg1d_53.Dispose();   // the scene scope's child list grows here, not inside the windows
+            f1d_53[0].Scope(); alone1d_53[0] = ContentScope.CreateForGameObject(f1d_53[1]); alone1d_53[0].BindOwnerComponent(w1d_53[1]);   // JIT first
+            long b1d_53 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 2; i < 18; ++i) f1d_53[i].Scope();
+            long getter1d_53 = (GC.GetAllocatedBytesForCurrentThread() - b1d_53) / 16;
+            b1d_53 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 18; i < 34; ++i) { alone1d_53[i - 17] = ContentScope.CreateForGameObject(f1d_53[i]); alone1d_53[i - 17].BindOwnerComponent(w1d_53[i]); }
+            long scope1d_53 = (GC.GetAllocatedBytesForCurrentThread() - b1d_53) / 16;
+            Check(getter1d_53 == scope1d_53 && getter1d_53 > 0, $"K1d a fresh object's first Scope() opens its scope and nothing more: with nothing to inherit it syncs no keys (bytes per object: Scope()={getter1d_53} · the scope alone={scope1d_53})");
+            foreach (var s1d_53 in alone1d_53) s1d_53.Dispose();
+            foreach (var g1d_53 in f1d_53) Object.Destroy(g1d_53);
+            Tick();
+
+            // ② an explicit Dispose empties the key list
+            var o3_53 = NewGO("K3", scene53); var s3_53 = o3_53.Scope(); s3_53.Load<Sprite>("Icons/a");
+            s3_53.Dispose(); Tick();
+            string k3_53 = Keys_53(o3_53);
+            var c3_53 = Object.Instantiate(o3_53); Tick();
+            Check(k3_53 == "" && !HasScope_53(c3_53) && Ref(A53) == 0, $"K3 after an explicit Dispose the key list is empty: a clone made afterwards inherits nothing and makes no scope (keys=[{k3_53}] clone scope={HasScope_53(c3_53)} ref(a)={Ref(A53)})");
+            var n3_53 = o3_53.Scope();
+            bool fresh3_53 = !ReferenceEquals(n3_53, s3_53) && !n3_53.IsDisposed && n3_53.Count == 0;
+            n3_53.Load<Sprite>("Icons/b"); var cb3_53 = Object.Instantiate(o3_53); Tick();
+            Check(fresh3_53 && Ref(A53) == 0 && Keys_53(o3_53) == "Icons/b" && cb3_53.Scope().Contains("Icons/b") && !cb3_53.Scope().Contains("Icons/a"), $"K3b … the next Scope() starts empty — nothing comes back — and what it loads is listed again for clones (fresh={fresh3_53} keys=[{Keys_53(o3_53)}] ref(a)={Ref(A53)})");
+            Object.Destroy(o3_53); Object.Destroy(c3_53); Object.Destroy(cb3_53); Tick();
+
+            // ③ while the object is destroyed Scope() hands back the ended scope, never a new one
+            var o2_53 = NewGO("K2", scene53); var s2_53 = o2_53.Scope();
+            var p2_53 = s2_53.LoadAsync<Sprite>("Icons/a");
+            ContentScope g2_53 = null; string load2_53 = "-";
+            p2_53.OnCompleted(() => { g2_53 = o2_53.Scope(); try { g2_53.Load<Sprite>("Icons/b"); load2_53 = "loaded"; } catch (ObjectDisposedException) { load2_53 = "ODE"; } });
+            int kids2_53 = Kids_53(); bool flying2_53 = !p2_53.GetAwaiter().IsCompleted;
+            Object.Destroy(o2_53); FakeEngine.CompleteLoads(); Tick();
+            Check(flying2_53 && What_53(g2_53, s2_53) == "the ended scope" && load2_53 == "ODE" && Kids_53() == kids2_53 - 1 && Ref(A53) == 0 && Ref(B53) == 0, $"K2 a load's cancellation that runs inside OnDestroy asks Scope(): the ended scope — a load there is ObjectDisposedException, the scene scope gains no child, nothing is held (in flight={flying2_53} · {What_53(g2_53, s2_53)} · {load2_53} · children {kids2_53}→{Kids_53()})");
+            var o2b_53 = NewGO("K2b", scene53); var s2b_53 = o2b_53.Scope();
+            var t2b_53 = o2b_53.AddComponent<ScopeToucher>();
+            ContentScope g2b_53 = null; t2b_53.whenDestroyed = () => g2b_53 = o2b_53.Scope();
+            int kids2b_53 = Kids_53();
+            Object.Destroy(o2b_53); Tick();
+            Check(What_53(g2b_53, s2b_53) == "the ended scope" && Kids_53() == kids2b_53 - 1, $"K2b … a sibling's OnDestroy too ({What_53(g2b_53, s2b_53)} · children {kids2b_53}→{Kids_53()})");
+            var o2c_53 = NewGO("K2c", scene53); var s2c_53 = o2c_53.Scope(); s2c_53.Dispose();   // no scope left when the object goes
+            var t2c_53 = o2c_53.AddComponent<ScopeToucher>();
+            ContentScope g2c_53 = null; t2c_53.whenDestroyed = () => g2c_53 = o2c_53.Scope();
+            int kids2c_53 = Kids_53();
+            Object.Destroy(o2c_53); Tick();
+            Check(g2c_53 != null && g2c_53.IsDisposed && Kids_53() == kids2c_53, $"K2c … and an object whose scope was disposed before it went: an ended scope, not a new live one ({What_53(g2c_53, s2c_53)} · children {kids2c_53}→{Kids_53()})");
+            var sceneD_53 = NewScene(9531, "Scene53d"); SceneManager.Open(sceneD_53);
+            var o2d_53 = NewGO("K2d", sceneD_53); var s2d_53 = o2d_53.Scope();
+            var p2d_53 = s2d_53.LoadAsync<Sprite>("Icons/a");
+            ContentScope g2d_53 = null; p2d_53.OnCompleted(() => g2d_53 = o2d_53.Scope());
+            bool flying2d_53 = !p2d_53.GetAwaiter().IsCompleted;
+            SceneManager.UnloadScene(sceneD_53); FakeEngine.CompleteLoads(); Tick();
+            Check(flying2d_53 && What_53(g2d_53, s2d_53) == "the ended scope" && Ref(A53) == 0 && !ContentScope.DumpTree().Contains("K2d"), $"K2d … a scene unload with a load in flight: the cancellation inside the unload's OnDestroy gets the ended scope, nothing is left (in flight={flying2d_53} · {What_53(g2d_53, s2d_53)} ref(a)={Ref(A53)})");
+            var o2e_53 = NewGO("K2e", scene53);   // never asked for a scope: it has no owner
+            var t2e_53 = o2e_53.AddComponent<ScopeToucher>();
+            ContentScope g2e_53 = null; string load2e_53 = "-", ex2e_53 = "none";
+            t2e_53.whenDestroyed = () => { try { g2e_53 = o2e_53.Scope(); try { g2e_53.Load<Sprite>("Icons/b"); load2e_53 = "loaded"; } catch (ObjectDisposedException) { load2e_53 = "ODE"; } } catch (Exception e) { ex2e_53 = e.GetType().Name; } };
+            int kids2e_53 = Kids_53();
+            Object.Destroy(o2e_53); Tick();
+            Check(ex2e_53 == "none" && g2e_53 != null && g2e_53.IsDisposed && load2e_53 == "ODE" && o2e_53.GetComponent<ContentScopeOwner>() == null && Kids_53() == kids2e_53 && Ref(B53) == 0, $"K2e … an object that never had a scope gets an ended one too: the engine adds no component to an object being destroyed (ex={ex2e_53} · {(g2e_53 == null ? "null" : g2e_53.IsDisposed ? "ended" : "live")} · load {load2e_53} · children {kids2e_53}→{Kids_53()})");
+
+            // ── corner cases of the inheritance ──
+            // the inheritance: a slot still loading is shared, not loaded again · a Scope() from inside the opening scope's own load · the keys loaded again · a clone that never woke · an earlier component's Awake
+            var x1e_53 = NewGO("K1ex", scene53); var px1e_53 = x1e_53.Scope().LoadAsync<Sprite>("Icons/a");
+            var c1e_53 = NewGO("K1e", scene53, false); fldK_53.SetValue(ContentScopeOwner.Get(c1e_53), new[] { "Icons/a" });   // an inactive clone's copied list
+            bool before1e_53 = !px1e_53.GetAwaiter().IsCompleted;
+            c1e_53.Scope();
+            bool after1e_53 = !px1e_53.GetAwaiter().IsCompleted;
+            FakeEngine.CompleteLoads(); Tick();
+            Check(before1e_53 && after1e_53 && c1e_53.Scope().Contains("Icons/a") && Ref(A53) == 1, $"K1e … a touched clone shares a slot another load has in flight: no synchronous load inside Scope() (in flight before={before1e_53} after={after1e_53} ref(a)={Ref(A53)})");
+            c1e_53.SetActive(true); Object.Destroy(c1e_53); Object.Destroy(x1e_53); Tick();
+            const int SIM53 = 953009; FakeEngine.Assets[SIM53] = new Sprite { name = "sim" }; FakeEngine.EditorServesAnyId = true;
+            var c1f_53 = NewGO("K1f", scene53, false); fldK_53.SetValue(ContentScopeOwner.Get(c1f_53), new[] { "Sim/x" });   // a key only the name fallback resolves
+            ContentScope inner1f_53 = null; bool asked1f_53 = false;
+            ContentService.NameFallback = n => { if (n == "Sim/x" && !asked1f_53) { asked1f_53 = true; inner1f_53 = c1f_53.Scope(); } return n == "Sim/x" ? new ContentService.SimulatedAsset(new LoadableObjectId { value = SIM53 }) : default; };
+            int kids1f_53 = Kids_53();
+            var got1f_53 = c1f_53.Scope();
+            ContentService.NameFallback = null; FakeEngine.EditorServesAnyId = false;
+            Check(asked1f_53 && ReferenceEquals(inner1f_53, got1f_53) && Kids_53() == kids1f_53 + 1 && got1f_53.Contains("Sim/x"), $"K1f … a Scope() asked from inside the opening scope's own load gets that scope, not a second one ({What_53(inner1f_53, got1f_53)} · children {kids1f_53}→{Kids_53()})");
+            c1f_53.SetActive(true); Object.Destroy(c1f_53); Tick();
+            var o1g_53 = NewGO("K1go", scene53); o1g_53.Scope().Load<Sprite>("Icons/a");
+            o1g_53.SetActive(false); var c1g_53 = Object.Instantiate(o1g_53); o1g_53.SetActive(true);
+            Object.Destroy(o1g_53); Tick();   // the original goes first: its asset unloads
+            int gone1g_53 = Ref(A53); bool holds1g_53 = c1g_53.Scope().Contains("Icons/a");
+            Check(gone1g_53 == 0 && holds1g_53 && Ref(A53) == 1, $"K1g … a clone whose original went before it opened loads the keys again at its first Scope() (ref before={gone1g_53} contains(a)={holds1g_53} ref(a)={Ref(A53)})");
+            c1g_53.SetActive(true); Object.Destroy(c1g_53); Tick();
+            var sceneH_53 = NewScene(9533, "Scene53h"); SceneManager.Open(sceneH_53); SceneManager.Active = sceneH_53;
+            var o1h_53 = NewGO("K1h", sceneH_53); o1h_53.Scope().Load<Sprite>("Icons/a");
+            o1h_53.SetActive(false); var c1h_53 = Object.Instantiate(o1h_53); var d1h_53 = Object.Instantiate(o1h_53); o1h_53.SetActive(true);
+            SceneManager.Active = scene53;
+            c1h_53.Scope(); d1h_53.Scope().Dispose();   // both touched (the README's advice); one disposed before it goes
+            Object.Destroy(o1h_53); Object.Destroy(c1h_53); Object.Destroy(d1h_53); Tick();
+            int held1h_53 = Ref(A53);
+            SceneManager.UnloadScene(sceneH_53); Tick();
+            Check(held1h_53 == 1 && Ref(A53) == 0, $"K1h … a touched clone destroyed before it ever woke gets no OnDestroy: it holds the keys until its scene unloads — one whose scope was disposed first does not (held={held1h_53} · after the unload={Ref(A53)})");
+            var x1i_53 = NewGO("K1ix", scene53); var px1i_53 = x1i_53.Scope().LoadAsync<Sprite>("Icons/a");   // another load of Icons/a, in flight
+            var c1i_53 = NewGO("K1i", scene53, false); fldK_53.SetValue(ContentScopeOwner.Get(c1i_53), new[] { "Icons/a" });   // an inactive clone's copied list
+            c1i_53.SetActive(true);   // its Awake takes over the key while that load is in flight
+            int e1i_53 = Debug.Errors;
+            var q1i_53 = c1i_53.Scope().LoadAsync<Sprite>("Icons/a");
+            bool waits1i_53 = !q1i_53.GetAwaiter().IsCompleted;
+            FakeEngine.CompleteLoads(); Tick();
+            var got1i_53 = q1i_53.GetAwaiter().IsCompleted ? q1i_53.GetAwaiter().GetResult() : null;
+            Check(waits1i_53 && got1i_53 != null && got1i_53.name == "a" && Debug.Errors == e1i_53, $"K1i … a clone that took over a key still loading: its own LoadAsync of it waits and gets the asset — not a null and an error (waited={waits1i_53} · got={(got1i_53 == null ? "null" : got1i_53.name)} · errors=+{Debug.Errors - e1i_53})");
+            Object.Destroy(c1i_53); Object.Destroy(x1i_53); Tick();
+            var o1j_53 = NewGO("K1j", scene53); o1j_53.AddComponent<AwakeToucher>(); o1j_53.Scope().Load<Sprite>("Icons/a");   // the owner comes after the user's component
+            ContentScope seen1j_53 = null; AwakeToucher.whenAwake = g => seen1j_53 = g.Scope();
+            var c1j_53 = Object.Instantiate(o1j_53); AwakeToucher.whenAwake = null;
+            Object.Destroy(o1j_53); Tick();
+            Check(seen1j_53 != null && Ref(A53) == 1 && c1j_53.Scope().Contains("Icons/a"), $"K1j … an active clone whose earlier component's Awake asks Scope() before the owner's own Awake takes the keys too (ref(a)={Ref(A53)} contains(a)={c1j_53.Scope().Contains("Icons/a")})");
+            Object.Destroy(c1j_53); Tick();
+            // an explicit Dispose: two keys · its own cancellation asks Scope() · or activates the object · a callback that throws
+            var o3c_53 = NewGO("K3c", scene53); var s3c_53 = o3c_53.Scope(); s3c_53.Load<Sprite>("Icons/a"); s3c_53.Load<Sprite>("Icons/b");
+            s3c_53.Dispose(); Tick();
+            string k3c_53 = Keys_53(o3c_53); var c3c_53 = Object.Instantiate(o3c_53); Tick();
+            Check(k3c_53 == "" && !HasScope_53(c3c_53) && Ref(A53) == 0 && Ref(B53) == 0, $"K3c … with two keys the whole list empties, not only its first slot (keys=[{k3c_53}] clone scope={HasScope_53(c3c_53)})");
+            Object.Destroy(o3c_53); Object.Destroy(c3c_53); Tick();
+            var o3d_53 = NewGO("K3d", scene53); var s3d_53 = o3d_53.Scope(); s3d_53.Load<Sprite>("Icons/a");
+            var p3d_53 = s3d_53.LoadAsync<Sprite>("Icons/b");
+            ContentScope g3d_53 = null; string load3d_53 = "-";
+            p3d_53.OnCompleted(() => { g3d_53 = o3d_53.Scope(); load3d_53 = g3d_53.IsDisposed ? "ended" : g3d_53.Contains("Icons/a") ? "live, holds a" : "live, empty"; });
+            bool flying3d_53 = !p3d_53.GetAwaiter().IsCompleted;
+            s3d_53.Dispose(); FakeEngine.CompleteLoads(); Tick();
+            int r3d_53 = Ref(A53); string k3d_53 = Keys_53(o3d_53); var n3d_53 = o3d_53.Scope();
+            Check(flying3d_53 && load3d_53 == "live, empty" && ReferenceEquals(n3d_53, g3d_53) && r3d_53 == 0 && k3d_53 == "" && n3d_53.Count == 0, $"K3d … an explicit Dispose whose own cancellation asks Scope(): it gets a new empty scope, as before — what it dropped stays dropped, the list empty, and that scope stays the owner's (in flight={flying3d_53} · got {What_53(g3d_53, s3d_53)} [{load3d_53}] · the next is it={ReferenceEquals(n3d_53, g3d_53)} · ref(a)={r3d_53} keys=[{k3d_53}] next count={n3d_53.Count})");
+            Object.Destroy(o3d_53); Tick();
+            var o3e_53 = NewGO("K3e", scene53, false); var s3e_53 = o3e_53.Scope(); s3e_53.Load<Sprite>("Icons/a");
+            var p3e_53 = s3e_53.LoadAsync<Sprite>("Icons/b");
+            p3e_53.OnCompleted(() => o3e_53.SetActive(true));
+            bool flying3e_53 = !p3e_53.GetAwaiter().IsCompleted; int kids3e_53 = Kids_53();
+            s3e_53.Dispose(); FakeEngine.CompleteLoads(); Tick();
+            Check(flying3e_53 && Ref(A53) == 0 && Keys_53(o3e_53) == "" && Kids_53() == kids3e_53 - 1, $"K3e … an explicit Dispose whose cancellation activates the object: its Awake opens nothing, takes nothing back (in flight={flying3e_53} · ref(a)={Ref(A53)} keys=[{Keys_53(o3e_53)}] children {kids3e_53}→{Kids_53()})");
+            Object.Destroy(o3e_53); Tick();
+            var o3f_53 = NewGO("K3f", scene53); var s3f_53 = o3f_53.Scope(); s3f_53.Load<Sprite>("Icons/a");
+            s3f_53.DisposedToken.Register(() => throw new InvalidOperationException("K3f"));
+            int e3f_53 = Debug.Errors; string ex3f_53 = "none";
+            try { s3f_53.Dispose(); } catch (Exception e) { ex3f_53 = e.GetType().Name; }
+            Tick();
+            Check(ex3f_53 == "none" && Ref(A53) == 0 && Debug.Errors == e3f_53 + 1 && !ContentScope.DumpTree().Contains("K3f"), $"K3f … a DisposedToken callback that throws does not stop the end: what it held is released and the exception reported, not thrown (ex={ex3f_53} · ref(a)={Ref(A53)} · errors=+{Debug.Errors - e3f_53})");
+            Object.Destroy(o3f_53); Tick();
+            // while the object is destroyed: asked twice · the Component overload · judged inside the sibling · the ended scope's place · a callback that throws · a component before the owner
+            var o2f_53 = NewGO("K2f", scene53); o2f_53.Scope().Dispose();   // its scope ended before the object goes
+            var t2f_53 = o2f_53.AddComponent<ScopeToucher>();
+            ContentScope g2f_53 = null, h2f_53 = null; t2f_53.whenDestroyed = () => { g2f_53 = o2f_53.Scope(); h2f_53 = o2f_53.Scope(); };
+            int kids2f_53 = Kids_53();
+            Object.Destroy(o2f_53); Tick();
+            Check(g2f_53 != null && g2f_53.IsDisposed && ReferenceEquals(g2f_53, h2f_53) && Kids_53() == kids2f_53, $"K2f … asked twice while the object goes, the same ended scope: one per object ({What_53(h2f_53, g2f_53)})");
+            var o2g_53 = NewGO("K2g", scene53);
+            var t2g_53 = o2g_53.AddComponent<ScopeToucher>();
+            ContentScope g2g_53 = null; string ex2g_53 = "none";
+            t2g_53.whenDestroyed = () => { try { g2g_53 = t2g_53.Scope(); } catch (Exception e) { ex2g_53 = e.GetType().Name; } };
+            int kids2g_53 = Kids_53();
+            Object.Destroy(o2g_53); Tick();
+            Check(ex2g_53 == "none" && g2g_53 != null && g2g_53.IsDisposed && Kids_53() == kids2g_53, $"K2g … this.Scope() from a component (the Component overload) of an object without an owner too (ex={ex2g_53})");
+            var o2h_53 = NewGO("K2h", scene53); var s2h_53 = o2h_53.Scope();
+            var t2h_53 = o2h_53.AddComponent<ScopeToucher>();
+            string at2h_53 = "-"; t2h_53.whenDestroyed = () => at2h_53 = What_53(o2h_53.Scope(), s2h_53);
+            Object.Destroy(o2h_53); Tick();
+            Check(at2h_53 == "the ended scope", $"K2h … judged inside the sibling's OnDestroy, not after the destroy: the owner's OnDestroy, first, has already ended it ({at2h_53})");
+            var o2i_53 = NewGO("K2i", scene53); var t2i_53 = o2i_53.AddComponent<ScopeToucher>();
+            ContentScope g2i_53 = null; t2i_53.whenDestroyed = () => { try { g2i_53 = o2i_53.Scope(); } catch (Exception) { } };
+            Object.Destroy(o2i_53); Tick();
+            Check(g2i_53 != null && g2i_53.IsDisposed && g2i_53.Kind == ContentScopeKind.GameObject && g2i_53.Path == ContentScope.ForScene(scene53).Path + "/K2i", $"K2i … that ended scope is the object's own GameObject scope under its scene ({g2i_53?.Kind} · {g2i_53?.Path})");
+            var o2k_53 = NewGO("K2k", scene53); var s2k_53 = o2k_53.Scope(); s2k_53.Load<Sprite>("Icons/a");
+            s2k_53.DisposedToken.Register(() => o2k_53.Scope().Load<Sprite>("Icons/b"));   // no catch: the ended scope answers ObjectDisposedException
+            int e2k_53 = Debug.Errors; string ex2k_53 = "none";
+            try { Object.Destroy(o2k_53); } catch (Exception e) { ex2k_53 = e.GetType().Name; }
+            Tick();
+            Check(ex2k_53 == "none" && Ref(A53) == 0 && Ref(B53) == 0 && Debug.Errors == e2k_53 + 1 && !ContentScope.DumpTree().Contains("K2k"), $"K2k … a cancellation callback that loads into the ended scope throws — the end still completes and reports it (ex={ex2k_53} · ref(a)={Ref(A53)} ref(b)={Ref(B53)} · errors=+{Debug.Errors - e2k_53})");
+            var o2l_53 = NewGO("K2l", scene53); var t2l_53 = o2l_53.AddComponent<ScopeToucher>(); var s2l_53 = o2l_53.Scope();   // the component comes before the owner
+            string at2l_53 = "-"; t2l_53.whenDestroyed = () => at2l_53 = What_53(o2l_53.Scope(), s2l_53);
+            int kids2l_53 = Kids_53();
+            Object.Destroy(o2l_53); Tick();
+            Check(at2l_53 == "the old scope, live" && s2l_53.IsDisposed && Kids_53() == kids2l_53 - 1, $"K2l … a component before the owner gets the live scope in its OnDestroy; the owner's OnDestroy, after it, ends that scope ({at2l_53} · children {kids2l_53}→{Kids_53()})");
+            // last: at quit the root scope ends first (Application.quitting → Shutdown)
+            ContentService.Shutdown();
+            var o2j_53 = NewGO("K2j", scene53); var t2j_53 = o2j_53.AddComponent<ScopeToucher>();
+            ContentScope g2j_53 = null; string ex2j_53 = "none";
+            t2j_53.whenDestroyed = () => { try { g2j_53 = t2j_53.Scope(); g2j_53.Release("Icons/a"); } catch (Exception e) { ex2j_53 = e.GetType().Name; } };
+            Object.Destroy(o2j_53);
+            Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");   // Shutdown disposed the scope root
+            Check(ex2j_53 == "none" && g2j_53 != null && g2j_53.IsDisposed, $"K2j … at quit (the root scope ended first) this.Scope().Release(key) in OnDestroy still gets an ended scope, no exception (ex={ex2j_53})");
+            SceneManager.UnloadScene(scene53); Tick();
+            FakeEngine.PendingLoads.Clear(); FakeEngine.Refs.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.ScenesInFlight.Clear(); FakeEngine.Transitioning = 0;
+            Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");
+        }
+
+        Console.WriteLine("54) IMP018 §9-7 7-5 — a source root or a category spelled in another case than on disk is refused with the disk's spelling: validation, a catalog update, a build, the simulation's registration");
+        {
+            Init(typeof(ContentService), "ResetStatics");
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear();
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkSimulation.Drop();
+            ContentLinkSimulation.Enabled = true;
+            FakeEngine.EditorServesAnyId = true;
+            Init(typeof(ContentLinkSimulation), "Install");   // the real fallbacks: OnRegister and Resolve
+            var a54 = new Texture2D { name = "a" }; var b54 = new Texture2D { name = "b" };
+            FakeEngine.AddProjectAsset("Assets/Case54/Icons/a.png", a54);
+            FakeEngine.AddProjectAsset("Assets/Case54/Icons/Sub/b.png", b54);
+            foreach (var o in new Object[] { a54, b54 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+            var tmp54 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "verify54-" + Guid.NewGuid().ToString("N"));
+            var settings54 = ContentBuildSettings.instance;
+            int n54 = 0;
+            ContentBuildSettings.Profile P54(string root, params string[] subs)
+            {
+                var p = settings54.Add("Case54_" + (++n54));
+                p.SourceRoot = root; p.OutputPath = System.IO.Path.Combine(tmp54, p.Name); p.Archive = ContentBuildSettings.ArchiveMode.None;
+                var cats = new ContentBuildSettings.CatalogEntry[subs.Length];
+                for (int i = 0; i < subs.Length; ++i) cats[i] = new ContentBuildSettings.CatalogEntry { SubFolder = subs[i], CreateAt = $"Assets/Cat/{p.Name}_{i}.asset" };
+                p.Catalogs = cats;
+                return p;
+            }
+            string Errs54(ContentBuildSettings.Profile p) => string.Join(" | ", settings54.Validate(p));
+            // A catalog an earlier check wrote would name the asset by its id and lend its root:
+            // each check below starts without them.
+            void Catalogs54() { foreach (var k54 in new System.Collections.Generic.List<string>(FakeEngine.MainAssetAt.Keys)) if (k54.StartsWith("Assets/Cat/", StringComparison.Ordinal)) FakeEngine.MainAssetAt.Remove(k54); ContentLinkEditorUtility.Invalidate(); }
+            void Fresh54() { Init(typeof(ContentService), "ResetStatics"); ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install"); FakeEngine.Registered.Clear(); Catalogs54(); }
+
+            // ⓪ the stub answers as the engine does (measured on 6000.6): a path in any case, answered with the disk's spelling
+            Check(UnityEditor.AssetDatabase.GUIDToAssetPath(UnityEditor.AssetDatabase.AssetPathToGUID("assets/case54/icons")) == "Assets/Case54/Icons"
+                  && UnityEditor.AssetDatabase.GUIDToAssetPath(UnityEditor.AssetDatabase.AssetPathToGUID("Assets/CASE54/icons/A.PNG")) == "Assets/Case54/Icons/a.png"
+                  && UnityEditor.AssetDatabase.GUIDToAssetPath(UnityEditor.AssetDatabase.AssetPathToGUID("assets")) == "Assets"
+                  && UnityEditor.AssetDatabase.IsValidFolder("assets/case54/ICONS") && UnityEditor.AssetDatabase.IsValidFolder("assets")
+                  && UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Nowhere54") == "" && UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/") == "",
+                  "C0 (fidelity) a folder or a file found in any case answers with the disk's spelling, through its GUID too; a missing path and one with a trailing separator have an empty GUID — as the engine's IsValidFolder · AssetPathToGUID · GUIDToAssetPath do");
+            FakeEngine.SetGuid("Assets/Case54/Icons/a.png", "a54a54a54a54a54a54a54a54a54a54a5");
+            Check(UnityEditor.AssetDatabase.AssetPathToGUID("assets/CASE54/icons/A.png") == "a54a54a54a54a54a54a54a54a54a54a5"
+                  && UnityEditor.AssetDatabase.GUIDToAssetPath("a54a54a54a54a54a54a54a54a54a54a5") == "Assets/Case54/Icons/a.png",
+                  "C0b (fidelity) a file with a GUID: the GUID is found by its path in any case, and answers with the stored spelling");
+            var pic54 = "\uADF8\uB9BC";   // composed, as an IME types it
+            FakeEngine.Folders.Add("Assets/Case54/" + pic54.Normalize(System.Text.NormalizationForm.FormD));   // decomposed, as the AssetDatabase makes it on macOS (measured)
+            FakeEngine.Folders.Add("Assets/" + pic54.Normalize(System.Text.NormalizationForm.FormD) + "54");
+            Check(UnityEditor.AssetDatabase.IsValidFolder("Assets/Case54/" + pic54)
+                  && UnityEditor.AssetDatabase.GUIDToAssetPath(UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/" + pic54)) == "Assets/Case54/" + pic54.Normalize(System.Text.NormalizationForm.FormD),
+                  "C0c (fidelity) a folder stored decomposed is found by its composed spelling and answers decomposed — as the engine does on macOS");
+            var fz_54 = new Texture2D { name = "fz" }; var fg_54 = new Texture2D { name = "fg" };
+            var dir0d_54 = "Assets/Case54/" + pic54.Normalize(System.Text.NormalizationForm.FormD);
+            FakeEngine.AddProjectAsset(dir0d_54 + "/fz.png", fz_54);
+            FakeEngine.AddProjectAsset(dir0d_54 + "/fg.png", fg_54); FakeEngine.SetGuid(dir0d_54 + "/fg.png", "f54f54f54f54f54f54f54f54f54f54f5");
+            Check(UnityEditor.AssetDatabase.GUIDToAssetPath(UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/" + pic54 + "/fz.png")) == dir0d_54 + "/fz.png"
+                  && UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/" + pic54 + "/FG.png") == "f54f54f54f54f54f54f54f54f54f54f5",
+                  "C0d (fidelity) a file stored decomposed is found by its composed spelling, with or without a GUID set");
+            FakeEngine.SetDeleted("Assets/Case54/Gone", "e54e54e54e54e54e54e54e54e54e54e5");
+            Check(UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/gone") == "e54e54e54e54e54e54e54e54e54e54e5"
+                  && UnityEditor.AssetDatabase.AssetPathToGUID("Assets/Case54/gone", UnityEditor.AssetPathToGUIDOptions.OnlyExistingAssets) == ""
+                  && UnityEditor.AssetDatabase.GUIDToAssetPath("e54e54e54e54e54e54e54e54e54e54e5") == "Assets/Case54/Gone" && !UnityEditor.AssetDatabase.IsValidFolder("Assets/Case54/Gone"),
+                  "C0e (fidelity) a folder deleted this session: the default lookup still answers its GUID and the GUID its path; asked for existing assets, an empty GUID");
+
+            // The outcome, whatever the remedy: refused with the disk's spelling, or working — never a silent failure.
+            // Each starts from fresh settings: a profile an earlier check added would be a root the next one names under.
+            void Settings54() { UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests(); settings54 = ContentBuildSettings.instance; Catalogs54(); }
+            Settings54();
+            var o2_54 = P54("Assets/case54", "");
+            bool refusedO2_54 = Errs54(o2_54).Contains("'Assets/Case54'");
+            ContentLinkEditorUtility.Invalidate();
+            bool namedO2_54 = ContentLinkEditorUtility.TryGetNameForAsset(a54, out var nO2_54, out var wO2_54) && nO2_54 == "Icons/a";
+            Check(refusedO2_54 || namedO2_54, $"O2 F-41 — under a root in another case the profile is refused with the disk's spelling, or the path rule names the asset (actual: refused={refusedO2_54} named='{nO2_54}' {wO2_54})");
+            Settings54();
+            UnityEditor.EditorApplication.isPlaying = true; Fresh54();
+            var o3_54 = P54("Assets/case54", "");
+            string xO3_54 = "";
+            try { ContentService.RegisterDirectory(o3_54.OutputPath); } catch (InvalidOperationException e) { xO3_54 = e.Message; }
+            bool servedO3_54 = xO3_54 == "" && ContentService.Contains("Icons/a");
+            Check(xO3_54.Contains("'Assets/Case54'") || servedO3_54, $"O3 F-41 — the simulation refuses a root in another case with the disk's spelling, or serves under it (actual: served={servedO3_54} \"{xO3_54}\")");
+            UnityEditor.EditorApplication.isPlaying = false; Fresh54();
+            Settings54();
+            var o1_54 = P54("Assets/Case54", "icons");
+            var eO1_54 = new System.Collections.Generic.List<string>(); bool okO1_54 = ContentBuildRunner.UpdateCatalogs(o1_54, eO1_54);
+            bool builtO1_54 = false;
+            if (okO1_54 && FakeEngine.MainAssetAt.TryGetValue(o1_54.Catalogs[0].CreateAt, out var cO1_54) && cO1_54 is ContentCatalog catO1_54)
+                foreach (var eO1e_54 in catO1_54.Entries) if (eO1e_54.name == "Icons/a") builtO1_54 = true;
+            Check((!okO1_54 && string.Join(" | ", eO1_54).Contains("'Icons'")) || builtO1_54,
+                  $"O1 F-35 — a category in another case is refused with the disk's spelling, or its assets are catalogued — never left out with one warning (actual: ok={okO1_54} built={builtO1_54})");
+            Settings54();
+
+            // F-41 — the source root
+            var r1_54 = P54("Assets/case54", "");
+            Check(Errs54(r1_54).Contains("source root 'Assets/case54' is spelled 'Assets/Case54' in the project — write it as 'Assets/Case54', and if the folder was renamed only in case, make version control record the rename"), $"C1 F-41 — a source root in another case than on disk is refused: write it as the project spells it, and the version-control cause (actual: [{Errs54(r1_54)}])");
+            var r1b_54 = P54("assets/Case54", "");
+            Check(Errs54(r1b_54).Contains("source root 'assets/Case54' is spelled 'Assets/Case54' in the project — write it as 'Assets/Case54'"), $"C1b F-41 — 'assets/' too: the engine finds it, the content tools would not (actual: [{Errs54(r1b_54)}])");
+            var r1c_54 = P54("Assets/Case54", "");
+            Check(Errs54(r1c_54) == "", $"C1c (control) the root as on disk validates (actual: [{Errs54(r1c_54)}])");
+
+            // F-35 — the categories
+            var c2_54 = P54("Assets/Case54", "icons");
+            Check(Errs54(c2_54).Contains("category 'icons' is spelled 'Icons' in the project — write it as 'Icons', and if the folder was renamed only in case, make version control record the rename"), $"C2 F-35 — a category in another case than on disk is refused: write it as the project spells it, and the version-control cause (actual: [{Errs54(c2_54)}])");
+            var c2b_54 = P54("Assets/Case54", "Icons", "icons");
+            Check(Errs54(c2b_54).Contains("category 'icons'") && !Errs54(c2b_54).Contains("category 'Icons'"), $"C2b F-35 — two categories that are one folder in two spellings: the one not as on disk is refused (actual: [{Errs54(c2b_54)}])");
+            var c2c_54 = P54("Assets/Case54", "Icons/sub");
+            Check(Errs54(c2c_54).Contains("category 'Icons/sub' is spelled 'Icons/Sub' in the project — write it as 'Icons/Sub'"), $"C2c F-35 — a nested category: the whole relative path in the disk's spelling (actual: [{Errs54(c2c_54)}])");
+            var c2d_54 = P54("Assets/case54", "Icons");
+            Check(Errs54(c2d_54).Contains("'Assets/Case54'") && !Errs54(c2d_54).Contains("category"), $"C2d the root's case is the root's error alone: a category as on disk is not named (actual: [{Errs54(c2d_54)}])");
+            var c2e_54 = P54("Assets/Case54", "Nowhere");
+            Check(Errs54(c2e_54) == "", $"C2e (control) a category with no folder validates as before — it builds an empty catalog (actual: [{Errs54(c2e_54)}])");
+            var c2f_54 = P54("Assets/case54", "icons");
+            Check(Errs54(c2f_54).Contains("source root 'Assets/case54' is spelled 'Assets/Case54'") && Errs54(c2f_54).Contains("category 'icons' is spelled 'Icons'"),
+                  $"C2f a root and a category both in another case: both are named at once (actual: [{Errs54(c2f_54)}])");
+
+            // the paths that run validation first
+            var u3_54 = P54("Assets/Case54", "icons");
+            var e3_54 = new System.Collections.Generic.List<string>(); bool ok3_54 = ContentBuildRunner.UpdateCatalogs(u3_54, e3_54);
+            Check(!ok3_54 && string.Join(" | ", e3_54).Contains("'Icons'") && !FakeEngine.MainAssetAt.ContainsKey(u3_54.Catalogs[0].CreateAt),
+                  $"C3 F-35 — a catalog update refuses the category before anything is written (HEAD: true, an empty catalog and one warning) (actual: ok={ok3_54} [{string.Join(" | ", e3_54)}])");
+            var u3b_54 = P54("Assets/case54", "");
+            var e3b_54 = new System.Collections.Generic.List<string>(); bool ok3b_54 = ContentBuildRunner.UpdateCatalogs(u3b_54, e3b_54);
+            Check(!ok3b_54 && !FakeEngine.MainAssetAt.ContainsKey(u3b_54.Catalogs[0].CreateAt),
+                  $"C3b F-41 — a catalog update refuses the root: no catalog records the root in another case (actual: ok={ok3b_54} [{string.Join(" | ", e3b_54)}])");
+            var b4_54 = P54("Assets/Case54", "icons");
+            UnityEditor.BuildPipeline.LastParameters = null;
+            var res4_54 = ContentBuildRunner.Build(b4_54, showProgress: false);
+            Check(!res4_54.Succeeded && UnityEditor.BuildPipeline.LastParameters == null && string.Join(" | ", res4_54.Errors).Contains("'Icons'"),
+                  $"C4 F-35 — a build refuses it before the engine runs (HEAD: built, the category's assets left out with one warning) (actual: ok={res4_54.Succeeded} engine={(UnityEditor.BuildPipeline.LastParameters != null)})");
+
+            // the simulation's registration
+            UnityEditor.EditorApplication.isPlaying = true;
+            Fresh54();
+            var s5_54 = P54("Assets/case54", "Icons");
+            string x5_54 = "";
+            try { ContentService.RegisterDirectory(s5_54.OutputPath); } catch (InvalidOperationException e) { x5_54 = e.Message; }
+            int logs5_54 = Debug.Logs;
+            try { ContentService.RegisterDirectory(P54("Assets/case54", "Icons").OutputPath); } catch (InvalidOperationException) { }
+            Check(x5_54.Contains("its source root 'Assets/case54' is spelled 'Assets/Case54' in the project") && FakeEngine.Registered.Count == 0 && !ContentService.Contains("Icons/a") && Debug.Logs == logs5_54,
+                  $"C5 F-41 — the simulation refuses to serve a root in another case, with the disk's spelling, before it serves or logs (HEAD: registered, and no name under it resolved) (actual: logs +{Debug.Logs - logs5_54} \"{x5_54}\")");
+            Fresh54();
+            var s5b_54 = P54("Assets/Case54", "icons");
+            int d5b_54 = -1; try { d5b_54 = ContentService.RegisterDirectory(s5b_54.OutputPath); } catch (InvalidOperationException) { }
+            Check(d5b_54 >= 0 && ContentService.Contains("Icons/a"), "C5b (kept) Play still serves a category in another case — the simulation's coverage ignores case; a build refuses it (C4)");
+            Fresh54();
+            var s5c_54 = P54("Assets/Case54", "Icons");
+            int d5c_54 = -1; try { d5c_54 = ContentService.RegisterDirectory(s5c_54.OutputPath); } catch (InvalidOperationException) { }
+            Check(d5c_54 >= 0 && ContentService.Contains("Icons/a") && ContentService.Contains("Icons/Sub/b"), "C5c (control) the root and the category as on disk: served");
+            UnityEditor.EditorApplication.isPlaying = false;
+            Fresh54();
+
+            // the path rule under the root as on disk — on its own profile
+            Settings54();
+            P54("Assets/Case54", "Icons");
+            ContentLinkEditorUtility.Invalidate();
+            bool ok6_54 = ContentLinkEditorUtility.TryGetNameForAsset(a54, out var name6_54, out var why6_54);
+            Check(ok6_54 && name6_54 == "Icons/a", $"C6 (control) under the root as on disk the path rule names the asset (actual: {ok6_54} '{name6_54}' {why6_54})");
+
+            // the path rule says why it names nothing under a root in another case
+            Settings54();
+            P54("Assets/case54", "");
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(a54, out var n7_54, out var why7_54);
+            Check(why7_54 != null && why7_54.Contains("lies under the content root 'Assets/case54' only in another case — the project spells it 'Assets/Case54'"),
+                  $"C7 F-41 — the path rule's reason names the root in another case and the disk's spelling (HEAD: 'not under a content root' and the roots only) (actual: '{n7_54}' {why7_54})");
+            var c54 = new Texture2D { name = "c" };
+            FakeEngine.AddProjectAsset("Assets/Case54x/c.png", c54);   // a sibling whose name only begins with the root's
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(c54, out _, out var why7b_54);
+            Check(why7b_54 != null && why7b_54.Contains("not under a content root") && !why7b_54.Contains("another case"),
+                  $"C7b (control) a folder whose name only begins with the root's is not under it: the reason is as before (actual: {why7b_54})");
+
+            // the build window stores what is typed in another case in the disk's spelling, as it drops a trailing separator
+            Settings54();
+            var m8_54 = new ContentBuildWindowModel();
+            m8_54.AddProfile("Win54");
+            m8_54.Edit(x => { x.SourceRoot = "assets/case54/"; x.OutputPath = System.IO.Path.Combine(tmp54, "win"); });
+            Check(m8_54.Selected.SourceRoot == "Assets/Case54", $"C8 F-41 — the window stores a root typed in another case in the disk's spelling (actual: '{m8_54.Selected.SourceRoot}')");
+            m8_54.Edit(x => x.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "icons", CreateAt = "Assets/Cat/win.asset" } });
+            Check(m8_54.Selected.Catalogs[0].SubFolder == "Icons" && m8_54.Errors.Count == 0,
+                  $"C8b F-35 — … an edited category too, and the profile then validates (actual: '{m8_54.Selected.Catalogs[0].SubFolder}' [{string.Join(" | ", m8_54.Errors)}])");
+            m8_54.AddCategory("icons/sub");
+            var last8_54 = m8_54.Selected.Catalogs[m8_54.Selected.Catalogs.Length - 1].SubFolder;
+            Check(last8_54 == "Icons/Sub", $"C8c F-35 — … and a category added by name, nested too (actual: '{last8_54}')");
+            int count8d_54 = m8_54.Selected.Catalogs.Length;
+            var add8d_54 = m8_54.AddCategory("ICONS");
+            Check(add8d_54 != null && add8d_54.Contains("category 'Icons' exists already") && m8_54.Selected.Catalogs.Length == count8d_54,
+                  $"C8d (D7) a category added by name in another case is the one already there: 'exists already' compares the project's spelling (actual: '{add8d_54}' · {m8_54.Selected.Catalogs.Length} categories)");
+
+            // another Unicode form is not a case slip: the rules and the window leave it unchanged
+            Settings54();
+            var c9_54 = P54("Assets/" + pic54 + "54", "");
+            var c9c_54 = P54("Assets/Case54", pic54);
+            Check(Errs54(c9_54) + "#" + Errs54(c9c_54) == "#",
+                  $"C9 (control) a root or a category in another Unicode form only is not refused as a case slip — no error at all (actual: [{Errs54(c9_54)}] [{Errs54(c9c_54)}])");
+            UnityEditor.EditorApplication.isPlaying = true; Fresh54();
+            string x9c_54 = "";
+            try { ContentService.RegisterDirectory(c9_54.OutputPath); } catch (InvalidOperationException e) { x9c_54 = e.Message; }
+            UnityEditor.EditorApplication.isPlaying = false; Fresh54();
+            Check(!x9c_54.Contains("in the project"), $"C9c (control) the simulation does not refuse a root in another Unicode form as a case slip either (actual: \"{x9c_54}\")");
+            Settings54();
+            var m9_54 = new ContentBuildWindowModel();
+            m9_54.AddProfile("Win54b");
+            m9_54.Edit(x => { x.SourceRoot = "Assets/" + pic54 + "54"; x.OutputPath = System.IO.Path.Combine(tmp54, "win9"); });
+            var root9_54 = m9_54.Selected.SourceRoot;
+            m9_54.Edit(x => { x.SourceRoot = "Assets/Case54"; x.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = pic54, CreateAt = "Assets/Cat/win9.asset" } }; });
+            var sub9_54 = m9_54.Selected.Catalogs[0].SubFolder;
+            Check(root9_54 == "Assets/" + pic54 + "54" && sub9_54 == pic54,
+                  $"C9b (control) the window keeps a root or a category typed in another Unicode form as typed — it rewrites a case slip only (actual: {root9_54.Length} · {sub9_54.Length} chars)");
+
+            // an editor whose AssetDatabase does not find a folder by another case (a case-sensitive one — unmeasured):
+            // validation cannot see a category in another case, the scanned paths can
+            Settings54();
+            var p10_54 = new Texture2D { name = "p" };
+            FakeEngine.AddProjectAsset("Assets/Case54/Pics/p.png", p10_54);
+            FakeEngine.Folders.Remove("Assets/Case54/Pics");   // a lookup by 'pics' finds nothing; the scan still lists Pics/p.png
+            var c10_54 = P54("Assets/Case54", "Icons", "pics");
+            var v10_54 = Errs54(c10_54);
+            var e10_54 = new System.Collections.Generic.List<string>(); bool ok10_54 = ContentBuildRunner.UpdateCatalogs(c10_54, e10_54);
+            Check(v10_54 == "" && !ok10_54 && string.Join(" | ", e10_54).Contains("category 'pics' is spelled 'Pics' in the project — write it as 'Pics', and if the folder was renamed only in case, make version control record the rename") && !FakeEngine.MainAssetAt.ContainsKey(c10_54.Catalogs[1].CreateAt),
+                  $"C10 F-35 — where validation cannot see a category in another case, a catalog update refuses it by the scanned paths, with their spelling (HEAD: true, an empty catalog, one warning) (actual: validate [{v10_54}] · ok={ok10_54} [{string.Join(" | ", e10_54)}])");
+            Settings54();
+            var c10b_54 = P54("Assets/Case54", "Icons");
+            int w10b_54 = Debug.Warnings;
+            var e10b_54 = new System.Collections.Generic.List<string>(); bool ok10b_54 = ContentBuildRunner.UpdateCatalogs(c10b_54, e10b_54);
+            Check(ok10b_54 && Debug.Warnings > w10b_54 && Debug.LastWarning.Contains("belong to no category"),
+                  $"C10b (control) an asset outside every category, in no other case either, is still left out with one warning — not refused (actual: ok={ok10b_54} [{string.Join(" | ", e10b_54)}] '{Debug.LastWarning}')");
+            FakeEngine.Folders.Remove("Assets/Case54/Icons");   // the same editor: a category beside it in another case is a folder that is not there
+            Settings54();
+            var c10c_54 = P54("Assets/Case54", "icons", "Icons");
+            var e10c_54 = new System.Collections.Generic.List<string>(); bool ok10c_54 = ContentBuildRunner.UpdateCatalogs(c10c_54, e10c_54);
+            FakeEngine.Folders.Add("Assets/Case54/Icons"); FakeEngine.Folders.Add("Assets/Case54/Icons/Sub");
+            Check(ok10c_54, $"C10c (control) an asset that has its home in a category is not refused for another category that matches it only in another case (actual: ok={ok10c_54} [{string.Join(" | ", e10c_54)}])");
+            FakeEngine.Folders.Add("Assets/Case54/Pics");
+
+            // the window fixes an edited value only: another checkout may spell a folder otherwise
+            Settings54();
+            var m11_54 = new ContentBuildWindowModel();
+            m11_54.AddProfile("Win54c");
+            var p11_54 = m11_54.Selected;
+            p11_54.SourceRoot = "Assets/case54"; p11_54.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "icons", CreateAt = "Assets/Cat/win11.asset" } };   // stored so by another checkout, or by hand
+            m11_54.Edit(x => x.OutputPath = System.IO.Path.Combine(tmp54, "win11"));
+            Check(m11_54.Selected.SourceRoot == "Assets/case54" && m11_54.Selected.Catalogs[0].SubFolder == "icons",
+                  $"C11 (D7) an edit of another field leaves a stored root and category as they are (actual: '{m11_54.Selected.SourceRoot}' · '{m11_54.Selected.Catalogs[0].SubFolder}')");
+            m11_54.Edit(x => x.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Nowhere", CreateAt = "Assets/Cat/win11b.asset" }, x.Catalogs[0] });
+            Check(m11_54.Selected.Catalogs[1].SubFolder == "icons",
+                  $"C11b (D7) … also when an edit puts another category before it — an edited entry is told by the entry, not its place (actual: '{m11_54.Selected.Catalogs[1].SubFolder}')");
+
+            // the command line's typed root, and a new profile's default root
+            Settings54();
+            var p12_54 = P54("Assets/Case54", "");
+            ContentBuildCLI.Apply(p12_54, new System.Collections.Generic.Dictionary<string, string> { ["source"] = "assets/case54/" }, out var err12_54);
+            Check(p12_54.SourceRoot == "Assets/Case54" && err12_54 == null,
+                  $"C12 (D7) a root given on the command line is stored as the window stores it — the project's spelling (actual: '{p12_54.SourceRoot}' {err12_54})");
+            Settings54();
+            FakeEngine.Folders.Add("Assets/content");
+            var m13_54 = new ContentBuildWindowModel();
+            m13_54.AddProfile("Win54d");
+            var root13_54 = m13_54.Selected.SourceRoot;
+            FakeEngine.Folders.Remove("Assets/content");
+            Check(root13_54 == "Assets/content", $"C13 (D7) a new profile's default root is stored as the project spells it (actual: '{root13_54}')");
+
+            // the reason everywhere the inspector gives one: a reference's status, an asset in Resources, and where the root is written
+            Settings54();
+            P54("Assets/case54", "");
+            ContentLinkEditorUtility.Invalidate();
+            var s14_54 = ContentLinkEditorUtility.ValidateRef("a54a54a54a54a54a54a54a54a54a54a5", "", typeof(Texture2D), false, out var tip14_54);
+            Check(tip14_54 != null && tip14_54.Contains("lies under the content root 'Assets/case54' only in another case — the project spells it 'Assets/Case54'"),
+                  $"C14 F-41 — a reference's status says the root is written in another case (HEAD: 'not under a content root — moving it under one keeps its GUID') (actual: {s14_54} · {tip14_54})");
+            Settings54();
+            var r15_54 = new Texture2D { name = "r" };
+            FakeEngine.AddProjectAsset("Assets/Case54/Resources/r.png", r15_54);
+            P54("Assets/case54", "");
+            ContentLinkEditorUtility.Invalidate();
+            bool ok15_54 = ContentLinkEditorUtility.TryGetNameForAsset(r15_54, out var n15_54, out var why15_54);
+            Check(!ok15_54 && why15_54 != null && why15_54.Contains("only in another case"),
+                  $"C15 F-41 — an asset in a Resources folder under a root in another case gets the reason, not a res: name (HEAD: 'res:r') (actual: {ok15_54} '{n15_54}' {why15_54})");
+            Settings54();
+            var p16_54 = P54("Assets/case54", "");
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(a54, out _, out var why16_54);
+            Settings54();
+            var q16_54 = P54("Assets/Cat", "");
+            ContentBuildSettings.instance.SetActive(q16_54.Name);
+            ContentDirectoryBuilder.SourceRoot = "Assets/case54";   // a session override of the static view: no profile writes it
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(a54, out _, out var why16b_54);
+            ContentDirectoryBuilder.ClearOverrides();
+            Check(why16_54 != null && why16_54.Contains($"profile '{p16_54.Name}'") && why16b_54 != null && why16b_54.Contains("ContentDirectoryBuilder.SourceRoot") && !why16b_54.Contains("profile '"),
+                  $"C16 (D5) the reason names where the root is written — a profile, or the static view (actual: {why16_54} ‖ {why16b_54})");
+            Settings54();
+            P54("Assets/Cat", "");
+            var old16_54 = ScriptableObject.CreateInstance<ContentCatalog>();
+            old16_54.EditorSetSourceRoot("Assets/case54");
+            FakeEngine.AddProjectAsset("Assets/Cat/old16.asset", old16_54);   // written by an earlier build, no profile on that root now
+            ContentLinkEditorUtility.Invalidate();
+            ContentLinkEditorUtility.TryGetNameForAsset(a54, out _, out var why16c_54);
+            Catalogs54();
+            Check(why16c_54 != null && why16c_54.Contains("the profile whose catalog recorded it"),
+                  $"C16c (D5) … or a catalog an earlier build recorded it in (actual: {why16c_54})");
+
+            // a folder deleted this session is not the project's spelling
+            Settings54();
+            var m17_54 = new ContentBuildWindowModel();
+            m17_54.AddProfile("Win54f");
+            m17_54.Edit(x => { x.SourceRoot = "Assets/Case54"; x.OutputPath = System.IO.Path.Combine(tmp54, "win17"); });
+            m17_54.AddCategory("GONE", "Assets/Cat/win17.asset");
+            var last17_54 = m17_54.Selected.Catalogs[m17_54.Selected.Catalogs.Length - 1].SubFolder;
+            Check(last17_54 == "GONE", $"C17 (D4) a category typed after its folder was deleted is stored as typed — not in the deleted folder's spelling (actual: '{last17_54}')");
+
+            // a doubled separator in a root: refused like a trailing one; the window and the command line store it written once
+            Settings54();
+            var p18_54 = P54("Assets//Case54", "");
+            var e18_54 = Errs54(p18_54);
+            Check(e18_54.Contains("source root 'Assets//Case54' has a trailing separator, doubled separators or backslashes — write it as 'Assets/Case54'"),
+                  $"C18 (Q3) a doubled separator in a root is refused like a trailing one, with the root written once (actual: [{e18_54}])");
+            var m18_54 = new ContentBuildWindowModel();
+            m18_54.AddProfile("Win54e");
+            m18_54.Edit(x => x.SourceRoot = "Assets//Case54");
+            ContentBuildCLI.Apply(p18_54, new System.Collections.Generic.Dictionary<string, string> { ["source"] = "Assets//Case54" }, out _);
+            Check(m18_54.Selected.SourceRoot == "Assets/Case54" && p18_54.SourceRoot == "Assets/Case54",
+                  $"C18b (Q3) the window and the command line store a typed root without doubled separators (actual: '{m18_54.Selected.SourceRoot}' · '{p18_54.SourceRoot}')");
+            m18_54.Edit(x => x.SourceRoot = "Assets///Case54//");
+            var e18c_54 = Errs54(P54("Assets\\\\Case54", ""));
+            Check(m18_54.Selected.SourceRoot == "Assets/Case54" && e18c_54.Contains("write it as 'Assets/Case54'"),
+                  $"C18c (Q3) any run of separators is written once — typed, or refused with it written once (actual: '{m18_54.Selected.SourceRoot}' · [{e18c_54}])");
+            Settings54();
+            Settings54();
+
+            try { if (System.IO.Directory.Exists(tmp54)) System.IO.Directory.Delete(tmp54, true); } catch (Exception) { }
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentLinkEditorUtility.Invalidate();
+            FakeEngine.EditorServesAnyId = false;
+            Init(typeof(ContentService), "ResetStatics");
+        }
+
+        Console.WriteLine("55) IMP018 §9-7 7-4 + 7-6 — the command line refuses an option for a value and a mode by a number it does not have, keeps a type named with its assembly as one name and puts the profile back; validation refuses 'all', such a mode and a post-processor it cannot find; the clear keeps a marker the engine can write; the static Build guards its folder and removes an archived build's leftovers");
+        {
+            Init(typeof(ContentService), "ResetStatics");
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            UnityEditor.BuildPipeline.LastParameters = null;
+            var settings55 = ContentBuildSettings.instance;
+            var tmp55 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "verify55-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(tmp55);
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/a.png", new Texture2D { name = "a" });
+            FakeEngine.AddProjectAsset("Assets/Content/Materials/m.mat", new Object { name = "m" });
+            FakeEngine.AddProjectAsset("Assets/Other55/x.png", new Texture2D { name = "x" });
+            settings55.Active.OutputPath = System.IO.Path.Combine(tmp55, "main"); settings55.Active.Archive = ContentBuildSettings.ArchiveMode.None;
+            int n55 = 0;
+            ContentBuildSettings.Profile P55(string name = null)
+            {
+                var p = settings55.Add(name ?? "P55_" + (++n55));
+                p.SourceRoot = "Assets/Content"; p.OutputPath = System.IO.Path.Combine(tmp55, p.Name); p.Archive = ContentBuildSettings.ArchiveMode.None;
+                p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { CreateAt = $"Assets/Cat/{p.Name}.asset" } };
+                return p;
+            }
+            string Entries55(string dir)
+            {
+                if (!System.IO.Directory.Exists(dir)) return "(no folder)";
+                var names = Array.ConvertAll(System.IO.Directory.GetFileSystemEntries(dir), System.IO.Path.GetFileName);
+                Array.Sort(names, StringComparer.Ordinal);
+                return string.Join(", ", names);
+            }
+            string Errs55(ContentBuildSettings.Profile p) => string.Join(" | ", settings55.Validate(p));
+            string Fields55(ContentBuildSettings.Profile p)
+            {
+                var parts = new System.Collections.Generic.List<string>();
+                foreach (var f in typeof(ContentBuildSettings.Profile).GetFields(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    var v = f.GetValue(p);
+                    if (v is Array a) { var items = new System.Collections.Generic.List<string>(); foreach (var x in a) items.Add(x?.ToString() ?? "null"); parts.Add(f.Name + "=[" + string.Join("+", items) + "]"); }
+                    else parts.Add(f.Name + "=" + v);
+                }
+                return string.Join("; ", parts);
+            }
+            var stA55 = ContentBuildWindowModel.NameOf(typeof(PpA));   // "Test+PpA, verify" — the window's stored form
+            var stB55 = ContentBuildWindowModel.NameOf(typeof(PpB));
+
+            // ⓪ the stub's engine removes what the engine removes (measured on 6000.6)
+            var s0_55 = System.IO.Path.Combine(tmp55, "stub0");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(s0_55, "sub"));
+            var planted0_55 = new[] { "mine.cf", "mine.archive", "mine.resS", "mine.resource", "upper.CF", "upper2.ARCHIVE",
+                                      "0123456789abcdef0123456789abcdef.json", "ABCDEF5123456789ABCDEF0123456789.json", "7123456789abcdef0123456789abcdef.JSON", "a123456789abcdef0123456789abcdef.json.bak", "b123456789abcdef0123456789abcdef", "c123456789abcdef0123456789abcdef.txt", "d123456789abcdef0123456789abcdef.json.meta",
+                                      "1123456789abcdef0123456789abcde.json", "2123456789abcdef0123456789abcdef0.json", "x3123456789abcdef0123456789abcdef.json", "4123456789abcdef0123456789abcdef-.json", "9123456789abcdef0123456789abcdeg.json",
+                                      "mine.json", "archives.json", "archives.hash", "mine.bundle", "mine.cf.bak", "a.cfx", "noext", "mine.txt", "sub/y.cf", "sub/y.archive", "sub/fedcba9876543210fedcba9876543210.json" };
+            foreach (var f in planted0_55) System.IO.File.WriteAllText(System.IO.Path.Combine(s0_55, f), "planted");
+            UnityEditor.BuildPipeline.BuildContentDirectory(new UnityEditor.BuildContentDirectoryParameters { outputPath = s0_55, rootAssetPaths = new string[0] });
+            var gone0_55 = new System.Collections.Generic.List<string>();
+            foreach (var f in planted0_55) if (!System.IO.File.Exists(System.IO.Path.Combine(s0_55, f))) gone0_55.Add(f);
+            Check(string.Join(",", gone0_55) == "mine.cf,mine.archive,mine.resS,mine.resource,upper.CF,upper2.ARCHIVE,0123456789abcdef0123456789abcdef.json,ABCDEF5123456789ABCDEF0123456789.json,7123456789abcdef0123456789abcdef.JSON,a123456789abcdef0123456789abcdef.json.bak,b123456789abcdef0123456789abcdef,c123456789abcdef0123456789abcdef.txt,d123456789abcdef0123456789abcdef.json.meta",
+                  $"C0 (fidelity) the stub's engine removes, in a folder it never wrote, the top level's files of its kinds — .cf · .archive · .resS · .resource in any case — and those named by a hash, 32 hex digits in any case before the first dot or the end; not 31 or 33 digits, a prefix, a dash or a letter past f, no index, no sub-folder (actual gone: [{string.Join(", ", gone0_55)}])");
+
+            // F-31 — an option in place of a value
+            bool p1_55 = ContentBuildCLI.Parse(new[] { "-contentlink.output", "-contentlink.profile", "Two" }, out var o1_55, out var e1_55);
+            Check(!p1_55 && e1_55 == "-contentlink.output needs a value, not the option -contentlink.profile",
+                  $"C1 F-31 — an option in place of a value is refused, not taken as the value (HEAD: parsed, the output '-contentlink.profile') (actual: {p1_55} '{e1_55}')");
+            var cwd55 = System.IO.Directory.GetCurrentDirectory();
+            System.IO.Directory.SetCurrentDirectory(tmp55);
+            UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; int errs2_55 = Debug.Errors;
+            int rc2_55 = ContentBuildCLI.Run(new[] { "-contentlink.output", "-contentlink.profile", "Two" });
+            Debug.Verbose = true;
+            bool made2_55 = System.IO.Directory.Exists(System.IO.Path.Combine(tmp55, "-contentlink.profile"));
+            System.IO.Directory.SetCurrentDirectory(cwd55);
+            Check(rc2_55 == 1 && !made2_55 && UnityEditor.BuildPipeline.LastParameters == null && Debug.Errors == errs2_55 + 1 && Debug.LastError.Contains("needs a value, not the option -contentlink.profile"),
+                  $"C2 F-31 — … the run exits 1 with one error and builds nothing (HEAD: rc 0, the active profile built into a folder named '-contentlink.profile') (actual: rc {rc2_55} · folder {made2_55})");
+            bool p1b_55 = ContentBuildCLI.Parse(new[] { "-contentlink.output", "-CONTENTLINK.Profile", "Two" }, out _, out var e1b_55);
+            bool p1c_55 = ContentBuildCLI.Parse(new[] { "-CONTENTLINK.Output", "-CONTENTLINK.PROFILE", "Two" }, out _, out var e1c_55);
+            Check(!p1b_55 && e1b_55 == "-contentlink.output needs a value, not the option -CONTENTLINK.Profile" && !p1c_55 && e1c_55 == "-CONTENTLINK.Output needs a value, not the option -CONTENTLINK.PROFILE",
+                  $"C1b F-31 — … in any case, as the keys are matched, and the error names the key as it was typed (HEAD: parsed) (actual: {p1b_55} '{e1b_55}' · {p1c_55} '{e1c_55}')");
+            bool p3a_55 = ContentBuildCLI.Parse(new[] { "-contentlink.contentVersion", "-rc1" }, out var o3a_55, out var e3a_55);
+            bool p3b_55 = ContentBuildCLI.Parse(new[] { "-contentlink.output", "-logFile", "x.log" }, out var o3b_55, out var e3b_55);
+            Check(p3a_55 && o3a_55.ContentVersion == "-rc1" && p3b_55 && o3b_55.Overrides["output"] == "-logFile",
+                  $"C3 (kept · D1 ⓐ — Plan-F14 B1f) a value that begins with '-' is a value unless it is an option of this command line: '-rc1' is a content version, and '-logFile' becomes the output — the limit of the rule (§8) (actual: {p3a_55} '{e3a_55}' · {p3b_55} '{e3b_55}')");
+            var prof4_55 = new ContentBuildSettings.Profile();
+            bool p4a_55 = ContentBuildCLI.Parse(new[] { "-contentlink.maxArchiveMB", "-5" }, out var o4a_55, out _);
+            bool a4a_55 = p4a_55 && !ContentBuildCLI.Apply(prof4_55, o4a_55.Overrides, out var e4a_55) && e4a_55.Contains("1 or more");
+            bool p4b_55 = ContentBuildCLI.Parse(new[] { "-contentlink.contentVersion", "-1", "-contentlink.postProcessors", "" }, out var o4b_55, out _);
+            prof4_55.PostProcessors = new[] { "x" };
+            bool a4b_55 = p4b_55 && o4b_55.ContentVersion == "-1" && ContentBuildCLI.Apply(prof4_55, o4b_55.Overrides, out _) && prof4_55.PostProcessors.Length == 0;
+            bool p4c_55 = ContentBuildCLI.Parse(new[] { "-contentlink.contentVersion", "-" }, out var o4c_55, out _) && o4c_55.ContentVersion == "-";
+            Check(a4a_55 && a4b_55 && p4c_55, "C4 (control) a value that is no option stays a value: a negative number reaches its own check, '-1' and '-' are content versions, an empty postProcessors clears the list");
+            var keys3b_55 = (string[])typeof(ContentBuildCLI).GetField("k_Keys", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            var bad3b_55 = new System.Collections.Generic.List<string>();
+            foreach (var k3b in keys3b_55)
+            {
+                foreach (var v3b in new[] { "-contentlink.profile", "-CONTENTLINK.Output", "-contentlink." })
+                    if (ContentBuildCLI.Parse(new[] { ContentBuildCLI.Prefix + k3b, v3b, "x" }, out _, out var e3b1) || e3b1 != $"{ContentBuildCLI.Prefix}{k3b} needs a value, not the option {v3b}") bad3b_55.Add($"{k3b} {v3b}: {e3b1}");
+                foreach (var v3b in new[] { "-x", "--x", "--", "-q", "-5", "-", "-rc1" })
+                    if (!ContentBuildCLI.Parse(new[] { ContentBuildCLI.Prefix + k3b, v3b }, out _, out var e3b2)) bad3b_55.Add($"{k3b} {v3b}: {e3b2}");
+            }
+            Check(keys3b_55.Length == 13 && bad3b_55.Count == 0,
+                  $"C3b (D1 ⓐ · E31) every key — profile and contentVersion too — refuses an option of this command line for its value, in any case, and hands any other value that begins with '-' to its own check (HEAD: all taken) (actual: {keys3b_55.Length} keys · [{string.Join(" | ", bad3b_55)}])");
+
+            // F-32 — the profile name 'all'
+            var all5_55 = P55("All");
+            var e5a_55 = Errs55(all5_55); all5_55.Name = "ALL"; var e5b_55 = Errs55(all5_55); all5_55.Name = "all"; var e5c_55 = Errs55(all5_55);
+            Check(e5a_55 == "profile name 'All' is the command line's word for every profile (-contentlink.profile all, in any case) — no command line could build it alone: rename it" && e5b_55.Contains("'ALL' is the command line's word") && e5c_55.Contains("'all' is the command line's word"),
+                  $"C5 F-32 — a profile named 'all', in any case, is refused: '-contentlink.profile all' could never build it alone (HEAD: valid) (actual: [{e5a_55}])");
+            UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; var r5_55 = ContentBuildRunner.Build(all5_55, showProgress: false); Debug.Verbose = true;
+            settings55.Remove("all");
+            var tall5_55 = P55("Tall"); var allx5_55 = P55("allx");
+            Check(!r5_55.Succeeded && UnityEditor.BuildPipeline.LastParameters == null && Errs55(tall5_55) == "" && Errs55(allx5_55) == "",
+                  $"C5b … its build stops before anything is written; 'Tall' and 'allx' stay valid (actual: [{Errs55(tall5_55)}] [{Errs55(allx5_55)}])");
+            settings55.Remove("Tall"); settings55.Remove("allx");
+
+            // F-33 — a mode by a number it does not have
+            var prof6_55 = new ContentBuildSettings.Profile();
+            bool r6a_55 = !ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "7" }, out var e6a_55) && e6a_55.Contains("None | Engine | Packed");
+            bool r6b_55 = !ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["compression"] = "9" }, out var e6b_55) && e6b_55.Contains("Uncompressed | LZ4 | LZMA");
+            bool r6c_55 = !ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "-1" }, out _);
+            bool r6d_55 = !ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "Engine, Packed" }, out _);
+            Check(r6a_55 && r6b_55 && r6c_55 && r6d_55 && prof6_55.Archive == ContentBuildSettings.ArchiveMode.Packed && prof6_55.Compression == ContentBuildSettings.CompressionKind.LZ4,
+                  $"C6 F-33 — a number the mode does not have is refused, a combination of flags too, and the profile keeps its modes (HEAD: archive 7 · compression 9 · -1 · 'Engine, Packed' taken) (actual: {r6a_55} {r6b_55} {r6c_55} {r6d_55} · {(int)prof6_55.Archive}/{(int)prof6_55.Compression})");
+            bool r6e_55 = ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "1", ["compression"] = "lzma" }, out _) && prof6_55.Archive == ContentBuildSettings.ArchiveMode.Engine && prof6_55.Compression == ContentBuildSettings.CompressionKind.LZMA;
+            bool r6f_55 = ContentBuildCLI.Apply(prof6_55, new System.Collections.Generic.Dictionary<string, string> { ["archive"] = "packed", ["compression"] = "0" }, out _) && prof6_55.Archive == ContentBuildSettings.ArchiveMode.Packed && prof6_55.Compression == ContentBuildSettings.CompressionKind.Uncompressed;
+            Check(r6e_55 && r6f_55, "C6b (control) the modes' numbers and names in any case are still taken");
+            var p7_55 = P55();
+            p7_55.Archive = (ContentBuildSettings.ArchiveMode)7; p7_55.Compression = (ContentBuildSettings.CompressionKind)9;
+            var e7_55 = Errs55(p7_55);
+            UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; var r7_55 = ContentBuildRunner.Build(p7_55, showProgress: false); Debug.Verbose = true;
+            Check(e7_55.Contains("archive mode 7 is not an ArchiveMode") && e7_55.Contains("compression 9 is not a CompressionKind") && !r7_55.Succeeded && UnityEditor.BuildPipeline.LastParameters == null && !System.IO.Directory.Exists(p7_55.OutputPath),
+                  $"C7 F-33 — such a mode in the settings (a hand edit, a later package's value) is refused before anything is written (HEAD: built flat and uncompressed) (actual: [{e7_55}])");
+            p7_55.Archive = (ContentBuildSettings.ArchiveMode)(-1); p7_55.Compression = (ContentBuildSettings.CompressionKind)(-1);
+            var e7b_55 = Errs55(p7_55);
+            var prof7b_55 = new ContentBuildSettings.Profile();
+            bool a7b_55 = !ContentBuildCLI.Apply(prof7b_55, new System.Collections.Generic.Dictionary<string, string> { ["compression"] = "-1" }, out var ea7b_55) && ea7b_55.Contains("Uncompressed | LZ4 | LZMA") && prof7b_55.Compression == ContentBuildSettings.CompressionKind.LZ4;
+            Check(e7b_55.Contains("archive mode -1 is not an ArchiveMode") && e7b_55.Contains("compression -1 is not a CompressionKind") && a7b_55,
+                  $"C7b F-33 — a negative mode is refused like a large one, in the settings and on the command line (HEAD: taken) (actual: [{e7b_55}] · apply refused {a7b_55})");
+
+            // F-34 — a post-processor named with its assembly; early failure
+            var prof8_55 = new ContentBuildSettings.Profile();
+            bool a8_55 = ContentBuildCLI.Apply(prof8_55, new System.Collections.Generic.Dictionary<string, string> { ["postProcessors"] = stA55 }, out _);
+            Check(a8_55 && prof8_55.PostProcessors.Length == 1 && prof8_55.PostProcessors[0] == stA55,
+                  $"C8 F-34 — a post-processor named with its assembly, as the window stores it, is one name (HEAD: [Test+PpA ‖ verify]) (actual: [{string.Join(" ‖ ", prof8_55.PostProcessors)}])");
+            var aqn8_55 = typeof(PpThrow).AssemblyQualifiedName;
+            bool a8b_55 = ContentBuildCLI.Apply(prof8_55, new System.Collections.Generic.Dictionary<string, string> { ["postProcessors"] = $"{stB55}, Test+PpA,{aqn8_55}" }, out _)
+                          && string.Join(" ‖ ", prof8_55.PostProcessors) == $"{stB55} ‖ Test+PpA ‖ {aqn8_55}";
+            Check(a8b_55, $"C8b F-34 — a list mixing the stored form, a full name and a full assembly-qualified name: each is one name (actual: [{string.Join(" ‖ ", prof8_55.PostProcessors)}])");
+            bool a8c_55 = ContentBuildCLI.Apply(prof8_55, new System.Collections.Generic.Dictionary<string, string> { ["postProcessors"] = "Test+PpA,Test+PpB" }, out _) && string.Join(" ‖ ", prof8_55.PostProcessors) == "Test+PpA ‖ Test+PpB";
+            bool a8d_55 = ContentBuildCLI.Apply(prof8_55, new System.Collections.Generic.Dictionary<string, string> { ["postProcessors"] = "Nope.One, Nope.Two" }, out _) && string.Join(" ‖ ", prof8_55.PostProcessors) == "Nope.One ‖ Nope.Two";
+            Check(a8c_55 && a8d_55, "C8c (control) full names split at the commas as before; names that resolve to nothing are kept one by one — validation names them");
+            Type t8d_55 = null; string thrown8d_55 = "";
+            try { t8d_55 = ContentBuildRunner.ResolvePostProcessor("Test+PpA, Test+PpB, verify"); } catch (Exception ex) { thrown8d_55 = ex.GetType().Name; }
+            var p8d_55 = P55(); p8d_55.PostProcessors = new[] { "Test+PpA, Test+PpB, verify" };
+            string v8d_55; try { v8d_55 = Errs55(p8d_55); } catch (Exception ex) { v8d_55 = "threw " + ex.GetType().Name; }
+            string w8d_55; try { var m8d_55 = new ContentBuildWindowModel(); m8d_55.Select(p8d_55.Name); w8d_55 = string.Join(" | ", m8d_55.Errors); } catch (Exception ex) { w8d_55 = "threw " + ex.GetType().Name; }
+            settings55.Remove(p8d_55.Name);
+            Check(t8d_55 == null && thrown8d_55 == "" && v8d_55.Contains("'Test+PpA, Test+PpB, verify' was not found") && w8d_55.Contains("was not found"),
+                  $"C8d (D10) a name whose assembly part is malformed resolves to nothing instead of throwing — .NET throws there, the editor's Mono answers null: validation and the window name it (HEAD on .NET: FileLoadException) (actual: '{thrown8d_55}' · [{v8d_55}] · [{w8d_55}])");
+            string Names8e(string value8e)
+            {
+                var pr8e = new ContentBuildSettings.Profile();
+                if (!ContentBuildCLI.Apply(pr8e, new System.Collections.Generic.Dictionary<string, string> { ["postProcessors"] = value8e }, out var er8e)) return "refused: " + er8e;
+                return string.Join(" ‖ ", pr8e.PostProcessors);
+            }
+            var rx8e_55 = typeof(System.Text.RegularExpressions.Regex);
+            var rxn8e_55 = $"{rx8e_55.FullName}, {rx8e_55.Assembly.GetName().Name}";
+            var n8e_55 = new[] { Names8e("Test+PpA, Version=1.0.0.0"), Names8e("Test+PpA, Test+PpA"), Names8e("Nope.X, verify"), Names8e($"{rxn8e_55}, Test+PpA") };
+            Check(n8e_55[0] == "Test+PpA ‖ Version=1.0.0.0" && n8e_55[1] == "Test+PpA ‖ Test+PpA" && n8e_55[2] == "Nope.X ‖ verify" && n8e_55[3] == $"{rxn8e_55} ‖ Test+PpA",
+                  $"C8e (D4 · E32) the join is by resolution, not by the pieces' shape: a '=' piece follows only a joined name, a name listed twice stays twice, an unknown type is not glued to an assembly's name, an assembly named with dots (as the editor's are) is glued (actual: [{string.Join("] [", n8e_55)}])");
+
+            var p9_55 = P55();
+            Debug.Verbose = false; var r9a_55 = ContentBuildRunner.Build(p9_55, showProgress: false); Debug.Verbose = true;
+            var before9_55 = Entries55(p9_55.OutputPath);
+            p9_55.PostProcessors = new[] { stA55, "Nope.Missing" };
+            PpCalls.Clear(); UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; var r9_55 = ContentBuildRunner.Build(p9_55, showProgress: false); Debug.Verbose = true;
+            var model9_55 = new ContentBuildWindowModel(); model9_55.Select(p9_55.Name);
+            int listed9_55 = 0; foreach (var e in model9_55.Errors) if (e.Contains("'Nope.Missing' was not found")) ++listed9_55;
+            Check(r9a_55.Succeeded && !r9_55.Succeeded && r9_55.Errors.Exists(e => e.Contains("post-processor 'Nope.Missing' was not found")) && UnityEditor.BuildPipeline.LastParameters == null
+                  && PpCalls.Count == 0 && Entries55(p9_55.OutputPath) == before9_55 && listed9_55 == 1,
+                  $"C9 F-34 — a post-processor that is not found is refused before anything is written — no engine, no post-processor before it, the previous output as it was — and the window lists it once (HEAD: the engine ran and PpA ran, then the build failed) (actual: engine {UnityEditor.BuildPipeline.LastParameters != null} · ran [{string.Join(",", PpCalls)}] · listed {listed9_55})");
+            var e9b_55 = new System.Collections.Generic.List<string>();
+            bool u9b_55 = ContentBuildRunner.UpdateCatalogs(p9_55, e9b_55);
+            Check(!u9b_55 && e9b_55.Exists(e => e.Contains("'Nope.Missing' was not found")),
+                  $"C9b (D5) a catalogs-only update refuses it too, as it refuses a partitioner it cannot find (HEAD: updated) (actual: {u9b_55})");
+            p9_55.PostProcessors = new string[0];
+            var p9c_55 = P55(); p9c_55.PostProcessors = new[] { "", stA55 };
+            Check(Errs55(p9c_55) == "", $"C9c (control) an empty entry in the list (a hand edit) is skipped by validation, as the run skips it (actual: [{Errs55(p9c_55)}])");
+            p9c_55.PostProcessors = new[] { " " };
+            var e9d_55 = Errs55(p9c_55);
+            p9c_55.PostProcessors = null;
+            string e9e_55; try { e9e_55 = Errs55(p9c_55); } catch (Exception ex) { e9e_55 = "threw " + ex.GetType().Name; }
+            Check(e9d_55 == "post-processor ' ' was not found — the build would fail" && e9e_55 == "",
+                  $"C9d (D5) a blank entry, which the run does not skip, is refused whole; a null list validates, as the run and the window take it (HEAD: the blank one failed the build after the engine) (actual: [{e9d_55}] · [{e9e_55}])");
+            settings55.Remove(p9c_55.Name);
+            var p10_55 = P55();
+            PpCalls.Clear();
+            Debug.Verbose = false; int rc10_55 = ContentBuildCLI.Run(new[] { "-contentlink.profile", p10_55.Name, "-contentlink.postProcessors", stA55 }); Debug.Verbose = true;
+            Check(rc10_55 == 0 && PpCalls.Count == 1 && PpCalls[0].StartsWith("A:") && p10_55.PostProcessors.Length == 0,
+                  $"C10 F-34 — on the command line the stored form runs its post-processor (HEAD: rc 1 — 'verify' not found, after PpA had run) (actual: rc {rc10_55} · ran [{string.Join(",", PpCalls)}])");
+
+            // O-4 — the overrides belong to the run
+            var p11_55 = P55();
+            var before11_55 = Fields55(p11_55);
+            var cpp11_55 = typeof(PpRev55).FullName;
+            PpRev55.Seen = -1;
+            Debug.Verbose = false;
+            int rc11_55 = ContentBuildCLI.Run(new[] { "-contentlink.profile", p11_55.Name, "-contentlink.source", "Assets/Other55", "-contentlink.output", System.IO.Path.Combine(tmp55, "o4"),
+                                                     "-contentlink.archive", "Packed", "-contentlink.maxArchiveMB", "3", "-contentlink.compression", "LZMA", "-contentlink.cleanBuildCache", "true",
+                                                     "-contentlink.disableWriteTypeTree", "true", "-contentlink.failBuildWhenErrorsLogged", "false", "-contentlink.postProcessors", cpp11_55,
+                                                     "-contentlink.partitioner", "sequential", "-contentlink.nameStyle", "PathWithExtension" });
+            Debug.Verbose = true;
+            var lp11_55 = UnityEditor.BuildPipeline.LastParameters;
+            var idx11_55 = ContentArchives.ReadIndex(System.IO.Path.Combine(tmp55, "o4"));
+            var after11_55 = Fields55(p11_55);
+            var cat11_55 = UnityEditor.AssetDatabase.LoadAssetAtPath<ContentCatalog>($"Assets/Cat/{p11_55.Name}.asset");
+            Check(rc11_55 == 0 && lp11_55 != null && lp11_55.outputPath == System.IO.Path.Combine(tmp55, "o4") && idx11_55 != null && idx11_55.Compression == "LZMA" && idx11_55.MaxArchiveMB == 3 && !idx11_55.TypeTrees
+                  && (lp11_55.options & UnityEditor.BuildContentOptions.CleanBuildCache) != 0 && (lp11_55.options & UnityEditor.BuildContentOptions.FailBuildWhenErrorsLogged) == 0 && Array.Exists(idx11_55.Archives, a => a.File.Contains(".seq-"))
+                  && cat11_55 != null && cat11_55.SourceRoot == "Assets/Other55" && cat11_55.NameStyle == ContentNameStyle.PathWithExtension && PpRev55.Seen >= 0 && after11_55 == before11_55 && p11_55.Catalogs[0].Catalog.isSet,
+                  $"C11 O-4 — a run's eleven overrides reach the build — the engine's options, the index, the catalog's root and style, the partitioner, the post-processor — and every field of the profile is put back after it, by value: the category keeps the catalog reference its build set (HEAD: the profile kept them) (actual: rc {rc11_55} · ran {PpRev55.Seen >= 0} · {(after11_55 == before11_55 ? "same" : after11_55)} · reference {p11_55.Catalogs[0].Catalog.isSet})");
+            Check(ContentBuildSettings.Revision > PpRev55.Seen,
+                  $"C11b O-4 — the put-back moves the settings' revision past the one the run's stages saw: caches keyed on it (the path rule's roots, the window's messages) rebuild from the profile as it is again (actual: {PpRev55.Seen} → {ContentBuildSettings.Revision})");
+            var p12_55 = P55();
+            var before12_55 = Fields55(p12_55);
+            Debug.Verbose = false; int rc12_55 = ContentBuildCLI.Run(new[] { "-contentlink.profile", p12_55.Name, "-contentlink.output", System.IO.Path.Combine(tmp55, "o12"), "-contentlink.archive", "zip" }); Debug.Verbose = true;
+            Check(rc12_55 == 1 && Fields55(p12_55) == before12_55 && !System.IO.Directory.Exists(System.IO.Path.Combine(tmp55, "o12")),
+                  $"C12 O-4 — a refused value after an applied one leaves the profile as it was (HEAD: the output stayed overridden) (actual: rc {rc12_55} · output '{p12_55.OutputPath}')");
+            var p12b_55 = P55(); var before12b_55 = Fields55(p12b_55);
+            var stranger12b_55 = System.IO.Path.Combine(tmp55, "stranger12b");
+            System.IO.Directory.CreateDirectory(stranger12b_55); System.IO.File.WriteAllText(System.IO.Path.Combine(stranger12b_55, "keep.txt"), "not a build");
+            var leaked12b_55 = new System.Collections.Generic.List<string>();
+            foreach (var (tag12b, args12b, only12b, fail12b) in new (string, string[], bool, bool)[]
+            {
+                ("a refused folder", new[] { "-contentlink.profile", p12b_55.Name, "-contentlink.output", stranger12b_55, "-contentlink.archive", "Packed" }, false, false),
+                ("validation", new[] { "-contentlink.profile", p12b_55.Name, "-contentlink.output", "Assets/Content/out", "-contentlink.maxArchiveMB", "3" }, false, false),
+                ("the engine", new[] { "-contentlink.profile", p12b_55.Name, "-contentlink.output", System.IO.Path.Combine(tmp55, "o12b"), "-contentlink.compression", "LZMA" }, false, true),
+                ("a catalogs-only update", new[] { "-contentlink.profile", p12b_55.Name, "-contentlink.source", "Assets/Nope55" }, true, false),
+            })
+            {
+                UnityEditor.BuildPipeline.FailNextBuild = fail12b;
+                Debug.Verbose = false; int rc12b = ContentBuildCLI.Run(args12b, catalogsOnly: only12b); Debug.Verbose = true;
+                UnityEditor.BuildPipeline.FailNextBuild = false;
+                var after12b = Fields55(p12b_55);
+                if (rc12b != 1 || after12b != before12b_55) leaked12b_55.Add($"{tag12b}: rc {rc12b} · {(after12b == before12b_55 ? "same" : after12b)}");
+            }
+            Check(leaked12b_55.Count == 0,
+                  $"C12b O-4 — a run that fails after its overrides were applied — a refused folder, validation, the engine, a refused catalogs-only update — puts the profile back too (HEAD: kept them) (actual: [{string.Join(" | ", leaked12b_55)}])");
+            Debug.LastError = ""; int errs12c_55 = Debug.Errors;
+            Debug.Verbose = false; int rc12c_55 = ContentBuildCLI.Run(new[] { "-contentlink.profile", "Nope55", "-contentlink.output", System.IO.Path.Combine(tmp55, "o12c") }); Debug.Verbose = true;
+            Check(rc12c_55 == 1 && Debug.Errors == errs12c_55 + 1 && Debug.LastError.Contains("profile 'Nope55' does not exist"),
+                  $"C12c (control) an unknown profile with overrides fails by its name, not by the put-back (actual: rc {rc12c_55} · '{Debug.LastError}')");
+
+            // F-36 — a clear cut short (a folder without write permission stands for an entry another program holds; no such lock on Windows — as the remote checks do, the lock is Unix only)
+            bool unix55 = !OperatingSystem.IsWindows();
+            var ok14_55 = new System.Collections.Generic.List<string>();
+            var sides14_55 = new System.Collections.Generic.List<string>();
+            if (unix55) foreach (var order in new[] { "zz", "m" })
+            {
+                var o14 = System.IO.Path.Combine(tmp55, "partial-" + order);
+                System.IO.Directory.CreateDirectory(o14);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(o14, ContentBuildManifest.HashFile), "abc123");
+                System.IO.File.WriteAllText(System.IO.Path.Combine(o14, "abc123.json"), "{}");
+                var locked14 = System.IO.Path.Combine(o14, order + "-locked");
+                System.IO.Directory.CreateDirectory(locked14);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(locked14, "x.cf"), "cf");
+                System.IO.File.SetUnixFileMode(locked14, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);   // its file cannot be deleted
+                var listed14 = Array.ConvertAll(System.IO.Directory.GetFileSystemEntries(o14), System.IO.Path.GetFileName);
+                sides14_55.Add($"{order}-locked {(Array.IndexOf(listed14, order + "-locked") < Array.IndexOf(listed14, ContentBuildManifest.HashFile) ? "before" : "after")} the marker");
+                var e14 = new System.Collections.Generic.List<string>(); string thrown14 = ""; bool prepared14 = true;
+                try { prepared14 = ContentBuildRunner.PrepareOutput(o14, e14); } catch (Exception ex) { thrown14 = ex.GetType().Name; }
+                bool marker14 = System.IO.File.Exists(System.IO.Path.Combine(o14, ContentBuildManifest.HashFile));
+                bool next14 = ContentBuildRunner.CheckOutput(o14, new System.Collections.Generic.List<string>());
+                System.IO.File.SetUnixFileMode(locked14, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                var head14 = $"output folder '{o14}' could not be cleared — '{order}-locked': ";
+                if (!prepared14 && thrown14 == "" && e14.Count == 1 && e14[0].StartsWith(head14, StringComparison.Ordinal) && e14[0].Length > head14.Length && marker14 && next14) ok14_55.Add(order);
+                else ok14_55.Add($"{order}: prepared {prepared14} · threw '{thrown14}' · [{string.Join(" | ", e14)}] · marker {marker14} · next {next14}");
+            }
+            Check(!unix55 || string.Join(",", ok14_55) == "zz,m",
+                  $"C14 F-36 — a clear cut short fails naming the folder, the entry and the system's reason, and keeps the marker, so the next build may clear the folder again — an entry listed before the marker or after it, as this file system lists them (HEAD: threw; after it, the marker was gone and the next build refused the folder) (actual: {string.Join(" ; ", ok14_55)} · listed: {string.Join(", ", sides14_55)})");
+            var p15_55 = P55();
+            Debug.Verbose = false; ContentBuildRunner.Build(p15_55, showProgress: false); Debug.Verbose = true;
+            var locked15_55 = System.IO.Path.Combine(p15_55.OutputPath, "m-locked");
+            ContentBuildResult r15_55 = null, r15b_55 = null; UnityEditor.BuildContentDirectoryParameters lp15_55 = null; bool marker15_55 = false;
+            if (unix55)
+            {
+                System.IO.Directory.CreateDirectory(locked15_55);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(locked15_55, "x.cf"), "cf");
+                System.IO.File.SetUnixFileMode(locked15_55, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);
+                UnityEditor.BuildPipeline.LastParameters = null;
+                Debug.Verbose = false; r15_55 = ContentBuildRunner.Build(p15_55, showProgress: false); Debug.Verbose = true;
+                lp15_55 = UnityEditor.BuildPipeline.LastParameters;
+                marker15_55 = System.IO.File.Exists(System.IO.Path.Combine(p15_55.OutputPath, ContentBuildManifest.HashFile));
+                System.IO.File.SetUnixFileMode(locked15_55, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                Debug.Verbose = false; r15b_55 = ContentBuildRunner.Build(p15_55, showProgress: false); Debug.Verbose = true;
+            }
+            Check(!unix55 || !r15_55.Succeeded && r15_55.Errors.Exists(e => e.Contains("could not be cleared") && e.Contains("m-locked")) && lp15_55 == null && marker15_55 && r15b_55.Succeeded && !System.IO.Directory.Exists(locked15_55),
+                  $"C15 F-36 — … through the runner: the build stops before the engine naming the entry, and once the entry is free the next build clears the folder and succeeds (HEAD: the next build refused the folder) (actual: [{string.Join(" | ", r15_55?.Errors ?? new System.Collections.Generic.List<string>())}] · engine {lp15_55 != null} · marker {marker15_55} · next {r15b_55?.Succeeded} [{string.Join(" | ", r15b_55?.Errors ?? new System.Collections.Generic.List<string>())}])");
+            var p14c_55 = P55();
+            Debug.Verbose = false; var r14c1_55 = ContentBuildRunner.Build(p14c_55, showProgress: false); Debug.Verbose = true;
+            var marker14c_55 = System.IO.Path.Combine(p14c_55.OutputPath, ContentBuildManifest.HashFile);
+            ContentBuildResult r14c2_55 = null; bool writable14c_55 = false;
+            if (unix55)
+            {
+                System.IO.File.SetUnixFileMode(marker14c_55, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.GroupRead | System.IO.UnixFileMode.OtherRead);   // a read-only marker, the folder writable
+                Debug.Verbose = false; r14c2_55 = ContentBuildRunner.Build(p14c_55, showProgress: false); Debug.Verbose = true;
+                writable14c_55 = (System.IO.File.GetUnixFileMode(marker14c_55) & System.IO.UnixFileMode.UserWrite) != 0;
+            }
+            Check(!unix55 || r14c1_55.Succeeded && r14c2_55.Succeeded && System.IO.File.ReadAllText(marker14c_55) == "abc123" && writable14c_55,
+                  $"C14c (control · D6 · E38) a marker the engine cannot write in place (read-only, the folder writable) goes with the clear, as it always did, and the build succeeds — kept, the engine fails on it (HEAD: removed · succeeded) (actual: {r14c2_55?.Succeeded} [{string.Join(" | ", r14c2_55?.Errors ?? new System.Collections.Generic.List<string>())}] · a new marker {writable14c_55})");
+            var o14d_55 = System.IO.Path.Combine(tmp55, "lower14d");
+            System.IO.Directory.CreateDirectory(o14d_55);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(o14d_55, "buildmanifesthash.txt"), "h");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(o14d_55, "a.cf"), "x");
+            bool ci14d_55 = System.IO.File.Exists(System.IO.Path.Combine(o14d_55, ContentBuildManifest.HashFile));
+            bool p14d_55 = ContentBuildRunner.PrepareOutput(o14d_55, new System.Collections.Generic.List<string>());
+            int left14d_55 = System.IO.Directory.GetFileSystemEntries(o14d_55).Length;
+            Check(ci14d_55 ? p14d_55 && left14d_55 == 0 : !p14d_55 && left14d_55 == 2,
+                  $"C14d (control · E33 · §8) the marker is kept by the name the engine writes: one renamed to lower case goes on a file system that ignores case, and a file system that does not refuses the folder (actual: ignores case {ci14d_55} · prepared {p14d_55} · {left14d_55} left)");
+            int refreshes15b_55 = -1; bool failed15b_55 = false;
+            if (unix55)
+            {
+                var proj15b_55 = System.IO.Path.Combine(tmp55, "proj15b");
+                System.IO.Directory.CreateDirectory(proj15b_55);
+                System.IO.Directory.SetCurrentDirectory(proj15b_55);
+                try
+                {
+                    var p15b_55 = P55(); p15b_55.OutputPath = "Assets/StreamingAssets/C15b";
+                    Debug.Verbose = false; ContentBuildRunner.Build(p15b_55, showProgress: false); Debug.Verbose = true;
+                    var locked15b_55 = p15b_55.OutputPath + "/m-locked";
+                    System.IO.Directory.CreateDirectory(locked15b_55);
+                    System.IO.File.WriteAllText(locked15b_55 + "/x.cf", "cf");
+                    System.IO.File.SetUnixFileMode(locked15b_55, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);
+                    int before15b_55 = UnityEditor.AssetDatabase.RefreshCalls;
+                    Debug.Verbose = false; var r15c_55 = ContentBuildRunner.Build(p15b_55, showProgress: false); Debug.Verbose = true;
+                    refreshes15b_55 = UnityEditor.AssetDatabase.RefreshCalls - before15b_55; failed15b_55 = !r15c_55.Succeeded;
+                    System.IO.File.SetUnixFileMode(locked15b_55, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                    settings55.Remove(p15b_55.Name);
+                }
+                finally { System.IO.Directory.SetCurrentDirectory(cwd55); }
+            }
+            Check(!unix55 || failed15b_55 && refreshes15b_55 == 1,
+                  $"C15b (D6 · RD5) a clear cut short under Assets/ still refreshes the project — what it deleted is gone from the Project view too (HEAD: no refresh) (actual: failed {failed15b_55} · refreshes {refreshes15b_55})");
+
+            // F-38 — the static Build
+            var p17_55 = P55(); p17_55.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            Debug.Verbose = false; var r17_55 = ContentBuildRunner.Build(p17_55, showProgress: false); Debug.Verbose = true;
+            bool index17_55 = ContentArchives.ReadIndex(p17_55.OutputPath) != null;
+            settings55.SetActive(p17_55.Name); p17_55.Archive = ContentBuildSettings.ArchiveMode.None;
+            foreach (var f17 in System.IO.Directory.GetFiles(p17_55.OutputPath)) System.IO.File.WriteAllText(f17 + ".meta", "as Unity writes beside an imported file");   // an output under Assets/
+            Debug.Verbose = false; var rep17_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            var left17_55 = Entries55(p17_55.OutputPath);
+            Check(r17_55.Succeeded && index17_55 && rep17_55 != null && rep17_55.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded
+                  && !left17_55.Contains(ContentArchives.IndexFile) && !left17_55.Contains(ContentArchives.HashFile) && !left17_55.Contains(".archive") && left17_55.Contains(ContentBuildManifest.HashFile) && left17_55.Contains(ContentBuildManifest.HashFile + ".meta"),
+                  $"C17 F-38 — the static Build over a packed build removes its leftovers first, each with its .meta: no archives.json, no archives.hash, no archive's .meta beside the flat build — the marker's stays (HEAD: index and hash stayed — the engine removes only the archives — and an archive's .meta was left without its file, which the next refresh warns of — E39) (actual: [{left17_55}])");
+            var p19_55 = p17_55;
+            System.IO.File.WriteAllText(System.IO.Path.Combine(p19_55.OutputPath, "extra.txt"), "a file of another kind");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(p19_55.OutputPath, "Audio"));
+            System.IO.File.WriteAllText(System.IO.Path.Combine(p19_55.OutputPath, "Audio", "bank.bytes"), "another tool's");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(p19_55.OutputPath, "Other"));
+            System.IO.File.WriteAllText(System.IO.Path.Combine(p19_55.OutputPath, "Other", ContentBuildManifest.HashFile), "another content directory");
+            Debug.Verbose = false; var rep19_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            Check(rep19_55 != null && rep19_55.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded && System.IO.File.Exists(System.IO.Path.Combine(p19_55.OutputPath, "extra.txt"))
+                  && System.IO.File.Exists(System.IO.Path.Combine(p19_55.OutputPath, "Audio", "bank.bytes")) && System.IO.File.Exists(System.IO.Path.Combine(p19_55.OutputPath, "Other", ContentBuildManifest.HashFile)),
+                  $"C19 (control · D7 ⓐ′ — RD1) the static Build keeps what is no archived build's leftover — a file of another kind, a sub-folder, another content directory inside: a folder it always shared with them keeps them (the runner's clear would take them) (actual: [{Entries55(p19_55.OutputPath)}])");
+            var p20_55 = P55(); p20_55.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            Debug.Verbose = false; var r20_55 = ContentBuildRunner.Build(p20_55, showProgress: false); Debug.Verbose = true;
+            settings55.SetActive(p20_55.Name); p20_55.Archive = ContentBuildSettings.ArchiveMode.None;
+            var before20_55 = Entries55(p20_55.OutputPath);
+            FakeEngine.AddProjectAsset("Assets/Content/Icons/a.jpg", new Texture2D { name = "a2" });   // 'Icons/a' twice
+            Debug.Verbose = false; var rep20_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            FakeEngine.MainAssetAt.Remove("Assets/Content/Icons/a.jpg");
+            Check(r20_55.Succeeded && rep20_55 == null && Entries55(p20_55.OutputPath) == before20_55 && before20_55.Contains(ContentArchives.IndexFile),
+                  $"C20 (control) a catalog failure in the static Build leaves the previous output as it was, a packed build's index included — the leftovers go after the catalog (actual: [{Entries55(p20_55.OutputPath)}])");
+            var p19b_55 = P55(); p19b_55.Archive = ContentBuildSettings.ArchiveMode.Packed;
+            Debug.Verbose = false; var r19b0_55 = ContentBuildRunner.Build(p19b_55, showProgress: false); Debug.Verbose = true;
+            settings55.SetActive(p19b_55.Name); p19b_55.Archive = ContentBuildSettings.ArchiveMode.None;
+            UnityEditor.Build.Reporting.BuildReport rep19b_55 = null, rep19b2_55 = null; bool engine19b_55 = true, index19b_55 = false; int logged19b_55 = -1; string last19b_55 = "";
+            if (unix55)
+            {
+                System.IO.File.SetUnixFileMode(p19b_55.OutputPath, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserExecute);   // its files cannot be deleted
+                UnityEditor.BuildPipeline.LastParameters = null; int errs19b_55 = Debug.Errors; Debug.LastError = "";
+                Debug.Verbose = false; string thrown19b_55 = "";
+                try { rep19b_55 = ContentDirectoryBuilder.Build(); } catch (Exception ex) { thrown19b_55 = "threw " + ex.GetType().Name; }   // the engine's own removal would throw in a folder it cannot write
+                Debug.Verbose = true;
+                engine19b_55 = UnityEditor.BuildPipeline.LastParameters != null; logged19b_55 = Debug.Errors - errs19b_55; last19b_55 = thrown19b_55 + Debug.LastError;
+                index19b_55 = System.IO.File.Exists(System.IO.Path.Combine(p19b_55.OutputPath, ContentArchives.IndexFile));
+                System.IO.File.SetUnixFileMode(p19b_55.OutputPath, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);
+                Debug.Verbose = false; rep19b2_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            }
+            Check(!unix55 || r19b0_55.Succeeded && rep19b_55 == null && !engine19b_55 && logged19b_55 == 1 && last19b_55.StartsWith($"[ContentLink] output folder '{p19b_55.OutputPath}' could not be cleared — '", StringComparison.Ordinal) && index19b_55
+                  && rep19b2_55 != null && rep19b2_55.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded && !System.IO.File.Exists(System.IO.Path.Combine(p19b_55.OutputPath, ContentArchives.IndexFile)),
+                  $"C19b F-38 — the static Build stops before the engine when a leftover cannot be removed, logs it once naming the folder and the entry; once free, it removes them and builds (actual: report {(rep19b_55 == null ? "null" : "built")} · engine {engine19b_55} · errors +{logged19b_55} · '{last19b_55}' · index {index19b_55} · next {rep19b2_55?.summary.result})");
+            bool src19c_55 = false, cat19c_55 = false; string res19c_55 = "";
+            var proj19c_55 = System.IO.Path.Combine(tmp55, "proj19c");
+            System.IO.Directory.CreateDirectory(proj19c_55);
+            System.IO.Directory.SetCurrentDirectory(proj19c_55);
+            try
+            {
+                const string out19c = "Assets/StreamingAssets";
+                System.IO.Directory.CreateDirectory(out19c + "/Src");
+                System.IO.File.WriteAllText(out19c + "/Src/b.png", "the source asset's file");
+                FakeEngine.AddProjectAsset(out19c + "/Src/b.png", new Texture2D { name = "b" });
+                System.IO.File.WriteAllText(out19c + "/Catalog.asset", "the catalog asset's file (Unity writes it on CreateAsset)");
+                UnityEditor.BuildPipeline.BuildContentDirectory(new UnityEditor.BuildContentDirectoryParameters { outputPath = out19c, rootAssetPaths = new string[0] });   // a previous static build there: it always built beside them
+                ContentDirectoryBuilder.ClearOverrides();
+                ContentDirectoryBuilder.SourceRoot = out19c + "/Src"; ContentDirectoryBuilder.CatalogPath = out19c + "/Catalog.asset"; ContentDirectoryBuilder.OutputPath = out19c;
+                Debug.Verbose = false; var rep19c_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+                res19c_55 = rep19c_55 == null ? "null" : rep19c_55.summary.result.ToString();
+                src19c_55 = System.IO.File.Exists(out19c + "/Src/b.png"); cat19c_55 = System.IO.File.Exists(out19c + "/Catalog.asset");
+                FakeEngine.MainAssetAt.Remove(out19c + "/Src/b.png");
+            }
+            finally { System.IO.Directory.SetCurrentDirectory(cwd55); ContentDirectoryBuilder.ClearOverrides(); }
+            Check(res19c_55 == "Succeeded" && src19c_55 && cat19c_55,
+                  $"C19c (control · D7 ⓐ′ — RD1) a source root and a catalog inside the static Build's output stay — the runner refuses both by validation because its clear would take them (actual: {res19c_55} · source {src19c_55} · catalog {cat19c_55})");
+            settings55.SetActive("Main");
+            var stray18_55 = System.IO.Path.Combine(tmp55, "stray18");
+            System.IO.Directory.CreateDirectory(stray18_55);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(stray18_55, "keep.txt"), "mine");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(stray18_55, "mine.archive"), "mine");
+            ContentDirectoryBuilder.ClearOverrides();
+            ContentDirectoryBuilder.SourceRoot = "Assets/Content"; ContentDirectoryBuilder.CatalogPath = "Assets/Cat/legacy18.asset"; ContentDirectoryBuilder.OutputPath = stray18_55;
+            UnityEditor.BuildPipeline.LastParameters = null;
+            Debug.Verbose = false; int errs18_55 = Debug.Errors; var rep18_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            Check(rep18_55 == null && System.IO.File.Exists(System.IO.Path.Combine(stray18_55, "keep.txt")) && System.IO.File.Exists(System.IO.Path.Combine(stray18_55, "mine.archive"))
+                  && UnityEditor.BuildPipeline.LastParameters == null && !FakeEngine.MainAssetAt.ContainsKey("Assets/Cat/legacy18.asset") && Debug.Errors == errs18_55 + 1 && Debug.LastError.Contains("refusing"),
+                  $"C18 F-38 — the static Build refuses a folder that is neither empty nor a previous build before anything is written, the catalog included (HEAD: built into it — the engine removed the stranger's archive) (actual: [{Entries55(stray18_55)}] · {Debug.LastError})");
+            ContentDirectoryBuilder.OutputPath = System.IO.Path.Combine(tmp55, "fresh18");
+            Debug.Verbose = false; var rep18b_55 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            Check(rep18b_55 != null && rep18b_55.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded && System.IO.File.Exists(System.IO.Path.Combine(tmp55, "fresh18", ContentBuildManifest.HashFile)),
+                  "C18b (control) the static Build into a folder that does not exist yet builds as before");
+            ContentDirectoryBuilder.ClearOverrides();
+
+            // a pair that reads two ways: a post-processor whose full name is the assembly's name (last in the section: the type stays in the domain)
+            var tb8f_55 = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("Conflict55"), System.Reflection.Emit.AssemblyBuilderAccess.Run)
+                .DefineDynamicModule("Conflict55").DefineType("verify", TypeAttributes.Public | TypeAttributes.Class);
+            tb8f_55.AddInterfaceImplementation(typeof(IContentBuildPostProcess));
+            tb8f_55.DefineMethod("OnBuilt", MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Final, typeof(void), new[] { typeof(ContentBuildResult) })
+                .GetILGenerator().Emit(System.Reflection.Emit.OpCodes.Ret);
+            tb8f_55.DefineDefaultConstructor(MethodAttributes.Public);
+            var conflict8f_55 = tb8f_55.CreateType();
+            bool alone8f_55 = ContentBuildRunner.ResolvePostProcessor("verify") == conflict8f_55;
+            var n8f_55 = new[] { Names8e("Test+PpA, verify"), Names8e("verify, Test+PpA"), Names8e(typeof(PpA).AssemblyQualifiedName) };
+            Check(alone8f_55 && n8f_55[0] == "refused: -contentlink.postProcessors 'Test+PpA, verify' is both a type in the assembly 'verify' and two post-processors — for the one, add the type's Version= part; for the two, list 'verify' first"
+                  && n8f_55[1] == "verify ‖ Test+PpA" && n8f_55[2] == typeof(PpA).AssemblyQualifiedName,
+                  $"C8f (D4 · RD2) a type and its assembly that also read as two post-processors — the assembly's name is one's full name — are refused with both ways out, not read one way: listed the other way round they are two, with the version they are one (HEAD: two names) (actual: alone {alone8f_55} · [{string.Join("] [", n8f_55)}])");
+
+            Debug.Verbose = true;
+            if (unix55) foreach (var d in System.IO.Directory.GetDirectories(tmp55, "*", System.IO.SearchOption.AllDirectories))
+                try { System.IO.File.SetUnixFileMode(d, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute); } catch (Exception) { }
+            try { System.IO.Directory.Delete(tmp55, true); } catch (Exception) { }
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            UnityEditor.BuildPipeline.LastParameters = null;
+        }
+
+        Console.WriteLine("56) IMP018 §9-7 7-8 — the path fallback answers a bracketed name as the builder names it: the file of that name, the sprite before the last '[', nothing when one root holds both or two files of one name");
+        {
+            // One profile P56 (Assets/C56) and no catalog: every answer below is the path fallback's (FindByPath). Each check builds its own project.
+            void Project56(ContentNameStyle style = ContentNameStyle.PathWithoutExtension, params (string path, Object main, Object[] subs)[] files)
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat"); FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+                UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false;
+                ContentLinkSimulation.Drop();
+                var p = ContentBuildSettings.instance.Add("P56"); p.SourceRoot = "Assets/C56"; p.OutputPath = "Build/C56"; p.NameStyle = style;
+                p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/c56.asset" } };
+                FakeEngine.Folders.Add("Assets/C56");
+                foreach (var (path, main, subs) in files) FakeEngine.AddProjectAsset(path, main, subs ?? new Object[0]);
+                ContentLinkEditorUtility.Invalidate();
+            }
+            static (string path, Object main, Object[] subs) F56(string path, Object main, params Object[] subs) => (path, main, subs);
+            static string W56(Object o) => o == null ? "null" : UnityEditor.AssetDatabase.GetAssetPath(o) + (UnityEditor.AssetDatabase.IsSubAsset(o) ? $"[{o.name}]" : "");
+            static Object R56(string name) => ContentLinkEditorUtility.ResolveAsset(name);
+            static Object R56s(string name, string sub) => ContentLinkEditorUtility.ResolveAsset(name, sub);
+            (bool ok, string error) Scan56()
+            {
+                int e0 = Debug.Errors; Debug.LastError = ""; Debug.Verbose = false;
+                bool ok = ContentDirectoryBuilder.Scan("Assets/C56", new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>());
+                Debug.Verbose = true;
+                return (ok, Debug.Errors > e0 ? Debug.LastError : "");
+            }
+
+            // ── F-44: a file whose name ends with ']' ──
+            var lit1_56 = new Texture2D { name = "foo[1]" };
+            Project56(files: F56("Assets/C56/Icons/foo[1].png", lit1_56));
+            string pick1_56 = ContentLinkEditorUtility.TryGetLinkForAsset(lit1_56, out var n1_56, out var s1n_56, out _) ? $"{n1_56}|{s1n_56}" : "refused";
+            var r1_56 = R56("Icons/foo[1]"); var r1s_56 = R56s("Icons/foo[1]", "");
+            var scan1_56 = Scan56();
+            Check(pick1_56 == "Icons/foo[1]|" && ReferenceEquals(r1_56, lit1_56) && ReferenceEquals(r1s_56, lit1_56) && scan1_56.ok,
+                  $"C1 F-44 — a file 'foo[1].png' no catalog has yet: the pick names it 'Icons/foo[1]' and the name resolves to it, as the builder names it (HEAD: the name splits into 'Icons/foo' + sprite '1' and the field shows None) (actual: pick {pick1_56} · {W56(r1_56)} · (name, \"\") {W56(r1s_56)} · build {scan1_56.ok})");
+
+            var lit1b_56 = new Texture2D { name = "foo[1]" };
+            Project56(files: new[] { F56("Assets/C56/Icons/foo.png", new Texture2D { name = "foo" }), F56("Assets/C56/Icons/foo[1].png", lit1b_56) });
+            var r1b_56 = R56("Icons/foo[1]");
+            Check(ReferenceEquals(r1b_56, lit1b_56), $"C1b F-44 — beside a 'foo.png' that has no sprite '1' the literal file still answers (HEAD: null) (actual: {W56(r1b_56)})");
+
+            var scene1c_56 = new UnityEditor.SceneAsset { name = "L[1]" };
+            Project56(files: F56("Assets/C56/Levels/L[1].unity", scene1c_56));
+            var r1c_56 = ContentLinkEditorUtility.ResolveScene("Levels/L[1]");
+            Check(ReferenceEquals(r1c_56, scene1c_56), $"C1c F-44 — a scene 'L[1].unity' no catalog has yet resolves for a scene link (HEAD: null) (actual: {W56(r1c_56)})");
+
+            var lit1d_56 = new Object { name = "notes[1]" };
+            Project56(ContentNameStyle.PathWithExtension, F56("Assets/C56/Docs/notes[1]", lit1d_56));
+            var r1d_56 = R56("Docs/notes[1]");
+            Check(ReferenceEquals(r1d_56, lit1d_56), $"C1d F-44 — under a root that keeps the extension, a file with none named 'notes[1]' resolves (HEAD: null) (actual: {W56(r1d_56)})");
+
+            // ── F-44 the other half: the literal file beside the sprite of that name — the builder refuses the root, the simulation answers neither ──
+            var bar2_56 = new Texture2D { name = "bar" }; var one2_56 = new Sprite { name = "1" }; var lit2_56 = new Texture2D { name = "bar[1]" };
+            Project56(files: new[] { F56("Assets/C56/Icons/bar.png", bar2_56, one2_56), F56("Assets/C56/Icons/bar[1].png", lit2_56) });
+            var r2_56 = R56("Icons/bar[1]"); var r2s_56 = R56s("Icons/bar", "1"); var r2m_56 = R56("Icons/bar");
+            var scan2_56 = Scan56();
+            Check(r2_56 == null && r2s_56 == null && ReferenceEquals(r2m_56, bar2_56) && !scan2_56.ok && scan2_56.error.Contains("duplicate name 'Icons/bar[1]'"),
+                  $"C2 F-44 — 'bar[1].png' beside 'bar.png' with the sprite '1': neither the name nor the link (bar, 1) answers — the builder refuses the root for that name; 'Icons/bar' still does (HEAD: the sprite for both) (actual: {W56(r2_56)} · {W56(r2s_56)} · {W56(r2m_56)} · build {scan2_56.ok} '{scan2_56.error}')");
+
+            var fx2b_56 = AtlasProject();
+            var lit2b_56 = new Texture2D { name = "MainAtlas[a1]" };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Atlas/MainAtlas[a1].png", lit2b_56);
+            ContentLinkEditorUtility.Invalidate();
+            var r2b_56 = R56("Atlas/MainAtlas[a1]"); var r2bs_56 = R56s("Atlas/MainAtlas", "a1"); var r2bo_56 = R56("Atlas/MainAtlas[s1]");
+            Check(r2b_56 == null && r2bs_56 == null && ReferenceEquals(r2bo_56, fx2b_56.s1),
+                  $"C2b F-44 — an atlas's name for a sprite it packs beside a file of that name answers nothing; the atlas's other names still do (HEAD: the packed sprite) (actual: {W56(r2b_56)} · {W56(r2bs_56)} · {W56(r2bo_56)})");
+
+            // ── O-8: two files of one name under one root ──
+            string[] Dup56(bool pngFirst)
+            {
+                var png = new Texture2D { name = "dup" }; var d0 = new Sprite { name = "d0" }; var mat = new Object { name = "dup" };
+                var a = F56("Assets/C56/Icons/dup.png", png, d0); var b = F56("Assets/C56/Icons/dup.mat", mat);
+                var solo = F56("Assets/C56/Icons/solo3.png", new Texture2D { name = "solo3" });
+                Project56(files: pngFirst ? new[] { a, b, solo } : new[] { b, a, solo });
+                var scan = Scan56();
+                return new[] { W56(R56("Icons/dup")), W56(R56("Icons/dup[d0]")), W56(R56s("Icons/dup", "d0")), scan.ok ? "built" : scan.error.Contains("duplicate name 'Icons/dup'") ? "refused" : scan.error,
+                               string.Join(",", UnityEditor.AssetDatabase.FindAssets("dup", new[] { "Assets/C56" })), W56(R56("Icons/solo3")) };
+            }
+            var o8a_56 = Dup56(true); var o8b_56 = Dup56(false);
+            Check(o8a_56[0] == "null" && o8b_56[0] == "null" && o8a_56[3] == "refused" && o8b_56[3] == "refused" && o8a_56[4] != o8b_56[4] && o8a_56[5] == "Assets/C56/Icons/solo3.png" && o8b_56[5] == "Assets/C56/Icons/solo3.png",
+                  $"C3 O-8 — 'dup.png' and 'dup.mat' share the name 'Icons/dup': it answers nothing in either order of the search, as the builder refuses it (HEAD: whichever the search gives first) — the two builds list the files in two orders, and a lone file beside answers (actual: png first {o8a_56[0]} · mat first {o8b_56[0]} · build {o8a_56[3]} / {o8b_56[3]} · orders [{o8a_56[4]}] [{o8b_56[4]}] · solo3 {o8a_56[5]} / {o8b_56[5]})");
+            Check(o8a_56[1] == "null" && o8b_56[1] == "null" && o8a_56[2] == "null" && o8b_56[2] == "null",
+                  $"C3b O-8 — the sprite of a name two files share answers nothing either, by its name or as a link, as in the simulation (HEAD: the sprite d0) (actual: [{o8a_56[1]} {o8a_56[2]}] · [{o8b_56[1]} {o8b_56[2]}])");
+
+            // ── the root that answers: the deepest that has the name, once or not at all ──
+            var shallow4_56 = new Texture2D { name = "x" };
+            var y4_56 = new Texture2D { name = "y" };
+            Project56(files: new[] { F56("Assets/C56/Icons/x.png", shallow4_56), F56("Assets/C56/Sub/Icons/x.png", new Texture2D { name = "x" }), F56("Assets/C56/Sub/Icons/x.mat", new Object { name = "x" }), F56("Assets/C56/Icons/y.png", y4_56) });
+            var q4_56 = ContentBuildSettings.instance.Add("Q56"); q4_56.SourceRoot = "Assets/C56/Sub"; q4_56.OutputPath = "Build/Q56";
+            q4_56.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/q56.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            var r4_56 = R56("Icons/x"); var y4r_56 = R56("Icons/y");
+            Check(r4_56 == null && ReferenceEquals(y4r_56, y4_56), $"C4 (D4) a nested root that holds a name twice answers nothing — the name is not taken from the root above it; a name only the root above has still answers (HEAD: the nested root's first file) (actual: {W56(r4_56)} · {W56(y4r_56)})");
+
+            var lociLit5_56 = new Texture2D { name = "sheet[s0]" }; var baseSheet5_56 = new Texture2D { name = "sheet" }; var baseS05_56 = new Sprite { name = "s0" };
+            Project56(files: new[] { F56("Assets/C56/Icons/sheet.png", baseSheet5_56, baseS05_56), F56("Assets/C56x/Icons/sheet[s0].png", lociLit5_56) });
+            var q5_56 = ContentBuildSettings.instance.Add("Q56x"); q5_56.SourceRoot = "Assets/C56x"; q5_56.OutputPath = "Build/Q56x";
+            q5_56.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/q56x.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            var r5_56 = R56("Icons/sheet[s0]");
+            Check(ReferenceEquals(r5_56, lociLit5_56), $"C5 — across roots the first root that has the name answers it: the longer root's literal file, not the other root's sprite (HEAD: the sprite of the other root) (actual: {W56(r5_56)})");
+
+            // ── the simulation: a file made during Play goes through the path search ──
+            var fresh6_56 = new Texture2D { name = "new[2]" };
+            Project56();
+            ContentLinkSimulation.Enabled = true; FakeEngine.EditorServesAnyId = true;
+            Init(typeof(ContentLinkSimulation), "Install");
+            UnityEditor.EditorApplication.isPlaying = true;
+            SceneManager.Open(NewScene(78, "Boot56"));
+            Debug.Verbose = false; ContentService.RegisterDirectory("Build/C56"); Debug.Verbose = true;
+            FakeEngine.AddProjectAsset("Assets/C56/Icons/new[2].png", fresh6_56); FakeEngine.Assets[FakeEngine.ObjectIdOf[fresh6_56]] = fresh6_56;
+            ContentLinkEditorUtility.Invalidate();
+            Debug.Verbose = false; var h6_56 = ContentService.Acquire<Object>("Icons/new[2]"); Debug.Verbose = true;
+            var g6_56 = h6_56.IsValid ? h6_56.Asset : null; h6_56.Dispose(); Tick();
+            Check(ReferenceEquals(g6_56, fresh6_56), $"C6 F-44 — in Play, a file 'new[2].png' made after the registration resolves through the path search (HEAD: the name splits and misses) (actual: {W56(g6_56)})");
+            var twinPng6b_56 = new Texture2D { name = "twin" }; var twinMat6b_56 = new Object { name = "twin" }; var plain6b_56 = new Texture2D { name = "plainP" };
+            FakeEngine.AddProjectAsset("Assets/C56/Icons/plainP.png", plain6b_56); FakeEngine.Assets[FakeEngine.ObjectIdOf[plain6b_56]] = plain6b_56;
+            FakeEngine.AddProjectAsset("Assets/C56/Icons/twin.png", twinPng6b_56); FakeEngine.Assets[FakeEngine.ObjectIdOf[twinPng6b_56]] = twinPng6b_56;
+            FakeEngine.AddProjectAsset("Assets/C56/Icons/twin.mat", twinMat6b_56); FakeEngine.Assets[FakeEngine.ObjectIdOf[twinMat6b_56]] = twinMat6b_56;
+            ContentLinkEditorUtility.Invalidate();
+            Debug.Verbose = false; var h6b_56 = ContentService.Acquire<Object>("Icons/twin"); bool c6b_56 = ContentService.Contains("Icons/twin"); Debug.Verbose = true;
+            var g6b_56 = h6b_56.IsValid ? h6b_56.Asset : null; if (h6b_56.IsValid) h6b_56.Dispose();
+            Debug.Verbose = false; var hp6b_56 = ContentService.Acquire<Object>("Icons/plainP"); Debug.Verbose = true;
+            var gp6b_56 = hp6b_56.IsValid ? hp6b_56.Asset : null; if (hp6b_56.IsValid) hp6b_56.Dispose(); Tick();
+            Check(g6b_56 == null && !c6b_56 && ReferenceEquals(gp6b_56, plain6b_56), $"C6b O-8 — in Play, two files of one name made after the registration are served neither, as the simulation's own scan poisons such a name; a plain file made then is served (HEAD: the first the search gives) (actual: {W56(g6b_56)} · Contains {c6b_56} · plainP {W56(gp6b_56)})");
+            UnityEditor.EditorApplication.isPlaying = false; ContentLinkSimulation.Drop(); FakeEngine.EditorServesAnyId = false;
+
+            // ── the pick refuses a name its root holds twice, naming the files (as a res: path several files share) ──
+            var png9_56 = new Texture2D { name = "dup" }; var mat9_56 = new Object { name = "dup" };
+            var bar9_56 = new Texture2D { name = "bar" }; var one9_56 = new Sprite { name = "1" }; var lit9_56 = new Texture2D { name = "bar[1]" };
+            var solo9_56 = new Texture2D { name = "solo" };
+            Project56(files: new[] { F56("Assets/C56/Icons/dup.png", png9_56), F56("Assets/C56/Icons/dup.mat", mat9_56), F56("Assets/C56/Icons/bar.png", bar9_56, one9_56), F56("Assets/C56/Icons/bar[1].png", lit9_56), F56("Assets/C56/Icons/solo.png", solo9_56) });
+            static string P56(Object a) => ContentLinkEditorUtility.TryGetNameForAsset(a, out var n, out var r) ? "named " + n : "refused " + r;
+            static string L56(Object a) => ContentLinkEditorUtility.TryGetLinkForAsset(a, out var n, out var s, out var r) ? $"linked {n}|{s}" : "refused " + r;
+            static string RF56(Object a) => ContentLinkEditorUtility.TryGetRefForAsset(a, out var g, out var s, out var r) ? $"ref {g}|{s}" : "refused " + r;
+            var c9_56 = new[] { P56(png9_56), P56(mat9_56), L56(png9_56), RF56(png9_56) };
+            Check(c9_56[0].StartsWith("refused") && c9_56[0].Contains("Assets/C56/Icons/dup.png") && c9_56[0].Contains("Assets/C56/Icons/dup.mat") && c9_56[0].Contains("rename one") && c9_56[1].StartsWith("refused") && c9_56[2].StartsWith("refused") && c9_56[3].StartsWith("refused"),
+                  $"C9 (D5 b) the pick of a file whose name another file under the root has is refused, naming both — for a link and for a reference, the field keeps its value (HEAD: named 'Icons/dup', then the field shows one of the two) (actual: {string.Join(" · ", c9_56)})");
+            var c9b_56 = new[] { P56(lit9_56), L56(one9_56), P56(bar9_56), P56(solo9_56) };
+            Check(c9b_56[0].StartsWith("refused") && c9b_56[0].Contains("bar[1].png") && c9b_56[0].Contains("bar.png") && c9b_56[1].StartsWith("refused") && c9b_56[2] == "named Icons/bar" && c9b_56[3] == "named Icons/solo",
+                  $"C9b (D5 b) the literal 'bar[1].png' and the sprite '1' of 'bar.png' are refused, 'bar.png' itself and a lone file are named (HEAD: all named) (actual: {string.Join(" · ", c9b_56)})");
+
+            var dpng9c_56 = new Texture2D { name = "dup" }; var d09c_56 = new Sprite { name = "d0" };
+            Project56(files: new[] { F56("Assets/C56/Icons/dup.png", dpng9c_56, d09c_56), F56("Assets/C56/Icons/dup.mat", new Object { name = "dup" }), F56("Assets/C56/Icons/dup.txt", new Object { name = "dup" }), F56("Assets/C56/Icons/lit[x].png", new Texture2D { name = "lit[x]" }), F56("Assets/C56/Icons/lit.png", new Object { name = "lit" }), F56("Assets/C56/Icons/lit.mat", new Object { name = "lit" }) });
+            var c9c_56 = new[] { L56(d09c_56), P56(UnityEditor.AssetDatabase.LoadMainAssetAtPath("Assets/C56/Icons/lit[x].png")) };
+            Check(c9c_56[0].StartsWith("refused 'Icons/dup[d0]' reads as a sprite of 'Icons/dup', which names 3 files") && c9c_56[0].Contains("dup.png") && c9c_56[0].Contains("dup.mat") && c9c_56[0].Contains("dup.txt")
+                  && c9c_56[1].StartsWith("refused 'Icons/lit[x]' reads as a sprite of 'Icons/lit', which names 2 files under 'Assets/C56' (") && c9c_56[1].Contains("Assets/C56/Icons/lit.png") && c9c_56[1].Contains("Assets/C56/Icons/lit.mat"),
+                  $"C9c (D5 b) a sprite — or a file named like one — whose main name several files share is refused naming that main name and every file of it, the name a build refuses (actual: {string.Join(" · ", c9c_56)})");
+
+            // ── a folder named like the file is not a second file of its name ──
+            var x10_56 = new Texture2D { name = "x" };
+            string[] Folder56(bool folderFirst)
+            {
+                var folder = new UnityEditor.DefaultAsset { name = "x" };
+                var a = F56("Assets/C56/Icons/x", folder); var b = F56("Assets/C56/Icons/x.png", x10_56);
+                Project56(files: folderFirst ? new[] { a, b } : new[] { b, a });
+                FakeEngine.Folders.Add("Assets/C56/Icons/x");
+                ContentLinkEditorUtility.Invalidate();
+                return new[] { W56(R56("Icons/x")), P56(x10_56), string.Join(",", UnityEditor.AssetDatabase.FindAssets("x", new[] { "Assets/C56" })) };
+            }
+            var c10a_56 = Folder56(true); var c10b_56 = Folder56(false);
+            Check(c10a_56[0] == "Assets/C56/Icons/x.png" && c10b_56[0] == "Assets/C56/Icons/x.png" && c10a_56[1] == "named Icons/x" && c10b_56[1] == "named Icons/x" && c10a_56[2] != c10b_56[2],
+                  $"C10 (control) a folder 'Icons/x' beside 'x.png' is no second file of the name 'Icons/x' — in either order of the search, for the answer and for the pick (actual: {string.Join(" · ", c10a_56)} / {string.Join(" · ", c10b_56)})");
+
+            // ── a dot in the file name before the extension ──
+            var v2_56 = new Texture2D { name = "a.v2" }; var v2s_56 = new Sprite { name = "s0" };
+            Project56(files: new[] { F56("Assets/C56/Icons/a.v2.png", v2_56, v2s_56), F56("Assets/C56/Icons/a.png", new Texture2D { name = "a" }) });
+            var c11_56 = new[] { W56(R56("Icons/a.v2")), W56(R56("Icons/a.v2[s0]")), W56(R56s("Icons/a.v2", "s0")), P56(v2_56), W56(R56("Icons/a")) };
+            Check(c11_56[0] == "Assets/C56/Icons/a.v2.png" && c11_56[1] == "Assets/C56/Icons/a.v2.png[s0]" && c11_56[2] == "Assets/C56/Icons/a.v2.png[s0]" && c11_56[3] == "named Icons/a.v2" && c11_56[4] == "Assets/C56/Icons/a.png",
+                  $"C11 (control) 'a.v2.png' is named 'Icons/a.v2' — the extension is only what follows the last dot: it, its sprite and its pick answer, beside 'a.png' (actual: {string.Join(" · ", c11_56)})");
+
+            // ── a catalogued name whose id no longer loads: the fallback answers it as it answers a plain one ──
+            var oldLit12_56 = new Texture2D { name = "old[1]" }; var oldPlain12_56 = new Texture2D { name = "oldp" };
+            Project56(files: new[] { F56("Assets/C56/Icons/old[1].png", oldLit12_56), F56("Assets/C56/Icons/oldp.png", oldPlain12_56) });
+            var cat12_56 = ScriptableObject.CreateInstance<ContentCatalog>();
+            var scanned12_56 = new System.Collections.Generic.List<ContentDirectoryBuilder.Scanned>();
+            ContentDirectoryBuilder.Scan("Assets/C56", scanned12_56);
+            ContentDirectoryBuilder.Write(cat12_56, "Assets/C56", scanned12_56);
+            FakeEngine.AddProjectAsset("Assets/Cat/c56.asset", cat12_56);
+            ContentLinkEditorUtility.Invalidate();
+            var before12_56 = new[] { ContentLinkEditorUtility.Validate("Icons/old[1]", typeof(Texture2D)), ContentLinkEditorUtility.Validate("Icons/oldp", typeof(Texture2D)) };
+            FakeEngine.ObjectById.Remove(FakeEngine.ObjectIdOf[oldLit12_56]); FakeEngine.ObjectById.Remove(FakeEngine.ObjectIdOf[oldPlain12_56]);   // the files replaced by others: the catalog's ids load nothing
+            var newLit12_56 = new Texture2D { name = "old[1]" }; var newPlain12_56 = new Texture2D { name = "oldp" };
+            FakeEngine.AddProjectAsset("Assets/C56/Icons/old[1].png", newLit12_56); FakeEngine.AddProjectAsset("Assets/C56/Icons/oldp.png", newPlain12_56);
+            ContentLinkEditorUtility.Invalidate();
+            var after12_56 = new[] { ContentLinkEditorUtility.Validate("Icons/old[1]", typeof(Texture2D)), ContentLinkEditorUtility.Validate("Icons/oldp", typeof(Texture2D)) };
+            var r12_56 = R56("Icons/old[1]");
+            Check(before12_56[0] == NameStatus.Ok && before12_56[1] == NameStatus.Ok && after12_56[0] == NameStatus.Ok && after12_56[1] == NameStatus.Ok && ReferenceEquals(r12_56, newLit12_56),
+                  $"C12 (U-5) a catalogued 'old[1]' whose id no longer loads is answered by the path search like the plain 'oldp' — the file now at that path (HEAD: the bracketed one splits and is amber) (actual: before {before12_56[0]} · {before12_56[1]} · after {after12_56[0]} · {after12_56[1]} · {W56(r12_56)})");
+
+            // ── a sprite whose name holds '[': its pick is judged by its link, never split again ──
+            var fresh9d_56 = new Texture2D { name = "fresh" }; var b29d_56 = new Sprite { name = "b[2]" };
+            Project56(files: new[] { F56("Assets/C56/Icons/fresh.png", fresh9d_56, b29d_56), F56("Assets/C56/Icons/fresh[b[2]].png", new Texture2D { name = "fresh[b[2]]" }) });
+            var c9d_56 = new[] { L56(b29d_56), RF56(b29d_56), W56(R56s("Icons/fresh", "b[2]")), P56(fresh9d_56) };
+            var fresh9e_56 = new Texture2D { name = "fresh" }; var b29e_56 = new Sprite { name = "b[2]" };
+            Project56(files: new[] { F56("Assets/C56/Icons/fresh.png", fresh9e_56, b29e_56), F56("Assets/C56/Icons/fresh.mat", new Object { name = "fresh" }) });
+            var c9e_56 = new[] { L56(b29e_56), W56(R56s("Icons/fresh", "b[2]")) };
+            Project56(files: F56("Assets/C56/Icons/fresh.png", fresh9d_56 = new Texture2D { name = "fresh" }, b29d_56 = new Sprite { name = "b[2]" }));
+            var c9f_56 = new[] { L56(b29d_56), W56(R56s("Icons/fresh", "b[2]")) };
+            Check(c9d_56[0].StartsWith("refused 'Icons/fresh[b[2]]' is the file Assets/C56/Icons/fresh[b[2]].png and the sprite 'b[2]' of Assets/C56/Icons/fresh.png") && c9d_56[1].StartsWith("refused") && c9d_56[2] == "null" && c9d_56[3] == "named Icons/fresh"
+                  && c9e_56[0].StartsWith("refused 'Icons/fresh[b[2]]' reads as a sprite of 'Icons/fresh', which names 2 files") && c9e_56[1] == "null"
+                  && c9f_56[0] == "linked Icons/fresh|b[2]" && c9f_56[1] == "Assets/C56/Icons/fresh.png[b[2]]",
+                  $"C9d (D5 b) the sprite 'b[2]' is picked by its link: beside a file 'fresh[b[2]].png', or with 'fresh' shared, the pick is refused as the field shows nothing; alone it links and answers (v3b split the name again and took the pick) (actual: {string.Join(" · ", c9d_56)} / {string.Join(" · ", c9e_56)} / {string.Join(" · ", c9f_56)})");
+
+            // ── two sprites of one name: in an atlas's packing, or in one texture — the builder refuses the name ──
+            var fx14_56 = AtlasProject();
+            var r14t_56 = new Texture2D { name = "t" }; var r14x_56 = new Sprite { name = "x" }; var b14t_56 = new Texture2D { name = "t" }; var b14x_56 = new Sprite { name = "x" };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Art/R/t.png", r14t_56, r14x_56); FakeEngine.AddProjectAsset(AtlasFx.R + "/Art/B/t.png", b14t_56, b14x_56);
+            var twin14_56 = new UnityEngine.U2D.SpriteAtlas { name = "Twin", Packables = new Object[] { r14t_56, b14t_56 } }; twin14_56.Bound.AddRange(new[] { r14x_56, b14x_56 });
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Atlas/Twin.spriteatlasv2", twin14_56);
+            var lit14_56 = new Texture2D { name = "Twin[x]" };
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Atlas/Twin[x].png", lit14_56);
+            ContentLinkEditorUtility.Invalidate();
+            var c14_56 = new[] { W56(R56("Atlas/Twin[x]")), W56(R56s("Atlas/Twin", "x")), P56(lit14_56) };
+            Check(c14_56[0] == "null" && c14_56[1] == "null" && c14_56[2].StartsWith("refused 'Atlas/Twin[x]' is the file Assets/Content/Atlas/Twin[x].png and two sprites 'x' of Assets/Content/Atlas/Twin.spriteatlasv2"),
+                  $"C14 an atlas that packs two sprites named 'x' beside a file 'Twin[x].png': neither the name nor the link answers, and the file's pick is refused naming both (v3b: the file — a name the builder refuses; HEAD: null) (actual: {string.Join(" · ", c14_56)})");
+            var two14_56 = new Texture2D { name = "two" }; var s0a14_56 = new Sprite { name = "s0" }; var s0b14_56 = new Sprite { name = "s0" }; var s114_56 = new Sprite { name = "s1" };
+            Project56(files: F56("Assets/C56/Icons/two.png", two14_56, s0a14_56, s0b14_56, s114_56));
+            var c14b_56 = new[] { W56(R56("Icons/two[s0]")), W56(R56s("Icons/two", "s0")), L56(s0a14_56), L56(s0b14_56), L56(s114_56) };
+            Check(c14b_56[0] == "null" && c14b_56[1] == "null" && c14b_56[2].StartsWith("refused 'Icons/two[s0]' is two sprites 's0' of Assets/C56/Icons/two.png") && c14b_56[3].StartsWith("refused") && c14b_56[4] == "linked Icons/two|s1",
+                  $"C14b a texture with two sprites named 's0': neither answers and neither is picked; its sprite 's1' is (HEAD: the first s0 for both, the second picked while the field draws the first) (actual: {string.Join(" · ", c14b_56)})");
+
+            // ── a sprite outside every root, named through an atlas whose main name another file shares ──
+            var fx15_56 = AtlasProject();
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/Atlas/MainAtlas.png", new Texture2D { name = "MainAtlas" });
+            ContentLinkEditorUtility.Invalidate();
+            var c15_56 = new[] { P56(fx15_56.o1), RF56(fx15_56.o1) };
+            Check(c15_56[0].StartsWith("refused 'Atlas/MainAtlas[o1]' reads as a sprite of 'Atlas/MainAtlas', which names 2 files") && c15_56[1].StartsWith("refused"),
+                  $"C15 (F4) the outside sprite named only through an atlas whose main name another file shares is refused, for a link and a reference — no reference to the texture outside every root (v3b: the reference took o1.png's GUID; HEAD: by the search order) (actual: {string.Join(" · ", c15_56)})");
+
+            // ── a file whose main asset does not load (a script that is gone): the builder skips it, and so does the fallback ──
+            var doc13_56 = new Object { name = "doc" }; var dead13_56 = new Object { name = "doc", destroyed = true };
+            Project56(files: new[] { F56("Assets/C56/Icons/doc.asset", dead13_56), F56("Assets/C56/Icons/doc.txt", doc13_56) });   // the engine lists doc.asset first (by path — measured)
+            var scan13_56 = Scan56();
+            var c13_56 = new[] { W56(R56("Icons/doc")), P56(doc13_56) };
+            Check(c13_56[0] == "Assets/C56/Icons/doc.txt" && c13_56[1] == "named Icons/doc" && scan13_56.ok,
+                  $"C13 a file whose main asset does not load is no second file of its name — the builder builds 'doc.txt' under the name, and the answer and the pick follow (HEAD: the dead one, null) (actual: {string.Join(" · ", c13_56)} · build {scan13_56.ok})");
+
+            // ── controls: what answered before still does ──
+            var sheet7_56 = new Texture2D { name = "sheet" }; var s07_56 = new Sprite { name = "s0" }; var fresh7_56 = new Texture2D { name = "fresh" }; var b27_56 = new Sprite { name = "b[2]" };
+            var flag7_56 = new Texture2D { name = "flag" };
+            Project56(files: new[] { F56("Assets/C56/Icons/sheet.png", sheet7_56, s07_56), F56("Assets/C56/Icons/fresh.png", fresh7_56, b27_56), F56("Assets/C56/Icons/flag.png", flag7_56) });
+            var c7_56 = new[] { R56("Icons/sheet[s0]"), R56s("Icons/sheet", "s0"), R56("Icons/sheet"), R56s("Icons/fresh", "b[2]"), R56("Icons/fresh[b[2]]"), R56("Icons/sheet[nope]"), R56("Icons/flag"), R56("Icons/flag[]"), R56("[s0]") };
+            Check(ReferenceEquals(c7_56[0], s07_56) && ReferenceEquals(c7_56[1], s07_56) && ReferenceEquals(c7_56[2], sheet7_56) && ReferenceEquals(c7_56[3], b27_56) && c7_56[4] == null && c7_56[5] == null && ReferenceEquals(c7_56[6], flag7_56) && c7_56[7] == null && c7_56[8] == null,
+                  $"C7 (control) a sprite alone answers by its name and as a link · the main · a sprite name that holds '[' as a link only (by its whole name it stays out of reach — §8) · a missing sprite · a plain file · 'flag[]' · a name that is only '[…]' (actual: {string.Join(" · ", System.Array.ConvertAll(c7_56, W56))})");
+
+            var base8_56 = new Texture2D { name = "flag" };
+            Project56(files: new[] { F56("Assets/C56/Icons/flag.png", base8_56), F56("Assets/C56x/Icons/flag.png", new Texture2D { name = "flag" }) });
+            var q8_56 = ContentBuildSettings.instance.Add("Q56x"); q8_56.SourceRoot = "Assets/C56x"; q8_56.OutputPath = "Build/Q56x";
+            q8_56.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/q56x.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            var r8_56 = R56("Icons/flag");
+            Check(r8_56 != null && UnityEditor.AssetDatabase.GetAssetPath(r8_56) == "Assets/C56x/Icons/flag.png",
+                  $"C8 (control) one file of the name in each of two roots is not two files of one name: the longer root answers, as before (actual: {W56(r8_56)})");
+
+            // ── what the checks above leave open (each kills a mutant that survives them) ──
+            var litX1 = new Texture2D { name = "sheet[s0]" }; var sheetX1 = new Texture2D { name = "sheet" }; var s0X1 = new Sprite { name = "s0" };
+            Project56(files: new[] { F56("Assets/C56/Icons/sheet[s0].png", litX1), F56("Assets/C56x/Icons/sheet.png", sheetX1, s0X1) });
+            var qX1 = ContentBuildSettings.instance.Add("Q56x"); qX1.SourceRoot = "Assets/C56x"; qX1.OutputPath = "Build/Q56x";
+            qX1.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/q56x.asset" } };
+            ContentLinkEditorUtility.Invalidate();
+            var x1 = new[] { R56("Icons/sheet[s0]"), R56s("Icons/sheet", "s0") };
+            Check(ReferenceEquals(x1[0], s0X1) && ReferenceEquals(x1[1], s0X1),
+                  $"C5b C5 the other way round — the literal in the shorter root, the sprite in the longer: the longer root answers, so the sprite (actual: {W56(x1[0])} · {W56(x1[1])})");
+
+            var aX2 = new Texture2D { name = "a" }; var s0X2 = new Sprite { name = "s0" };
+            Project56(files: F56("Assets/C56/a.png", aX2, s0X2));
+            var x2 = new[] { W56(R56("a[s0]")), L56(s0X2) };
+            Check(x2[0] == "Assets/C56/a.png[s0]" && x2[1] == "linked a|s0",
+                  $"C7b (control) a one-letter main at the top of the root: 'a[s0]' is the sprite s0 of 'a.png' (open == 1 still splits) (actual: {string.Join(" · ", x2)})");
+
+            var xX3 = new Texture2D { name = "x" }; var aX3 = new Sprite { name = "a" }; var litX3 = new Texture2D { name = "x[ab" };
+            Project56(files: new[] { F56("Assets/C56/Icons/x.png", xX3, aX3), F56("Assets/C56/Icons/x[ab.png", litX3) });
+            var x3 = new[] { W56(R56("Icons/x[ab")), P56(litX3), W56(R56("Icons/x[a]")) };
+            Check(x3[0] == "Assets/C56/Icons/x[ab.png" && x3[1] == "named Icons/x[ab" && x3[2] == "Assets/C56/Icons/x.png[a]",
+                  $"C7c (control) a name with '[' that does not end with ']' is a plain name — the answer and the pick — beside 'x.png' with a sprite 'a' (actual: {string.Join(" · ", x3)})");
+
+            Project56(ContentNameStyle.PathWithExtension, F56("Assets/C56/Docs/set[1]", new UnityEditor.DefaultAsset { name = "set[1]" }), F56("Assets/C56/Docs/set[1]/x.txt", new Object { name = "x" }));
+            FakeEngine.Folders.Add("Assets/C56/Docs/set[1]"); ContentLinkEditorUtility.Invalidate();
+            var x4 = new[] { W56(R56("Docs/set[1]")), W56(R56("Docs/set[1]/x.txt")) };
+            Check(x4[0] == "null" && x4[1] == "Assets/C56/Docs/set[1]/x.txt",
+                  $"C1e (control) under a root that keeps the extension a folder named like a bracketed name answers nothing; the file in it does (actual: {string.Join(" · ", x4)})");
+
+            Project56(files: F56("Assets/c56/Icons/case.png", new Texture2D { name = "case" }));
+            FakeEngine.Folders.Remove("Assets/C56"); FakeEngine.Folders.Add("Assets/c56"); ContentLinkEditorUtility.Invalidate();
+            var x5a = W56(R56("Icons/case"));
+            Project56(ContentNameStyle.PathWithExtension, F56("Assets/c56/Docs/case[1]", new Object { name = "case[1]" }));
+            FakeEngine.Folders.Remove("Assets/C56"); FakeEngine.Folders.Add("Assets/c56"); ContentLinkEditorUtility.Invalidate();
+            var x5b = W56(R56("Docs/case[1]"));
+            Check(x5a == "null" && x5b == "null",
+                  $"C8b (control) a root written 'Assets/C56' over a folder spelled 'Assets/c56' names nothing by the path rule — the search and the lookup ignore case, the rule compares the root as written (actual: {x5a} · {x5b})");
+
+            var modelX6 = new Object { name = "model" }; var clipX6 = new Object { name = "clip" }; var spX6 = new Sprite { name = "sp" };
+            Project56(files: F56("Assets/C56/Icons/model.fbx", modelX6, clipX6, spX6));
+            var x6 = new[] { W56(R56("Icons/model[clip]")), W56(R56s("Icons/model", "clip")), W56(R56("Icons/model[sp]")) };
+            Check(x6[0] == "null" && x6[1] == "null" && x6[2] == "Assets/C56/Icons/model.fbx[sp]",
+                  $"C7d (control) a sub-asset that is not a sprite has no 'main[sub]' name — by the name and as a link; the sprite beside it has (actual: {string.Join(" · ", x6)})");
+
+            var fxX7 = AtlasProject();
+            var v1X7 = new UnityEngine.U2D.SpriteAtlas { name = "Old", Packables = new Object[] { fxX7.sheet } }; v1X7.Bound.AddRange(new[] { fxX7.s0, fxX7.s1 });
+            FakeEngine.AddProjectAsset(AtlasFx.R + "/V1/Old.spriteatlas", v1X7); ContentLinkEditorUtility.Invalidate();
+            var x7 = new[] { W56(R56("V1/Old[s0]")), W56(R56s("V1/Old", "s0")), W56(R56("Atlas/MainAtlas[s0]")) };
+            Check(x7[0] == "null" && x7[1] == "null" && x7[2] == "Assets/Content/Icons/sheet.png[s0]",
+                  $"C2c (control) a V1 atlas names no sprite, so its 'atlas[sprite]' answers nothing by the path rule; a V2 atlas's does (actual: {string.Join(" · ", x7)})");
+
+            var readmeX8 = new Object { name = "readme" }; var litX8 = new Object { name = "notes[1]" };
+            Project56(files: new[] { F56("Assets/C56/v1.2/readme", readmeX8), F56("Assets/C56/v1.2/notes[1]", litX8) });
+            var x8 = new[] { R56("v1.2/readme"), R56("v1.2/notes[1]") };
+            Check(ReferenceEquals(x8[0], readmeX8), $"C11b (control) a file with no extension in a folder whose name has a dot is found — the dot before the file name is no extension (actual: {W56(x8[0])})");
+            Check(ReferenceEquals(x8[1], litX8), $"C11c F-44 — the same for a bracketed file with no extension (HEAD: null) (actual: {W56(x8[1])})");
+
+            var d1X9 = new Texture2D { name = "dup" };
+            Project56(files: new[] { F56("Assets/C56/Icons/dup.png", d1X9), F56("Assets/C56/Icons/dup.mat", new Object { name = "dup" }), F56("Assets/C56/Icons/dup.txt", new Object { name = "dup" }) });
+            var x9 = P56(d1X9);
+            Check(x9.StartsWith("refused 'Icons/dup' names 3 files under 'Assets/C56' (") && x9.Contains("Assets/C56/Icons/dup.png") && x9.Contains("Assets/C56/Icons/dup.mat") && x9.Contains("Assets/C56/Icons/dup.txt"),
+                  $"C9e (D5 b) the pick of one of three files of a name says three and names all three, under the root (actual: {x9})");
+            bool okX11 = ContentLinkEditorUtility.TryGetNameForAsset(d1X9, out var nX11, out _);
+            bool okLX11 = ContentLinkEditorUtility.TryGetLinkForAsset(d1X9, out var lnX11, out var lsX11, out _);
+            bool okRX11 = ContentLinkEditorUtility.TryGetRefForAsset(d1X9, out var gX11, out var gsX11, out _);
+            Check(!okX11 && nX11 == null && !okLX11 && lnX11 == null && lsX11 == null && !okRX11 && gX11 == null && gsX11 == null,
+                  $"C9g (D5 b) a refused pick hands out no name, link or reference (actual: {okX11} '{nX11}' · {okLX11} '{lnX11}|{lsX11}' · {okRX11} '{gX11}|{gsX11}')");
+
+            var barX10 = new Texture2D { name = "bar" }; var oneX10 = new Sprite { name = "1" }; var litX10 = new Texture2D { name = "bar[1]" };
+            Project56(files: new[] { F56("Assets/C56/Icons/bar.png", barX10, oneX10), F56("Assets/C56/Icons/bar[1].png", litX10) });
+            const string whyX10 = "'Icons/bar[1]' is the file Assets/C56/Icons/bar[1].png and the sprite '1' of Assets/C56/Icons/bar.png under 'Assets/C56' — the build refuses a name two things share; rename one";
+            var x10 = new[] { P56(litX10), L56(oneX10) };
+            Check(x10[0] == "refused " + whyX10 && x10[1] == "refused " + whyX10,
+                  $"C9f (D5 b) the file-and-sprite reason gives each its role — the file, the sprite name, its texture, the root — for the file's pick and the sprite's (actual: {string.Join(" · ", x10)})");
+
+            var sceneX12 = new UnityEditor.SceneAsset { name = "L" };
+            Project56(files: new[] { F56("Assets/C56/Levels/L.unity", sceneX12), F56("Assets/C56/Levels/L.png", new Texture2D { name = "L" }) });
+            var scanX12 = Scan56();
+            var x12 = new[] { W56(ContentLinkEditorUtility.ResolveScene("Levels/L")), P56(sceneX12) };
+            Check(x12[0] == "null" && x12[1].StartsWith("refused 'Levels/L' names 2 files") && x12[1].Contains("Levels/L.unity") && x12[1].Contains("Levels/L.png") && !scanX12.ok && scanX12.error.Contains("duplicate name 'Levels/L'"),
+                  $"C9h (D5 b) a scene whose name a texture shares: the scene link answers nothing and the scene's pick is refused naming both, as the builder refuses the name (actual: {string.Join(" · ", x12)} · build {scanX12.ok} '{scanX12.error}')");
+
+            var sheetX13 = new Texture2D { name = "sheet" }; var s0X13 = new Sprite { name = "s0" }; var litX13 = new Object { name = "sheet.png[s0]" };
+            Project56(ContentNameStyle.PathWithExtension, F56("Assets/C56/Docs/sheet.png", sheetX13, s0X13), F56("Assets/C56/Docs/sheet.png[s0]", litX13));
+            var scanX13 = Scan56();
+            var x13 = new[] { W56(R56("Docs/sheet.png[s0]")), W56(R56s("Docs/sheet.png", "s0")), P56(litX13), L56(s0X13), W56(R56("Docs/sheet.png")) };
+            Check(x13[0] == "null" && x13[1] == "null" && x13[2].StartsWith("refused 'Docs/sheet.png[s0]' is the file") && x13[3].StartsWith("refused 'Docs/sheet.png[s0]' is the file") && x13[4] == "Assets/C56/Docs/sheet.png" && !scanX13.ok && scanX13.error.Contains("duplicate name 'Docs/sheet.png[s0]'"),
+                  $"C2d F-44 — under a root that keeps the extension, a file 'sheet.png[s0]' beside the sprite s0 of 'sheet.png': neither answers, neither is picked, as the builder refuses (HEAD: the sprite) (actual: {string.Join(" · ", x13)} · build {scanX13.ok} '{scanX13.error}')");
+
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+            Init(typeof(ContentService), "ResetStatics");
+        }
+
+        Console.WriteLine("57) IMP018 §9-1 7-7 — the scan guard: a catalog under the root is refused, and a V1 atlas refuses the build when it packs a sprite the content uses");
+        {
+            // One profile P57 (Assets/C57). The prefab, the material, the scene and the holders are placeholders the scan takes like any
+            // asset; what each references is declared in FakeEngine.Uses, which EditorUtility.CollectDependencies follows (measured on
+            // 6000.6: a prefab answers the sprite it draws, a scene asset the sprites in its scene, a material the texture it holds).
+            const string R57 = "Assets/C57", S57 = "Assets/Shared57";
+            Texture2D tT57 = null, uT57 = null, wT57 = null, sT57 = null, xT57 = null, aT57 = null, zT57 = null;
+            Sprite s57 = null, t57 = null, u57 = null, w57 = null, x57 = null, a57 = null, z57 = null;
+            ScriptableObject p57 = null, m57 = null, q57 = null, h57 = null;
+            UnityEditor.SceneAsset sc57 = null;
+            void Project57()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+                UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+                var p = ContentBuildSettings.instance.Add("P57"); p.SourceRoot = R57; p.OutputPath = "Build/C57";
+                p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/c57.asset" } };
+                Sprite Sheet(string path, string name, out Texture2D tex) { tex = new Texture2D { name = name }; var sprite = new Sprite { name = name }; FakeEngine.AddProjectAsset(path, tex, sprite); return sprite; }
+                a57 = Sheet(R57 + "/Icons/a.png", "a", out aT57);   // a sprite the catalog names
+                s57 = Sheet(S57 + "/s.png", "s", out sT57);         // drawn by the prefab P
+                t57 = Sheet(S57 + "/t.png", "t", out tT57);         // its texture held by the material M (not its sprite)
+                u57 = Sheet(S57 + "/u.png", "u", out uT57);         // drawn in the scene S
+                w57 = Sheet(S57 + "/w.png", "w", out wT57);         // held by H, outside the root, which the prefab Q holds
+                x57 = Sheet(S57 + "/x.png", "x", out xT57);         // drawn in the scene too, packed by no atlas
+                z57 = Sheet(S57 + "/z.png", "z", out zT57);         // nothing uses it
+                p57 = new ScriptableObject { name = "P" }; FakeEngine.AddProjectAsset(R57 + "/Prefabs/P.prefab", p57); FakeEngine.Uses[p57] = new Object[] { s57, sT57 };
+                m57 = new ScriptableObject { name = "M" }; FakeEngine.AddProjectAsset(R57 + "/Mats/M.mat", m57); FakeEngine.Uses[m57] = new Object[] { tT57 };
+                sc57 = new UnityEditor.SceneAsset { name = "S" }; FakeEngine.AddProjectAsset(R57 + "/Scenes/S.unity", sc57); FakeEngine.Uses[sc57] = new Object[] { u57, uT57, x57, xT57 };
+                h57 = new ScriptableObject { name = "H" }; FakeEngine.AddProjectAsset(S57 + "/H.asset", h57); FakeEngine.Uses[h57] = new Object[] { w57 };
+                q57 = new ScriptableObject { name = "Q" }; FakeEngine.AddProjectAsset(R57 + "/Prefabs/Q.prefab", q57); FakeEngine.Uses[q57] = new Object[] { h57 };
+                FakeEngine.AddProjectAsset(R57 + "/Data/Plain.asset", new ScriptableObject { name = "Plain" });   // a ScriptableObject that is no catalog, with the catalogs' extension
+                ContentLinkEditorUtility.Invalidate();
+            }
+            UnityEngine.U2D.SpriteAtlas Atlas57(string path, params Object[] packables)
+            {
+                var atlas = new UnityEngine.U2D.SpriteAtlas { name = System.IO.Path.GetFileNameWithoutExtension(path), Packables = packables };
+                foreach (var p in packables) foreach (var r in UnityEditor.AssetDatabase.LoadAllAssetRepresentationsAtPath(UnityEditor.AssetDatabase.GetAssetPath(p))) if (r is Sprite sprite) atlas.Bound.Add(sprite);
+                FakeEngine.Uses[atlas] = packables;   // the atlas references what it packs, and a packed sprite links to its atlas — which only the objects follow (measured)
+                foreach (var bound in atlas.Bound) FakeEngine.Links[bound] = new Object[] { atlas };
+                FakeEngine.AddProjectAsset(path, atlas);
+                return atlas;
+            }
+            static ContentCatalog Catalog57(string path) { var c = ScriptableObject.CreateInstance<ContentCatalog>(); c.name = System.IO.Path.GetFileNameWithoutExtension(path); FakeEngine.AddProjectAsset(path, c); return c; }
+
+            // ── F-39: a catalog under the root ──
+            Project57();
+            Catalog57(R57 + "/Other/B.asset");
+            var c1_57 = ScanFx(R57);
+            Check(!c1_57.ok && c1_57.error.Contains("'Assets/C57/Other/B.asset' is a ContentCatalog under the source root 'Assets/C57'") && c1_57.error.Contains("Move it out of the root") && !HasEntry(c1_57.items, "Other/B"),
+                  $"C1 F-39 — a catalog under the root refuses the scan and is not named (HEAD: named, and the build carries every asset it names): {c1_57.error}");
+
+            Project57();
+            Catalog57(R57 + "/Deep/er/Old.asset");
+            var c1b_57 = ScanFx(R57);
+            Check(!c1b_57.ok && c1b_57.error.Contains("Deep/er/Old.asset' is a ContentCatalog") && c1b_57.errors == 1,
+                  $"C1b — one refusal for one catalog, wherever it lies under the root (errors {c1b_57.errors}): {c1b_57.error}");
+
+            Project57();
+            var c1c_57 = ScanFx(R57);
+            Check(c1c_57.ok && HasEntry(c1c_57.items, "Prefabs/P") && HasEntry(c1c_57.items, "Mats/M") && HasEntry(c1c_57.items, "Prefabs/Q") && HasEntry(c1c_57.items, "Data/Plain"),
+                  $"C1c control — other ScriptableObjects under the root stay content: a catalog is refused by its type, not by being an asset (ok {c1c_57.ok} · {c1c_57.error})");
+
+            Project57();
+            var m1d_57 = Catalog57(R57 + "/Other/M.mat");   // the engine imports a catalog saved as .mat, .anim, .preset … as a catalog (measured)
+            var c1d_57 = ScanFx(R57);
+            bool pick1d_57 = ContentLinkEditorUtility.TryGetNameForAsset(m1d_57, out var n1d_57, out _);
+            var r1d_57 = ContentLinkEditorUtility.ResolveAsset("Other/M");
+            Check(!c1d_57.ok && c1d_57.error.Contains("'Assets/C57/Other/M.mat' is a ContentCatalog under the source root") && !HasEntry(c1d_57.items, "Other/M") && !pick1d_57 && n1d_57 == null && r1d_57 == null,
+                  $"C1d F-39 — a catalog saved as .mat: the scan and the pick refuse it, the path fallback answers nothing (HEAD: named) (actual: {c1d_57.ok} · {c1d_57.error} · pick {pick1d_57} {n1d_57} · {(r1d_57 == null ? "null" : r1d_57.name)})");
+
+            {
+                Project57();
+                Catalog57(R57 + "/Other/B.asset");
+                var set57 = ContentBuildSettings.instance;
+                var tmp57 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-57-" + Guid.NewGuid().ToString("N"));
+                var a57p = set57.Find("P57"); a57p.OutputPath = System.IO.Path.Combine(tmp57, "a"); a57p.Archive = ContentBuildSettings.ArchiveMode.None;
+                var b57p = set57.Add("B57"); b57p.SourceRoot = S57; b57p.OutputPath = System.IO.Path.Combine(tmp57, "b"); b57p.Archive = ContentBuildSettings.ArchiveMode.None;
+                b57p.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = R57 + "/Other/B.asset" } };
+                var val57 = set57.Validate(a57p);
+                UnityEditor.BuildPipeline.LastParameters = null;
+                Debug.Verbose = false; var k57 = ContentBuildRunner.Build(a57p, showProgress: false); Debug.Verbose = true;
+                bool eng57 = UnityEditor.BuildPipeline.LastParameters != null;
+                string errs57 = k57 == null ? "null" : string.Join(" | ", k57.Errors);
+                FakeEngine.MainAssetAt.Remove(R57 + "/Other/B.asset");
+                UnityEditor.BuildPipeline.LastParameters = null;
+                Debug.Verbose = false; var k57b = ContentBuildRunner.Build(a57p, showProgress: false); Debug.Verbose = true;
+                Check(val57.Count == 0 && k57 != null && !k57.Succeeded && !eng57 && errs57.Contains("the scan of 'Assets/C57' refused the build — a duplicate or 'res:' name, a catalog under the root or a sprite atlas the build cannot carry (see the errors above)")
+                      && k57b != null && k57b.Succeeded && UnityEditor.BuildPipeline.LastParameters != null,
+                      $"C2 F-39 — another profile's catalog under the root: validation passes ({val57.Count}), the build stops before the engine and says why (HEAD: built, carrying its names) · without it the build succeeds (engine {eng57} · {errs57} · then {k57b?.Succeeded})");
+                if (System.IO.Directory.Exists(tmp57)) System.IO.Directory.Delete(tmp57, true);
+            }
+
+            {
+                Project57();
+                ContentDirectoryBuilder.SourceRoot = R57; ContentDirectoryBuilder.CatalogPath = R57 + "/Catalog.asset"; ContentDirectoryBuilder.NameStyle = ContentNameStyle.PathWithoutExtension;
+                Debug.LastError = ""; Debug.Verbose = false; bool upd57 = ContentDirectoryBuilder.UpdateCatalog(); Debug.Verbose = true;
+                string err57 = Debug.LastError;
+                var self57 = UnityEditor.AssetDatabase.LoadAssetAtPath<ContentCatalog>(R57 + "/Catalog.asset");
+                bool selfNamed57 = false; if (self57 != null) foreach (var e57 in self57.Entries) if (e57.name == "Catalog") selfNamed57 = true;
+                ContentDirectoryBuilder.ClearOverrides();
+                Check(!upd57 && err57.Contains("catalog 'Assets/C57/Catalog.asset' lies under the source root 'Assets/C57' and would catalogue itself") && self57 == null && !selfNamed57,
+                      $"C3 F-39 — the static view with its catalog under its own root: the update refuses it before making the catalog (HEAD: the catalog names itself — no profile validation runs on this path) (made {self57 != null}): {err57}");
+            }
+
+            Project57();
+            var b4_57 = Catalog57(R57 + "/Other/B.asset");
+            bool pick4_57 = ContentLinkEditorUtility.TryGetNameForAsset(b4_57, out var n4_57, out var why4_57);
+            bool pick4p_57 = ContentLinkEditorUtility.TryGetNameForAsset(p57, out var n4p_57, out _);
+            Check(!pick4_57 && n4_57 == null && why4_57 != null && why4_57.Contains("'Assets/C57/Other/B.asset' is a ContentCatalog") && why4_57.Contains("'Assets/C57'") && pick4p_57 && n4p_57 == "Prefabs/P",
+                  $"C4 F-39 — the inspector does not pick a catalog under a root, and says why (HEAD: names it 'Other/B') · a plain asset beside it is picked (actual: {pick4_57} {n4_57} · {why4_57} · {pick4p_57} {n4p_57})");
+
+            // ── F-40: a V1 atlas packing a sprite the content uses ──
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", sT57);
+            var c5_57 = ScanFx(R57);
+            Check(!c5_57.ok && c5_57.error.Contains("'Assets/Shared57/V1.spriteatlas' packs 1 sprite(s) the content uses ('Assets/Shared57/s.png' s first, which 'Assets/C57/Prefabs/P.prefab' uses)") && c5_57.error.Contains("V1 sprite atlas"),
+                  $"C5 F-40 — a prefab under the root draws a sprite outside it that a V1 atlas packs: refused, naming the prefab (HEAD: built, and a player draws it without a texture — measured): {c5_57.error}");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", uT57);
+            var c5b_57 = ScanFx(R57);
+            Check(!c5b_57.ok && c5b_57.error.Contains("('Assets/Shared57/u.png' u first, which 'Assets/C57/Scenes/S.unity' uses)"),
+                  $"C5b F-40 — a scene under the root draws it: refused, naming the scene (HEAD: built): {c5b_57.error}");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", wT57);
+            var c5c_57 = ScanFx(R57);
+            Check(!c5c_57.ok && c5c_57.error.Contains("('Assets/Shared57/w.png' w first, which 'Assets/C57/Prefabs/Q.prefab' uses)"),
+                  $"C5c F-40 — reached through an asset outside the root that a catalogued one holds (Q → H → w): the references are followed (HEAD: built): {c5c_57.error}");
+
+            Project57();
+            FakeEngine.MainAssetAt.Remove(R57 + "/Icons/a.png");   // the root names no sprite of its own
+            Atlas57(S57 + "/V1.spriteatlas", sT57);
+            var c5d_57 = ScanFx(R57);
+            Check(!c5d_57.ok && c5d_57.error.Contains("which 'Assets/C57/Prefabs/P.prefab' uses"),
+                  $"C5d F-40 — a root that names no sprite of its own: the sprites its content uses are checked all the same (HEAD: no catalogued sprite, no check): {c5d_57.error}");
+
+            Project57();
+            var p2_57 = new ScriptableObject { name = "P2" }; FakeEngine.AddProjectAsset(R57 + "/Prefabs/P2.prefab", p2_57); FakeEngine.Uses[p2_57] = new Object[] { s57 };
+            Atlas57(S57 + "/V1.spriteatlas", sT57);
+            var c5e_57 = ScanFx(R57);
+            Check(!c5e_57.ok && c5e_57.error.Contains("packs 1 sprite(s) the content uses") && c5e_57.error.Contains("which 'Assets/C57/Prefabs/P.prefab' uses") && !c5e_57.error.Contains("P2.prefab"),
+                  $"C5e — one sprite two prefabs use: counted once, the first in the scan named: {c5e_57.error}");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", tT57);
+            var c6_57 = ScanFx(R57);
+            Check(c6_57.ok && c6_57.errors == 0,
+                  $"C6 control — a material that holds the packed texture itself (no sprite of it): built — the check follows objects, not files (a player shows that texture — measured) ({c6_57.error})");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", aT57, sT57, uT57);
+            var c7_57 = ScanFx(R57);
+            Check(!c7_57.ok && c7_57.error.Contains("packs 3 sprite(s) the content uses ('Assets/C57/Icons/a.png' a first)") && !c7_57.error.Contains("which"),
+                  $"C7 — a catalogued sprite and two used ones in one V1 atlas: one refusal counting all three, the catalogued first (no user named) (HEAD: 'packs 1 sprite(s) the catalog names'): {c7_57.error}");
+
+            // ── a V1 atlas that packs sprites — a packed sprite links to its atlas, the atlas to every sprite it packs: only the one the prefab references counts ──
+            Project57();
+            Atlas57(S57 + "/V1s.spriteatlas", t57, s57);   // packs the sprites t and s themselves; P draws s
+            var c5f_57 = ScanFx(R57);
+            Check(!c5f_57.ok && c5f_57.error.Contains("'Assets/Shared57/V1s.spriteatlas' packs 1 sprite(s) the content uses ('Assets/Shared57/s.png' s first, which 'Assets/C57/Prefabs/P.prefab' uses)"),
+                  $"C5f — a V1 atlas packing the sprites t and s, the prefab drawing s: s alone counts — not t, which the prefab reaches only through the atlas (v2: 'packs 2 … t first'; HEAD: built): {c5f_57.error}");
+
+            // ── a V1 atlas the content holds itself (to give sprites at run time) — a player gets them without a texture (measured) ──
+            Project57();
+            var held57 = Atlas57(S57 + "/Held.spriteatlas", zT57);   // packs a texture: what it reaches holds no sprite
+            var g57 = new ScriptableObject { name = "G" }; FakeEngine.AddProjectAsset(R57 + "/Prefabs/G.prefab", g57); FakeEngine.Uses[g57] = new Object[] { held57 };
+            var c5g_57 = ScanFx(R57);
+            Check(!c5g_57.ok && c5g_57.errors == 1 && c5g_57.error.Contains("'Assets/Shared57/Held.spriteatlas' is a V1 sprite atlas that 'Assets/C57/Prefabs/G.prefab' holds") && c5g_57.error.Contains("Move it to Sprite Atlas V2"),
+                  $"C5g — a prefab that holds a V1 atlas packing a texture: refused, naming the prefab (v2 · HEAD: built) (errors {c5g_57.errors}): {c5g_57.error}");
+
+            // ── a sprite the prefab reaches only through a V2 atlas's link, packed by a V1 atlas too: that V1 atlas is linked, not held, and the sprite not used ──
+            Project57();
+            Atlas57(S57 + "/V2y.spriteatlasv2", s57, t57);   // packs the sprites s (P draws it) and t
+            Atlas57(S57 + "/V1x.spriteatlas", t57);           // and a V1 atlas packs t too (the engine binds a sprite to one atlas, and warns)
+            var c5h_57 = ScanFx(R57);
+            Check(c5h_57.ok && c5h_57.errors == 0,
+                  $"C5h control — the prefab draws s, packed by a V2 atlas that also packs t, which a V1 atlas packs too: nothing the content references is V1-packed — built (v2: refused, t counted as P's) ({c5h_57.error})");
+
+            // ── the same, the gate open: the prefab also draws w, which a V1 atlas packs — that atlas alone is refused ──
+            Project57();
+            Atlas57(S57 + "/V2y.spriteatlasv2", s57, t57);
+            Atlas57(S57 + "/V1x.spriteatlas", t57);
+            Atlas57(S57 + "/V1w.spriteatlas", wT57);
+            FakeEngine.Uses[p57] = new Object[] { s57, sT57, w57, wT57 };   // P draws s and w
+            var c5i_57 = ScanFx(R57);
+            Check(!c5i_57.ok && c5i_57.errors == 1 && c5i_57.error.Contains("'Assets/Shared57/V1w.spriteatlas' packs 1 sprite(s) the content uses ('Assets/Shared57/w.png' w first, which 'Assets/C57/Prefabs/P.prefab' uses)"),
+                  $"C5i — the prefab draws w, packed by a V1 atlas, and s, whose V2 atlas also packs t, which another V1 atlas packs: the first refused, the other neither used nor held (v2: both; HEAD: built) (errors {c5i_57.errors}): {c5i_57.error}");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", xT57);
+            FakeEngine.Uses[sc57] = new Object[] { u57, uT57 };   // the scene no longer draws x
+            var c8_57 = ScanFx(R57);
+            Check(c8_57.ok && c8_57.errors == 0,
+                  $"C8 control — a V1 atlas that packs only a sprite nothing in the content uses: built (V1 atlases elsewhere in the project are not refused) ({c8_57.error})");
+
+            Project57();
+            Atlas57(S57 + "/V2.spriteatlasv2", sT57, uT57, wT57);
+            var c9_57 = ScanFx(R57);
+            Check(c9_57.ok && c9_57.errors == 0,
+                  $"C9 control — the packer on (V2) and a V2 atlas packing the used sprites: built ({c9_57.error})");
+
+            Project57();
+            Atlas57(S57 + "/V2.spriteatlasv2", sT57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.AlwaysOnAtlas;
+            var c10_57 = ScanFx(R57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            Check(c10_57.ok && c10_57.errors == 0,
+                  $"C10 control (D8 b) — a V1 packer mode: a sprite only the content uses (not the catalog) is not refused — a player draws it with its own texture there (measured) ({c10_57.error})");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", sT57);   // a V1 atlas, this time, packing the sprite only the prefab uses
+            var held10_57 = Atlas57(S57 + "/Held.spriteatlas", zT57);
+            var g10_57 = new ScriptableObject { name = "G" }; FakeEngine.AddProjectAsset(R57 + "/Prefabs/G.prefab", g10_57); FakeEngine.Uses[g10_57] = new Object[] { held10_57 };   // and one the content holds
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.AlwaysOnAtlas;
+            var c10b_57 = ScanFx(R57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            Check(c10b_57.ok && c10b_57.errors == 0,
+                  $"C10b control (D8 b · D16) — a V1 packer mode keeps to the catalogued sprites: a V1 atlas packing a sprite only the content uses, and one the content holds, are not refused (a player drew the used sprites with their own textures there — measured; the held atlas there is not measured) ({c10b_57.error})");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", sT57, uT57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.Disabled;
+            var c11_57 = ScanFx(R57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            Check(c11_57.ok && c11_57.errors == 0,
+                  $"C11 control — the packer off: sprites keep their own textures, nothing is refused for a sprite the content uses ({c11_57.error})");
+
+            // ── the cost: the objects are collected only for an asset whose files reach a V1 atlas outside the root, or what one packs ──
+            {
+                Project57();
+                int before18 = UnityEditor.EditorUtility.CollectCalls, files18 = UnityEditor.AssetDatabase.DependencyCalls;
+                var c18a_57 = ScanFx(R57);                          // no V1 atlas
+                int none18 = UnityEditor.EditorUtility.CollectCalls - before18;
+                files18 = UnityEditor.AssetDatabase.DependencyCalls - files18;
+                Atlas57(S57 + "/V1a.spriteatlas", zT57);            // a V1 atlas nothing in the content reaches
+                before18 = UnityEditor.EditorUtility.CollectCalls;
+                var c18b_57 = ScanFx(R57);
+                int far18 = UnityEditor.EditorUtility.CollectCalls - before18;
+                Atlas57(S57 + "/V1b.spriteatlas", sT57);            // one that packs the sprite P draws
+                before18 = UnityEditor.EditorUtility.CollectCalls;
+                var c18c_57 = ScanFx(R57);
+                int near18 = UnityEditor.EditorUtility.CollectCalls - before18;
+                Check(c18a_57.ok && none18 == 0 && files18 == 0 && c18b_57.ok && far18 == 0 && !c18c_57.ok && near18 == 1,
+                      $"C18 — the objects are collected only for an asset whose files reach a V1 atlas or what it packs: none without one (nor its files asked), none for one nothing reaches, the one prefab for one packing its sprite (v2: every asset; HEAD: none, and built) (actual: {none18} · files {files18} · {far18} · {near18})");
+            }
+
+            // ── D13: a V1 atlas under the root ──
+            Project57();
+            Atlas57(R57 + "/Legacy/L1.spriteatlas", zT57);
+            var c13_57 = ScanFx(R57);
+            Check(!c13_57.ok && c13_57.errors == 1 && c13_57.error.Contains("'Assets/C57/Legacy/L1.spriteatlas' is a V1 sprite atlas under the source root") && c13_57.error.Contains("Move it to Sprite Atlas V2, or out of the root"),
+                  $"C13 D13 — a V1 atlas under the root packing a texture nothing uses: refused (HEAD: built — loaded by its name it gives sprites without a texture, measured): {c13_57.error}");
+
+            Project57();
+            Atlas57(R57 + "/Legacy/L1.spriteatlas", aT57);
+            var c13b_57 = ScanFx(R57);
+            Check(!c13b_57.ok && c13b_57.errors == 1 && c13b_57.error.Contains("is a V1 sprite atlas under the source root"),
+                  $"C13b D13 — one refusal for a V1 atlas under the root that packs a catalogued sprite (HEAD: 'packs 1 sprite(s) the catalog names') (errors {c13b_57.errors}): {c13b_57.error}");
+
+            Project57();
+            Atlas57(R57 + "/Legacy/L1.spriteatlas", z57);
+            var c13d_57 = ScanFx(R57);
+            Check(!c13d_57.ok && c13d_57.errors == 1 && c13d_57.error.Contains("is a V1 sprite atlas under the source root"),
+                  $"C13d D13 — a V1 atlas under the root packing a sprite itself: one refusal, not one more for the sprite it uses (HEAD: built) (errors {c13d_57.errors}): {c13d_57.error}");
+
+            Project57();
+            Atlas57(R57 + "/Legacy/L1.spriteatlas", zT57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.AlwaysOnAtlas;
+            var c13c_57 = ScanFx(R57);
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            Check(c13c_57.ok && c13c_57.errors == 0,
+                  $"C13c control — a V1 packer mode: a V1 atlas under the root packing nothing the catalog names is built, as before ({c13c_57.error})");
+
+            // ── D5 b: the editor simulation does not serve a catalog under a root ──
+            {
+                Project57();
+                var own = Catalog57("Assets/Cat/c57.asset"); own.EditorSetSourceRoot(R57);
+                var nested = Catalog57(R57 + "/Other/B.asset"); nested.EditorSetSourceRoot(S57);   // another profile's catalog records its own root
+                ContentLinkEditorUtility.Invalidate();
+                Debug.LastWarning = ""; Debug.Verbose = false;
+                int warned = Warn(() => ContentLinkSimulation.Rebuild());
+                Debug.Verbose = true;
+                bool servesB = ContentLinkSimulation.TryGetPath("Other/B", out _, out _);
+                bool servesP = ContentLinkSimulation.TryGetPath("Prefabs/P", out var pathP, out _);
+                bool servesPlain = ContentLinkSimulation.TryGetPath("Data/Plain", out _, out _);
+                string last = Debug.LastWarning;
+                ContentLinkSimulation.Drop();
+                Check(!servesB && servesP && pathP == R57 + "/Prefabs/P.prefab" && servesPlain && warned == 1 && last.Contains("'Assets/C57/Other/B.asset' is a ContentCatalog under 'Assets/C57'"),
+                      $"C14 D5 b — the editor simulation does not serve a catalog under a root and says so once; a plain asset and a plain .asset beside it are served (HEAD: served as 'Other/B') (actual: B {servesB} · P {servesP} · Plain {servesPlain} · warnings {warned} · {last})");
+            }
+            {
+                Project57();
+                var own14b = Catalog57("Assets/Cat/c57.asset"); own14b.EditorSetSourceRoot(R57);
+                Catalog57(R57 + "/Other/M.mat").EditorSetSourceRoot(S57);   // another profile's, saved as .mat
+                ContentLinkEditorUtility.Invalidate();
+                Debug.LastWarning = ""; Debug.Verbose = false;
+                int warned14b = Warn(() => ContentLinkSimulation.Rebuild());
+                Debug.Verbose = true;
+                bool servesM14b = ContentLinkSimulation.TryGetPath("Other/M", out _, out _);
+                bool servesMat14b = ContentLinkSimulation.TryGetPath("Mats/M", out _, out _);
+                string last14b = Debug.LastWarning;
+                ContentLinkSimulation.Drop();
+                Check(!servesM14b && servesMat14b && warned14b == 1 && last14b.Contains("'Assets/C57/Other/M.mat' is a ContentCatalog under 'Assets/C57'"),
+                      $"C14b D5 b — a catalog saved as .mat is not served either, a material beside it is (v2: the .asset filter served it) (actual: M {servesM14b} · Mats/M {servesMat14b} · warnings {warned14b} · {last14b})");
+            }
+
+            // ── D4: the inspector's path fallback does not answer a catalog under a root ──
+            Project57();
+            Catalog57(R57 + "/Other/B.asset");
+            var r15_57 = ContentLinkEditorUtility.ResolveAsset("Other/B");
+            var r15p_57 = ContentLinkEditorUtility.ResolveAsset("Prefabs/P");
+            Check(r15_57 == null && ReferenceEquals(r15p_57, p57),
+                  $"C15 D4 — the path fallback answers no catalog under a root, as the build names none (HEAD: the catalog) · a plain asset still answers (actual: {(r15_57 == null ? "null" : r15_57.name)} · {(r15p_57 == null ? "null" : r15p_57.name)})");
+
+            Project57();
+            ContentBuildSettings.instance.Find("P57").NameStyle = ContentNameStyle.PathWithExtension;
+            Catalog57(R57 + "/Other/B.asset");
+            ContentLinkEditorUtility.Invalidate();
+            var r15b_57 = ContentLinkEditorUtility.ResolveAsset("Other/B.asset");
+            var r15bp_57 = ContentLinkEditorUtility.ResolveAsset("Prefabs/P.prefab");
+            Check(r15b_57 == null && ReferenceEquals(r15bp_57, p57),
+                  $"C15b D4 — under a root that keeps the extension, the direct lookup answers no catalog either (HEAD: the catalog) (actual: {(r15b_57 == null ? "null" : r15b_57.name)} · {(r15bp_57 == null ? "null" : r15bp_57.name)})");
+
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", uT57);
+            {
+                var set57c = ContentBuildSettings.instance;
+                var tmp57c = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-57b-" + Guid.NewGuid().ToString("N"));
+                var a57c = set57c.Find("P57"); a57c.OutputPath = System.IO.Path.Combine(tmp57c, "a"); a57c.Archive = ContentBuildSettings.ArchiveMode.None;
+                UnityEditor.BuildPipeline.LastParameters = null;
+                Debug.Verbose = false; var k57c = ContentBuildRunner.Build(a57c, showProgress: false); Debug.Verbose = true;
+                string errs57c = k57c == null ? "null" : string.Join(" | ", k57c.Errors);
+                Check(k57c != null && !k57c.Succeeded && UnityEditor.BuildPipeline.LastParameters == null && errs57c.Contains("the scan of 'Assets/C57' refused the build — a duplicate or 'res:' name, a catalog under the root or a sprite atlas the build cannot carry (see the errors above)") && !errs57c.Contains("has duplicate names"),
+                      $"C12 — the build's own error names what a refused scan can be (HEAD: 'has duplicate names' for an atlas refusal too): {errs57c}");
+                if (System.IO.Directory.Exists(tmp57c)) System.IO.Directory.Delete(tmp57c, true);
+            }
+
+            // ── catalogs as builds leave them — they record a root and name assets (the fixtures above are empty and record none) ──
+            {
+                Project57();
+                var mine57r = Catalog57(R57 + "/Old/Mine.asset");   // a stale copy of this profile's own catalog: it records this root and names the prefab
+                mine57r.EditorSetSourceRoot(R57);
+                mine57r.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "Prefabs/P", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(p57), guid = R57 + "/Prefabs/P.prefab", sub = "" } });
+                var theirs57r = Catalog57(R57 + "/Other/B.asset");   // another profile's built catalog: it records its own root and names what lies there
+                theirs57r.EditorSetSourceRoot(S57);
+                theirs57r.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "H", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(h57), guid = S57 + "/H.asset", sub = "" } });
+                Catalog57(R57 + "/Hand/Made.asset");   // one made by hand: no root, no entries
+                var k2a57 = ScanFx(R57);
+                Check(!k2a57.ok && k2a57.errors == 3 && !HasEntry(k2a57.items, "Old/Mine") && !HasEntry(k2a57.items, "Other/B") && !HasEntry(k2a57.items, "Hand/Made") && HasEntry(k2a57.items, "Prefabs/P"),
+                      $"C16 — every catalog under the root is refused, whatever it records — a copy of the profile's own, another profile's built one, one made by hand — each with its own error (errors {k2a57.errors}): {k2a57.error}");
+
+                ContentLinkEditorUtility.Invalidate();
+                bool pickMine57r = ContentLinkEditorUtility.TryGetNameForAsset(mine57r, out var nMine57r, out var whyMine57r);
+                bool pickTheirs57r = ContentLinkEditorUtility.TryGetNameForAsset(theirs57r, out var nTheirs57r, out var whyTheirs57r);
+                var rMine57r = ContentLinkEditorUtility.ResolveAsset("Old/Mine");
+                var rTheirs57r = ContentLinkEditorUtility.ResolveAsset("Other/B");
+                Check(!pickMine57r && whyMine57r != null && whyMine57r.Contains("'Assets/C57/Old/Mine.asset' is a ContentCatalog")
+                      && !pickTheirs57r && whyTheirs57r != null && whyTheirs57r.Contains("'Assets/C57/Other/B.asset' is a ContentCatalog")
+                      && rMine57r == null && rTheirs57r == null,
+                      $"C16b — the pick and the path fallback refuse a built catalog under the root too, one that records this very root included, and the pick says it is a catalog (the fallback's passing over catalogs would refuse it anyway, as a name another asset answers) (actual: {pickMine57r} {nMine57r} {whyMine57r} · {pickTheirs57r} {nTheirs57r} {whyTheirs57r} · {(rMine57r == null ? "null" : rMine57r.name)} · {(rTheirs57r == null ? "null" : rTheirs57r.name)})");
+
+                Debug.LastWarning = ""; Debug.Verbose = false;
+                int warned57r = Warn(() => ContentLinkSimulation.Rebuild());
+                Debug.Verbose = true;
+                bool sMine57r = ContentLinkSimulation.TryGetPath("Old/Mine", out _, out _);
+                bool sTheirs57r = ContentLinkSimulation.TryGetPath("Other/B", out _, out _);
+                bool sHand57r = ContentLinkSimulation.TryGetPath("Hand/Made", out _, out _);
+                bool sP57r = ContentLinkSimulation.TryGetPath("Prefabs/P", out _, out _);
+                ContentLinkSimulation.Drop();
+                Check(!sMine57r && !sTheirs57r && !sHand57r && sP57r && warned57r == 4,
+                      $"C16c — the simulation serves none of the three, one that records this root or none included, and says so for each (three warnings + the one for the catalog that records no root) (actual: {sMine57r} · {sTheirs57r} · {sHand57r} · P {sP57r} · warnings {warned57r})");
+            }
+
+            // ── the first sprite of the atlas is the one named, with its user only when it is a used one ──
+            Project57();
+            Atlas57(S57 + "/V1.spriteatlas", sT57, aT57);   // a used sprite packed before a catalogued one
+            var k3_57 = ScanFx(R57);
+            Check(!k3_57.ok && k3_57.error.Contains("'Assets/Shared57/V1.spriteatlas' packs 2 sprite(s) the content uses ('Assets/Shared57/s.png' s first, which 'Assets/C57/Prefabs/P.prefab' uses)"),
+                  $"C17 — a used sprite packed before a catalogued one: the first is named, with its user (HEAD: 'packs 1 sprite(s) the catalog names'): {k3_57.error}");
+
+            // ── a V1 atlas 'under the root' is under this root — not beside it, not under another root ──
+            Project57();
+            Atlas57("Assets/C57x/L2.spriteatlas", zT57);   // beside the root, its folder's name starting with the root's
+            var k6a57 = ScanFx(R57);
+            Project57();
+            var o57r = ContentBuildSettings.instance.Add("O57"); o57r.SourceRoot = S57; o57r.OutputPath = "Build/O57";
+            Atlas57(S57 + "/L3.spriteatlas", zT57);   // under another profile's root
+            var k6b57 = ScanFx(R57);
+            Check(k6a57.ok && k6a57.errors == 0 && k6b57.ok && k6b57.errors == 0,
+                  $"C19 control — a V1 atlas beside the root ('Assets/C57x') or under another profile's root, packing nothing this root uses, does not refuse this root ({k6a57.error} · {k6b57.error})");
+
+            // ── the pick's place — after the catalog-first lookup, under a root only ──
+            Project57();
+            var b7_57 = Catalog57(R57 + "/Other/B.asset");
+            var own7_57 = Catalog57("Assets/Cat/c57.asset"); own7_57.EditorSetSourceRoot(R57);
+            own7_57.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "Other/B", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(b7_57), guid = R57 + "/Other/B.asset", sub = "" } });   // as a catalog an earlier version built names it
+            ContentLinkEditorUtility.Invalidate();
+            bool pick7_57 = ContentLinkEditorUtility.TryGetNameForAsset(b7_57, out var n7_57, out var why7_57);
+            bool pick8_57 = ContentLinkEditorUtility.TryGetNameForAsset(own7_57, out _, out var why8_57);
+            Check(pick7_57 && n7_57 == "Other/B" && !pick8_57 && why8_57 != null && why8_57.Contains("is not in a catalog and not under a content root") && !why8_57.Contains("is a ContentCatalog"),
+                  $"C20 control — a catalog under the root that the profile's catalog already names keeps that name (catalog first — §2-3: the next update refuses it) · a catalog outside every root gets the usual reason, not this one (actual: {pick7_57} {n7_57} {why7_57} · {pick8_57} {why8_57})");
+
+            // ── a catalog beside a file of its name — the file answers, as the build names it once the catalog is moved ──
+            {
+                Project57();
+                var own9_57 = Catalog57("Assets/Cat/c57.asset"); own9_57.EditorSetSourceRoot(R57);
+                Catalog57(R57 + "/Other/B.asset").EditorSetSourceRoot(S57);
+                var plain9_57 = new ScriptableObject { name = "B" }; FakeEngine.AddProjectAsset(R57 + "/Other/B.txt", plain9_57);
+                ContentLinkEditorUtility.Invalidate();
+                var r9_57 = ContentLinkEditorUtility.ResolveAsset("Other/B");
+                bool pick9_57 = ContentLinkEditorUtility.TryGetNameForAsset(plain9_57, out var n9_57, out var why9_57);
+                Debug.Verbose = false; Warn(() => ContentLinkSimulation.Rebuild()); Debug.Verbose = true;
+                bool s9_57 = ContentLinkSimulation.TryGetPath("Other/B", out var path9_57, out _);
+                ContentLinkSimulation.Drop();
+                Check(ReferenceEquals(r9_57, plain9_57) && pick9_57 && n9_57 == "Other/B" && s9_57 && path9_57 == R57 + "/Other/B.txt",
+                      $"C21 — 'Other/B.txt' beside a catalog 'Other/B.asset': the fallback, the pick and the simulation all take the file (HEAD: two files of one name — none) (actual: {(r9_57 == null ? "null" : r9_57.name)} · {pick9_57} {n9_57} {why9_57} · {s9_57} {path9_57})");
+            }
+
+            // ── the simulation's filter reads the extension in any case (a catalog saved as '.ASSET' is one) ──
+            {
+                Project57();
+                var own10_57 = Catalog57("Assets/Cat/c57.asset"); own10_57.EditorSetSourceRoot(R57);
+                Catalog57(R57 + "/Other/B.ASSET").EditorSetSourceRoot(S57);
+                ContentLinkEditorUtility.Invalidate();
+                Debug.LastWarning = ""; Debug.Verbose = false;
+                int warned10_57 = Warn(() => ContentLinkSimulation.Rebuild());
+                Debug.Verbose = true;
+                bool s10_57 = ContentLinkSimulation.TryGetPath("Other/B", out _, out _);
+                string last10_57 = Debug.LastWarning;
+                ContentLinkSimulation.Drop();
+                Check(!s10_57 && warned10_57 == 1 && last10_57.Contains("Other/B.ASSET' is a ContentCatalog"),
+                      $"C22 — the simulation does not serve a catalog whose extension is in another case either (HEAD: served) (actual: {s10_57} · warnings {warned10_57} · {last10_57})");
+            }
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+        }
+
+        Console.WriteLine("58) IMP018 Plan-F16 — the remote download's progress · a held Resources path's sprites · a player's file wins over an editor-only one · one name index per atlas");
+        {
+            // ───────────── the remote download's progress (FakeWeb) ─────────────
+            var root58 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-58-" + Guid.NewGuid().ToString("N"));
+            var cache58 = System.IO.Path.Combine(root58, "cache");
+            const string Base58 = "https://cdn.test/osx/Main";
+            var utf58 = new System.Text.UTF8Encoding(false);
+            void Fresh58()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.Mounts.Clear(); FakeEngine.Namespaces.Clear(); FakeEngine.Registered.Clear(); FakeEngine.MountFrames = 0;
+                FakeWeb.Reset();
+                ContentRemote.ProfileFallback = null; ContentRemote.MaxConcurrentWebRequests = 3;
+                ContentArchives.EditorTarget = () => "StandaloneOSX";
+                Application.platform = RuntimePlatform.OSXEditor; Application.unityVersion = "6000.6.0f1";
+                if (System.IO.Directory.Exists(root58)) System.IO.Directory.Delete(root58, true);
+                System.IO.Directory.CreateDirectory(cache58);
+            }
+            (byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) Build58(int count = 3, int size = 3000)
+            {
+                var r = new System.Random(58);
+                var files = new System.Collections.Generic.Dictionary<string, byte[]>();
+                var archives = new ContentArchives.Archive[count];
+                for (int i = 0; i < count; ++i)
+                {
+                    var b = new byte[size + i]; r.NextBytes(b);
+                    var name = $"Main.a{i}-0058{i}.archive";
+                    files[name] = b;
+                    archives[i] = new ContentArchives.Archive { File = name, Bytes = b.Length, InputBytes = b.Length, Crc = "00000000", Md5 = Md5Of(b), Files = new[] { $"f{i}.cf" } };
+                }
+                var index = new ContentArchives.Index { Profile = "Main", Target = "StandaloneOSX", UnityVersion = "6000.6.0f1", TypeTrees = true, CatalogLayout = ContentCatalog.Layout, ContentVersion = "1", Compression = "LZ4", MaxArchiveMB = 20, Archives = archives };
+                var json = utf58.GetBytes(JsonUtility.ToJson(index, true));
+                return (json, Md5Of(json), index, files);
+            }
+            void Serve58((byte[] json, string hash, ContentArchives.Index index, System.Collections.Generic.Dictionary<string, byte[]> files) b)
+            {
+                FakeWeb.Serve(Base58 + "/archives.hash", System.Text.Encoding.ASCII.GetBytes(b.hash + "\n"));
+                FakeWeb.Serve(Base58 + "/archives.json", b.json);
+                foreach (var kv in b.files) FakeWeb.Serve(Base58 + "/" + kv.Key, kv.Value);
+            }
+            string Dir58() => System.IO.Path.Combine(cache58, "Main");
+            void Keep58(string file, byte[] bytes, int length) { System.IO.Directory.CreateDirectory(Dir58()); var head = new byte[length]; Array.Copy(bytes, head, length); System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir58(), file + ".part"), head); }
+            ContentRemote Check58(int retry = 0) => ContentRemote.CheckAsync("Main", Base58, new ContentRemoteOptions { CacheRoot = cache58, RetryCount = retry }).GetAwaiter().GetResult();
+            // every frame's status while the download runs — what a progress bar polls — then the end's; maxTotal58 = the largest total any poll saw
+            long maxTotal58 = 0;
+            (bool ok, long planned, int frames, int back, int percentBack, int fullEarly, ContentDownloadStatus end) Run58(ContentRemote r)
+            {
+                var got = new System.Collections.Generic.List<long>(); var tot = new System.Collections.Generic.List<long>(); var done = new System.Collections.Generic.List<bool>(); var pct = new System.Collections.Generic.List<float>();
+                long planned = r.BytesToDownload;
+                FakeWeb.OnStep = () => { var s = r.Status; got.Add(s.DownloadedBytes); tot.Add(s.TotalBytes); done.Add(s.IsDone); pct.Add(s.Percent); };
+                Debug.Verbose = false;
+                bool ok;
+                try { ok = r.DownloadAsync().GetAwaiter().GetResult(); }
+                finally { Debug.Verbose = true; FakeWeb.OnStep = null; }
+                int back = 0, percentBack = 0, fullEarly = 0;
+                maxTotal58 = 0;
+                for (int i = 0; i < got.Count; ++i)
+                {
+                    if (tot[i] > maxTotal58) maxTotal58 = tot[i];
+                    if (i > 0 && got[i] < got[i - 1]) ++back;
+                    if (i > 0 && pct[i] < pct[i - 1] - 1e-6f) ++percentBack;
+                    if (tot[i] > 0 && got[i] >= tot[i] && !done[i]) ++fullEarly;
+                }
+                return (ok, planned, got.Count, back, percentBack, fullEarly, r.Status);
+            }
+            string Say58((bool ok, long planned, int frames, int back, int percentBack, int fullEarly, ContentDownloadStatus end) t)
+                => $"ok {t.ok} · planned {t.planned} · {t.frames} frames · DownloadedBytes went back {t.back} · Percent went back {t.percentBack} · full before done {t.fullEarly} · end {t.end.DownloadedBytes}/{t.end.TotalBytes} done {t.end.IsDone}";
+
+            // C1 · C2: a .part as long as its archive — only its check is left
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], (int)a0.Bytes);
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                long rest = SumBytes(b.index) - a0.Bytes;
+                var t = Run58(r);
+                Check(t.planned == rest, $"C1 a whole .part is not counted as to download: the check plans {t.planned} (the other two: {rest})");
+                Check(t.ok && t.end.IsDone && t.end.DownloadedBytes == t.end.TotalBytes && t.end.Percent == 1f && FakeWeb.CountContaining(a0.File) == 0,
+                      $"C2 … and the bar ends full with nothing asked for it: {Say58(t)} · requests for it {FakeWeb.CountContaining(a0.File)}");
+            }
+            // C2b · C2c: the .part the check saw is not the one the download finds
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], (int)a0.Bytes);
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                System.IO.File.Delete(System.IO.Path.Combine(Dir58(), a0.File + ".part"));   // gone before the download
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.fullEarly <= 1 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == SumBytes(b.index),
+                      $"C2b a whole .part the check counted as nothing, gone before the download: the file is counted when the download finds it gone: {Say58(t)}");
+            }
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 1000);
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                Keep58(a0.File, b.files[a0.File], 2000);   // longer when the download starts
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == SumBytes(b.index) - 2000 && FakeWeb.CountContaining(a0.File + " range=bytes=2000-") == 1,
+                      $"C2c a .part longer at the download than at the check: the rest of the longer one is counted: {Say58(t)}");
+            }
+            // C3 · C4: a server that ignores Range — the body is dropped and the file comes again
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 1000);
+                FakeWeb.Files[Base58 + "/" + a0.File].IgnoreRange = true;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned + a0.Bytes + 1000 && FakeWeb.CountContaining(a0.File) == 2,
+                      $"C3 the dropped body and the second request are counted (the total grows by the body and the kept 1000): {Say58(t)}");
+                Check(t.fullEarly <= 1, $"C4 … and the bar is not full before the last check (control: one frame — the check and the commit): {t.fullEarly}");
+            }
+            // C5: one archive, a server that ignores Range — the overshoot of the dropped body is not shown as done
+            Fresh58();
+            {
+                var b = Build58(count: 1); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 1000);
+                FakeWeb.Files[Base58 + "/" + a0.File].IgnoreRange = true;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.percentBack == 0 && t.fullEarly <= 1 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == a0.Bytes - 1000 + a0.Bytes + 1000,
+                      $"C5 one archive whose server ignores Range: the dropped body is counted as soon as the answer shows it — by the poll too, so Percent never goes back and is never full before the end: {Say58(t)}");
+            }
+            // C5b: the share left is smaller than a frame's bytes — the first poll is the one that must see the 200
+            Fresh58();
+            {
+                var b = Build58(count: 1); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 2900);
+                FakeWeb.Files[Base58 + "/" + a0.File].IgnoreRange = true;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.percentBack == 0 && t.fullEarly <= 1 && t.end.DownloadedBytes == t.end.TotalBytes,
+                      $"C5b 2900 of 3000 kept and Range ignored: no first poll at 100 %, no going back: {Say58(t)}");
+            }
+            // C6 · C7: the resumed file fails its MD5 — the one fresh restart
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 1000);
+                FakeWeb.Files[Base58 + "/" + a0.File].CorruptTimes = 1;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned + a0.Bytes && FakeWeb.CountContaining(a0.File) == 2,
+                      $"C6 a resumed file that fails its MD5 comes again whole, and the total grows by it: {Say58(t)}");
+                Check(t.fullEarly <= 1, $"C7 … full before done only at the last check — the first check's frame is not full (the total grows at it): {t.fullEarly}");
+            }
+            // C8: RetryCount 1, the file fails its MD5 once
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                FakeWeb.Files[Base58 + "/" + a0.File].CorruptTimes = 1;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58(retry: 1);
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned + a0.Bytes && t.fullEarly <= 2,
+                      $"C8 a retried file comes again whole: {Say58(t)}");
+            }
+            // C9 (control): a connection cut keeps its bytes — the retry resumes and the total stays the plan
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                FakeWeb.Files[Base58 + "/" + a0.File].CutAfter = 1500;
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58(retry: 1);
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.percentBack == 0 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned && t.fullEarly <= 1,
+                      $"C9 (control) a cut that kept 1500 bytes resumes after them: {Say58(t)}");
+            }
+            // C10 (control): nothing kept, nothing wrong
+            Fresh58();
+            {
+                var b = Build58(); Serve58(b);
+                FakeWeb.BytesPerFrame = 700;
+                var r = Check58();
+                var t = Run58(r);
+                Check(t.ok && t.planned == SumBytes(b.index) && t.back == 0 && t.percentBack == 0 && t.fullEarly == 1 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned,
+                      $"C10 (control) an empty cache: {Say58(t)}");
+            }
+            // C10b · C10c: the 200 seen, then the body stalls and Timeout aborts it — the retry goes without Range
+            foreach (var (stallAt, tag) in new[] { (1500, "C10b"), (0, "C10c") })
+            {
+                Fresh58();
+                var b = Build58(); Serve58(b);
+                var a0 = b.index.Archives[0];
+                Keep58(a0.File, b.files[a0.File], 1000);
+                var f = FakeWeb.Files[Base58 + "/" + a0.File]; f.IgnoreRange = true; f.StallAfter = stallAt; f.StallFrames = 400;
+                FakeWeb.BytesPerFrame = 700;
+                var r = ContentRemote.CheckAsync("Main", Base58, new ContentRemoteOptions { CacheRoot = cache58, RetryCount = 1, Timeout = 1 }).GetAwaiter().GetResult();
+                var t = Run58(r);
+                Check(t.ok && t.back == 0 && t.fullEarly <= 1 && t.end.DownloadedBytes == t.end.TotalBytes && t.end.TotalBytes == t.planned + stallAt + 1000,
+                      $"{tag} the 200 seen, then the body stalls after {stallAt} B and Timeout aborts it: what did not come is taken off again: {Say58(t)}");
+            }
+            // C34: the total and the received bytes are the bytes the network delivered (FakeWeb.SentBytes) — not values the code under test planned
+            foreach (var sc in new[] { "whole", "ignored", "ignored-one", "md5-resumed", "md5-retry", "cut", "fresh", "stall-1500", "stall-0", "whole-bad", "ignored-one-frame", "ignored-cut-one-frame", "longer", "copy-fails", "ignored-code-late", "resumed-code-late" })
+            {
+                Fresh58();
+                var b = sc == "ignored-one" ? Build58(count: 1) : Build58(); Serve58(b);
+                var a0 = b.index.Archives[0]; var f0 = FakeWeb.Files[Base58 + "/" + a0.File];
+                int retry34 = 0, timeout34 = 0; string builtIn34 = null;
+                if (sc == "whole") Keep58(a0.File, b.files[a0.File], (int)a0.Bytes);
+                if (sc == "ignored" || sc == "ignored-one" || sc == "ignored-one-frame" || sc == "ignored-code-late") { Keep58(a0.File, b.files[a0.File], 1000); f0.IgnoreRange = true; }
+                if (sc == "ignored-code-late") FakeWeb.CodeWithFirstByte = true;
+                if (sc == "resumed-code-late") { Keep58(a0.File, b.files[a0.File], 1000); FakeWeb.CodeWithFirstByte = true; }   // a server that honours Range: 0 before the 206
+                if (sc.EndsWith("code-late")) { f0.StallAfter = 0; f0.StallFrames = 3; }   // the headers come late: three polls see the request with code 0 and no byte
+                if (sc == "md5-resumed") { Keep58(a0.File, b.files[a0.File], 1000); f0.CorruptTimes = 1; }
+                if (sc == "md5-retry") { f0.CorruptTimes = 1; retry34 = 1; }
+                if (sc == "cut") { f0.CutAfter = 1500; retry34 = 1; }
+                if (sc == "stall-1500" || sc == "stall-0") { Keep58(a0.File, b.files[a0.File], 1000); f0.IgnoreRange = true; f0.StallAfter = sc == "stall-1500" ? 1500 : 0; f0.StallFrames = 400; retry34 = 1; timeout34 = 1; }
+                if (sc == "whole-bad") { var bad = (byte[])b.files[a0.File].Clone(); bad[10] ^= 0xFF; System.IO.Directory.CreateDirectory(Dir58()); System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir58(), a0.File + ".part"), bad); }
+                if (sc == "ignored-cut-one-frame") { Keep58(a0.File, b.files[a0.File], 1000); f0.IgnoreRange = true; f0.CutAfter = 500; retry34 = 1; }
+                if (sc == "copy-fails")   // the app ships all three; its copy of the first fails its MD5: that one is downloaded
+                {
+                    builtIn34 = System.IO.Path.Combine(root58, "StreamingAssets", "Main"); System.IO.Directory.CreateDirectory(builtIn34);
+                    System.IO.File.WriteAllBytes(System.IO.Path.Combine(builtIn34, ContentArchives.IndexFile), b.json);
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(builtIn34, ContentArchives.HashFile), b.hash);
+                    foreach (var kv in b.files) System.IO.File.WriteAllBytes(System.IO.Path.Combine(builtIn34, kv.Key), kv.Key == a0.File ? new byte[a0.Bytes] : kv.Value);
+                }
+                if (sc == "longer") { var longer = new byte[a0.Bytes + 500]; Array.Copy(b.files[a0.File], longer, a0.Bytes); System.IO.Directory.CreateDirectory(Dir58()); System.IO.File.WriteAllBytes(System.IO.Path.Combine(Dir58(), a0.File + ".part"), longer); }
+                FakeWeb.BytesPerFrame = sc.EndsWith("one-frame") ? 1 << 20 : 700;
+                var r = ContentRemote.CheckAsync("Main", Base58, new ContentRemoteOptions { CacheRoot = cache58, RetryCount = retry34, Timeout = timeout34, BuiltInDirectory = builtIn34 }).GetAwaiter().GetResult();
+                long s34 = FakeWeb.SentBytes;
+                var t = Run58(r);
+                long sent34 = sc == "copy-fails" ? a0.Bytes : FakeWeb.SentBytes - s34;   // the copies come over file:// too: the network is the one archive
+                long done34 = (long)typeof(ContentRemote).GetField("m_DoneBytes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(r);   // unclipped: Status clips DownloadedBytes to the total
+                bool failedCheck34 = sc.StartsWith("md5") || sc == "whole-bad";
+                bool steady34 = sc == "whole" || sc == "cut" || sc == "fresh" || sc == "longer" || sc == "resumed-code-late";   // nothing comes again: no poll may show a larger total
+                Check(t.ok && t.end.TotalBytes == sent34 && done34 == sent34 && t.back == 0 && t.fullEarly <= (failedCheck34 ? 2 : 1) && (!steady34 || maxTotal58 == sent34),   // a check that fails: its frame is full — every byte is in, and the total learns only from the check
+                      $"C34 {sc}: the total and the received bytes are the network's {sent34} (received, unclipped, {done34}){(steady34 ? $" · no poll above it ({maxTotal58})" : "")}: {Say58(t)}");
+            }
+            if (System.IO.Directory.Exists(root58)) System.IO.Directory.Delete(root58, true);
+
+            // ───────────── a held Resources path's sprites by name ─────────────
+            static void Reset58(bool editor)
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject();
+                FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.Refs.Clear();
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkSimulation.Drop();
+                ContentService.ResourcesFallback = null;   // a player; the Play Mode checks below install the editor's
+                ContentService.UnloadResourcesOnRelease = true;
+                ContentService.ReleaseDelayFrames = 0;
+                FakeEngine.Folders.Add("Assets/Cat");
+                ResourcesProject(editor);
+            }
+            static Sprite[] Sheet58(string path, int n, string prefix = "s")
+            {
+                var subs = new Object[n]; var sprites = new Sprite[n];
+                for (int i = 0; i < n; ++i) subs[i] = sprites[i] = new Sprite { name = prefix + i };
+                FakeEngine.AddProjectAsset(path, new Texture2D { name = System.IO.Path.GetFileNameWithoutExtension(path) }, subs);
+                return sprites;
+            }
+            static (int loadAll, long names) Cost58(Action open) { long n0 = Object.NameReads; int l0 = FakeEngine.ResourcesLoadAlls; open(); return (FakeEngine.ResourcesLoadAlls - l0, Object.NameReads - n0); }
+            static int Held58() => typeof(ContentService).GetField("s_ResSpritesByPath", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) is System.Collections.ICollection c ? c.Count : -1;   // -1: no index to look at
+
+            Reset58(editor: false);
+            {
+                var sheet = Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                AssetHandle<Sprite> h49 = default, h10 = default, again = default, other = default;
+                var c49 = Cost58(() => h49 = ContentService.Acquire<Sprite>("res:UI/big[s49]"));
+                var c10 = Cost58(() => h10 = ContentService.Acquire<Sprite>("res:UI/big[s10]"));
+                var cAgain = Cost58(() => again = ContentService.Acquire<Sprite>("res:UI/big[s49]"));
+                var cCase = Cost58(() => other = ContentService.Acquire<Sprite>("res:ui/BIG[s30]"));
+                Awaitable<AssetHandle<Sprite>> pending = null;
+                var cAsync = Cost58(() => { pending = ContentService.AcquireAsync<Sprite>("res:UI/big[s20]"); FakeEngine.CompleteLoads(); });
+                var h20 = pending.GetResult();
+                Debug.Verbose = true;
+                Check(h49.IsValid && ReferenceEquals(h49.Asset, sheet[49]) && c49.loadAll == 1 && c49.names == 50,
+                      $"C11 (control) the first sprite slot of a path reads its sprites once: LoadAll {c49.loadAll} · names read {c49.names}");
+                Check(h10.IsValid && ReferenceEquals(h10.Asset, sheet[10]) && c10.loadAll == 0 && c10.names == 0,
+                      $"C12 a second sprite slot of the held path reads nothing: LoadAll {c10.loadAll} · names read {c10.names}");
+                Check(again.IsValid && cAgain.loadAll == 0 && cAgain.names == 0, $"C13 (control) the open slot again: LoadAll {cAgain.loadAll} · names {cAgain.names}");
+                Check(other.IsValid && ReferenceEquals(other.Asset, sheet[30]) && cCase.loadAll == 0 && cCase.names == 0,
+                      $"C14 the path in another case is the same path (the engine ignores case): LoadAll {cCase.loadAll} · names {cCase.names}");
+                Check(h20.IsValid && ReferenceEquals(h20.Asset, sheet[20]) && cAsync.loadAll == 0 && cAsync.names == 0,
+                      $"C15 an async sprite slot of the held path too: LoadAll {cAsync.loadAll} · names {cAsync.names}");
+                h49.Dispose(); h10.Dispose(); again.Dispose(); other.Dispose(); h20.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                int held = Held58();
+                AssetHandle<Sprite> back = default;
+                var cBack = Cost58(() => back = ContentService.Acquire<Sprite>("res:UI/big[s49]"));
+                Check(held == 0 && back.IsValid && cBack.loadAll == 1 && cBack.names == 50,
+                      $"C16 the path's last slot drops its names: none kept ({held}) · the next slot reads again (LoadAll {cBack.loadAll} · names {cBack.names})");
+                back.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+            }
+            Reset58(editor: false);
+            {
+                Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                var main = ContentService.Acquire<Texture2D>("res:UI/big");
+                var s3 = ContentService.Acquire<Sprite>("res:UI/big[s3]");
+                s3.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                AssetHandle<Sprite> s5 = default;
+                var c5 = Cost58(() => s5 = ContentService.Acquire<Sprite>("res:UI/big[s5]"));
+                Debug.Verbose = true;
+                Check(main.IsValid && s5.IsValid && c5.loadAll == 0 && c5.names == 0,
+                      $"C17 the main asset's slot holds the path too: a sprite slot after another closed reads nothing (LoadAll {c5.loadAll} · names {c5.names})");
+                // code outside ContentLink unloads a sprite of the held path: the next slot of it gets a live one
+                var dead = (Sprite)Resources.LoadAll<Sprite>("UI/big")[7];
+                Resources.UnloadAsset(dead);
+                var s7 = ContentService.Acquire<Sprite>("res:UI/big[s7]");
+                AssetHandle<Sprite> s7b = default;   // another slot of the same sprite (the path in another case): the names read again are kept
+                var c7b = Cost58(() => s7b = ContentService.Acquire<Sprite>("res:ui/big[s7]"));
+                Check(dead.destroyed && s7.IsValid && s7.Asset != null && !ReferenceEquals(s7.Asset, dead) && s7.Asset.name == "s7",
+                      $"C18 a sprite other code unloaded is read again, not handed out dead (alive {s7.Asset != null})");
+                Check(s7b.IsValid && ReferenceEquals(s7b.Asset, s7.Asset) && c7b.loadAll == 0,
+                      $"C18b … and the names read again are kept: another slot of it (the path in another case) reads nothing (LoadAll {c7b.loadAll})");
+                main.Dispose(); s5.Dispose(); s7.Dispose(); s7b.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+            }
+            Reset58(editor: false);
+            {
+                var d0 = new Sprite { name = "d" }; var d1 = new Sprite { name = "d" };
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/dup.png", new Texture2D { name = "dup" }, d0, d1);
+                Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                var hd = ContentService.Acquire<Sprite>("res:UI/dup[d]");
+                var held = ContentService.Acquire<Sprite>("res:UI/big[s1]");
+                int e0 = Debug.Errors;
+                AssetHandle<Sprite> miss = default;
+                var cMiss = Cost58(() => miss = ContentService.Acquire<Sprite>("res:UI/big[nope]"));
+                int errs = Debug.Errors - e0; string log = Debug.LastError;
+                Debug.Verbose = true;
+                Check(hd.IsValid && ReferenceEquals(hd.Asset, d0), "C19 (control) two sprites of one name: the first, as before");
+                Debug.Verbose = false; int e1 = Debug.Errors;
+                var upper = ContentService.Acquire<Sprite>("res:UI/big[S1]");
+                bool caseMiss = !upper.IsValid && Debug.Errors - e1 == 1; Debug.Verbose = true;
+                Check(caseMiss, "C19b (control) a sprite's name keeps its case, as before — 'S1' is no sprite of the sheet (the path ignores case, the name does not)");
+                Check(!miss.IsValid && errs == 1 && log.Contains("has no sprite named 'nope'") && cMiss.loadAll == 0,
+                      $"C20 a missing sprite of a held path: the error, without reading the path again (LoadAll {cMiss.loadAll})");
+                hd.Dispose(); held.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+            }
+            Reset58(editor: false);
+            {
+                Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                var kept = ContentService.Acquire<Sprite>("res:UI/big[s1]");   // never released: a session that ends with it
+                Init(typeof(ContentService), "ResetStatics");
+                AssetHandle<Sprite> fresh = default;
+                var cFresh = Cost58(() => fresh = ContentService.Acquire<Sprite>("res:UI/big[s2]"));
+                Debug.Verbose = true;
+                Check(fresh.IsValid && cFresh.loadAll == 1, $"C21 a new session reads the path again (LoadAll {cFresh.loadAll})");
+                fresh.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+            }
+
+            Reset58(editor: false);
+            {
+                var sheet = Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                var keep = ContentService.Acquire<Sprite>("res:UI/big[s1]");
+                int before = Held58();
+                ContentService.SweepResources(); FakeEngine.CompleteLoads();
+                int after = Held58();
+                AssetHandle<Sprite> next = default;
+                var cNext = Cost58(() => next = ContentService.Acquire<Sprite>("res:UI/big[s2]"));
+                Debug.Verbose = true;
+                Check(after == 0 && keep.IsValid && next.IsValid && ReferenceEquals(next.Asset, sheet[2]) && cNext.loadAll == 1,
+                      $"C21b (D4 a′) SweepResources lets a held path's names go (kept {before} → {after}) — the sweep reclaims its other sprites; the next sprite slot reads the path again (LoadAll {cNext.loadAll})");
+                keep.Dispose(); next.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+            }
+
+            // C16b · C16c: the names go with the path's last slot — the switch off, a main slot last
+            Reset58(editor: false);
+            {
+                Sheet58("Assets/Resources/UI/big.png", 50);
+                ContentService.UnloadResourcesOnRelease = false;
+                Debug.Verbose = false;
+                var ra = ContentService.Acquire<Sprite>("res:UI/big[s1]"); var rb = ContentService.Acquire<Sprite>("res:UI/big[s2]");
+                ra.Dispose(); rb.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                int heldOff = Held58();
+                AssetHandle<Sprite> ragain = default;
+                var cr = Cost58(() => ragain = ContentService.Acquire<Sprite>("res:UI/big[s3]"));
+                ragain.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                Debug.Verbose = true;
+                ContentService.UnloadResourcesOnRelease = true;
+                Check(heldOff == 0 && cr.loadAll == 1, $"C16b UnloadResourcesOnRelease off: the path's last slot drops its names too ({heldOff} kept · next LoadAll {cr.loadAll})");
+            }
+            Reset58(editor: false);
+            {
+                Sheet58("Assets/Resources/UI/big.png", 50);
+                Debug.Verbose = false;
+                var rm = ContentService.Acquire<Texture2D>("res:UI/big");
+                var r3 = ContentService.Acquire<Sprite>("res:UI/big[s3]");
+                r3.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                rm.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                int heldMain = Held58();
+                AssetHandle<Sprite> r4 = default;
+                var c4r = Cost58(() => r4 = ContentService.Acquire<Sprite>("res:UI/big[s4]"));
+                r4.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                Debug.Verbose = true;
+                Check(heldMain == 0 && c4r.loadAll == 1, $"C16c a main slot that closes last drops the names a sprite slot read ({heldMain} kept · next LoadAll {c4r.loadAll})");
+            }
+
+            // ───────────── the editor's answer for a res: name — a player's file wins ─────────────
+            static string At58(Object o) => o == null ? "null" : UnityEditor.AssetDatabase.GetAssetPath(o) + (UnityEditor.AssetDatabase.IsSubAsset(o) ? $"[{o.name}]" : "");
+            static void Twins58()
+            {
+                // the engine gives either file of a path an editor-only file shares (measured): the stub gives the first registered
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/twinA.png", new Texture2D { name = "twinA" });   // the editor-only file first
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/twinA.png", new Texture2D { name = "twinA" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/twinB.png", new Texture2D { name = "twinB" });          // the player's file first
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/twinB.png", new Texture2D { name = "twinB" });
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/stw.png", new Texture2D { name = "stw" }, new Sprite { name = "a" }, new Sprite { name = "b" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/stw.png", new Texture2D { name = "stw" }, new Sprite { name = "a" });
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/gp.prefab", new GameObject { name = "gp" });   // an editor-only prefab and a player's texture
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/gp.png", new Texture2D { name = "gp" });
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/g3.prefab", new GameObject { name = "g3" });   // an editor-only prefab, then a player's texture and prefab
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/g3.png", new Texture2D { name = "g3" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/g3.prefab", new GameObject { name = "g3" });
+                ContentLinkEditorUtility.Invalidate();
+            }
+            Reset58(editor: true);
+            {
+                Twins58();
+                var a = ContentLinkEditorUtility.ResolveAsset("res:UI/twinA");
+                var va = ContentLinkEditorUtility.Validate("res:UI/twinA", typeof(Texture2D));
+                Check(At58(a) == "Assets/Resources/UI/twinA.png" && va == NameStatus.Ok,
+                      $"C22 the engine gave the editor-only file: the editor answers the player's ({At58(a)} · {va})");
+                var b = ContentLinkEditorUtility.ResolveAsset("res:UI/twinB");
+                Check(At58(b) == "Assets/Resources/UI/twinB.png" && ContentLinkEditorUtility.Validate("res:UI/twinB", typeof(Texture2D)) == NameStatus.Ok,
+                      $"C23 (control) the engine gave the player's file: the same answer ({At58(b)})");
+                var sa = ContentLinkEditorUtility.ResolveAsset("res:UI/stw", "a");
+                var vs = ContentLinkEditorUtility.Validate("res:UI/stw", "a", typeof(Sprite));
+                Check(At58(sa) == "Assets/Resources/UI/stw.png[a]" && vs == NameStatus.Ok,
+                      $"C24 a sprite both sheets have, the editor-only one first: the player's ({At58(sa)} · {vs})");
+                var sb = ContentLinkEditorUtility.ResolveAsset("res:UI/stw", "b");
+                var ed = ContentLinkEditorUtility.ResolveAsset("res:UI/edonly");
+                Check(sb == null && ed == null && ContentLinkEditorUtility.Validate("res:UI/edonly", typeof(Texture2D)) == NameStatus.NotInCatalog,
+                      "C25 (control) what only an editor-only file has stays no answer — a sprite of it, a file alone (IMP014 D6)");
+                var gp = ContentLinkEditorUtility.ResolveAsset("res:UI/gp");
+                var g3 = ContentLinkEditorUtility.ResolveAsset("res:UI/g3");
+                Check(At58(gp) == "Assets/Resources/UI/gp.png" && At58(g3) == "Assets/Resources/UI/g3.prefab",
+                      $"C26 an editor-only prefab the engine picked: the player's own pick — its texture alone, its prefab before its texture (IMP014 E11) ({At58(gp)} · {At58(g3)})");
+            }
+
+            // C26b: a Resources folder under an Editor folder inside a Resources folder — a player has the
+            // file under the outer folder's path, not under the inner one's (measured)
+            Reset58(editor: true);
+            {
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/Editor/Resources/nx.png", new Texture2D { name = "nx" });
+                ContentLinkEditorUtility.Invalidate();
+                var outerA = ContentLinkEditorUtility.ResolveAsset("res:UI/Editor/Resources/nx");
+                var innerA = ContentLinkEditorUtility.ResolveAsset("res:nx");
+                Init(typeof(ContentLinkSimulation), "Install");
+                Debug.Verbose = false;
+                var outerH = ContentService.Acquire<Texture2D>("res:UI/Editor/Resources/nx");
+                var innerH = ContentService.Acquire<Texture2D>("res:nx");
+                Debug.Verbose = true;
+                Check(At58(outerA) == "Assets/Resources/UI/Editor/Resources/nx.png" && innerA == null && outerH.IsValid && !innerH.IsValid,
+                      $"C26b a file in Resources/UI/Editor/Resources: the outer folder's name is a player's — the editor's answer and Play Mode load it — the inner one's is not ({At58(outerA)} · {At58(innerA)} · {outerH.IsValid} · {innerH.IsValid})");
+                outerH.Dispose(); innerH.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                ContentService.ResourcesFallback = null;
+            }
+
+            // C26c: the player's own pick — its prefab before its texture in any order, else its first file
+            Reset58(editor: true);
+            {
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/o1.prefab", new GameObject { name = "o1" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/o1.prefab", new GameObject { name = "o1" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/o1.png", new Texture2D { name = "o1" });
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/o2.png", new Texture2D { name = "o2" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/o2.png", new Texture2D { name = "o2" }, new Sprite { name = "a" });
+                FakeEngine.AddProjectAsset("Assets/Resources/UI/o2.txt", new Object { name = "o2" });
+                ContentLinkEditorUtility.Invalidate();
+                string PlayerAt(string path) { FakeEngine.ResourcesSeeEditorOnly = false; try { return At58(Resources.Load(path)); } finally { FakeEngine.ResourcesSeeEditorOnly = true; } }
+                var o1 = At58(ContentLinkEditorUtility.ResolveAsset("res:UI/o1")); var o2 = At58(ContentLinkEditorUtility.ResolveAsset("res:UI/o2"));
+                Check(o1 == PlayerAt("UI/o1") && o2 == PlayerAt("UI/o2"), $"C26c the player's own pick among its files — a prefab first, else the first ({o1} vs {PlayerAt("UI/o1")} · {o2} vs {PlayerAt("UI/o2")})");
+            }
+
+            // ───────────── the editor's Play Mode loads what a player's Resources holds ─────────────
+            Reset58(editor: true);
+            {
+                Twins58();
+                Init(typeof(ContentLinkSimulation), "Install");   // the editor's seams
+                Debug.Verbose = false; int e0 = Debug.Errors;
+                var ed = ContentService.Acquire<Texture2D>("res:UI/edonly");
+                int errs = Debug.Errors - e0; string log = Debug.LastError;
+                var ta = ContentService.Acquire<Texture2D>("res:UI/twinA");
+                var pa = ContentService.AcquireAsync<Texture2D>("res:UI/twinB"); FakeEngine.CompleteLoads(); var tb = pa.GetResult();
+                var sa = ContentService.Acquire<Sprite>("res:UI/stw[a]");
+                var gp = ContentService.Acquire<Object>("res:UI/gp");
+                Debug.Verbose = true;
+                Check(!ed.IsValid && errs == 1 && log.Contains("is not in a Resources folder of this build"),
+                      $"C27 Play Mode in the editor: an editor-only file fails as in a player ({errs} error · {log})");
+                Check(ta.IsValid && At58(ta.Asset) == "Assets/Resources/UI/twinA.png" && tb.IsValid && At58(tb.Asset) == "Assets/Resources/UI/twinB.png",
+                      $"C28 … a path an editor-only file shares loads the player's file, sync and async ({(ta.IsValid ? At58(ta.Asset) : "nothing")} · {(tb.IsValid ? At58(tb.Asset) : "nothing")})");
+                Check(sa.IsValid && At58(sa.Asset) == "Assets/Resources/UI/stw.png[a]" && gp.IsValid && At58(gp.Asset) == "Assets/Resources/UI/gp.png",
+                      $"C29 … a sprite both sheets have and a prefab the engine picked: the player's ({(sa.IsValid ? At58(sa.Asset) : "nothing")} · {(gp.IsValid ? At58(gp.Asset) : "nothing")})");
+                ta.Dispose(); tb.Dispose(); sa.Dispose(); gp.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                ContentService.ResourcesFallback = null;
+            }
+
+            // C28b · C27b · C29b: Play Mode — async with the editor-only file first · a sprite of a sheet only an Editor folder has · a sprite name in another case
+            Reset58(editor: true);
+            {
+                Twins58();
+                FakeEngine.AddProjectAsset("Assets/Editor/Resources/UI/eds.png", new Texture2D { name = "eds" }, new Sprite { name = "a" });
+                ContentLinkEditorUtility.Invalidate();
+                Init(typeof(ContentLinkSimulation), "Install");
+                Debug.Verbose = false;
+                var pa = ContentService.AcquireAsync<Texture2D>("res:UI/twinA"); FakeEngine.CompleteLoads(); var ta = pa.GetResult();
+                var ps = ContentService.AcquireAsync<Sprite>("res:UI/stw[a]"); FakeEngine.CompleteLoads(); var sa = ps.GetResult();
+                int e0 = Debug.Errors;
+                var es = ContentService.Acquire<Sprite>("res:UI/eds[a]");
+                int errs = Debug.Errors - e0; string log = Debug.LastError;
+                int e1 = Debug.Errors;
+                var cs = ContentService.Acquire<Sprite>("res:UI/stw[A]");
+                int errs2 = Debug.Errors - e1;
+                Debug.Verbose = true;
+                Check(ta.IsValid && At58(ta.Asset) == "Assets/Resources/UI/twinA.png" && sa.IsValid && At58(sa.Asset) == "Assets/Resources/UI/stw.png[a]",
+                      $"C28b async, the engine giving the editor-only file first: the player's ({(ta.IsValid ? At58(ta.Asset) : "nothing")} · {(sa.IsValid ? At58(sa.Asset) : "nothing")})");
+                Check(!es.IsValid && errs == 1 && log.Contains("is not in a Resources folder of this build"),
+                      $"C27b a sprite slot of a sheet only an Editor folder has: the player's error ({errs} · {log})");
+                Check(!cs.IsValid && errs2 == 1 && ContentLinkEditorUtility.ResolveAsset("res:UI/stw", "A") == null,
+                      $"C29b a sprite name in another case is no sprite — Play Mode and the editor's answer, as in a player ({cs.IsValid} · {errs2})");
+                ta.Dispose(); sa.Dispose(); ContentService.Collect(); FakeEngine.CompleteLoads();
+                ContentService.ResourcesFallback = null;
+            }
+
+            // ───────────── one name index per atlas ─────────────
+            foreach (int n58 in new[] { 100, 800 })
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+                FakeEngine.ResourcesSeeEditorOnly = false;
+                UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+                var p58 = ContentBuildSettings.instance.Add("P58"); p58.SourceRoot = "Assets/C58"; p58.OutputPath = "Build/C58";
+                p58.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/c58.asset" } };
+                var packables = new Object[n58]; var sprites58 = new Sprite[n58];
+                for (int i = 0; i < n58; ++i)
+                {
+                    var tex58 = new Texture2D { name = "t" + i }; var spr58 = new Sprite { name = "t" + i };
+                    FakeEngine.AddProjectAsset($"Assets/Out58/t{i}.png", tex58, spr58);   // outside every root: only the atlas names them
+                    packables[i] = tex58; sprites58[i] = spr58;
+                }
+                var atlas = new UnityEngine.U2D.SpriteAtlas { name = "Big", Packables = packables };
+                foreach (var s in sprites58) atlas.Bound.Add(s);
+                FakeEngine.AddProjectAsset("Assets/C58/Atlas/Big.spriteatlasv2", atlas);
+                ContentLinkEditorUtility.Invalidate();
+                ContentLinkEditorUtility.PackedSprites(atlas);   // the packed list is cached apart: count what follows alone
+                long r0 = Object.NameReads;
+                bool hit1 = ContentLinkEditorUtility.TryGetNameForAsset(sprites58[n58 / 2], out var name1, out _);
+                long first = Object.NameReads - r0;
+                r0 = Object.NameReads;
+                bool hit2 = ContentLinkEditorUtility.TryGetNameForAsset(sprites58[n58 / 3], out var name2, out _);
+                long second = Object.NameReads - r0;
+                Check(hit1 && name1 == $"Atlas/Big[t{n58 / 2}]" && first <= 2 * n58 + 2,
+                      $"C30 an atlas of {n58} sprites outside every root: the first pick reads each name about twice, not once per pair ({first} reads · {name1})");
+                Check(hit2 && name2 == $"Atlas/Big[t{n58 / 3}]" && second <= 2, $"C31 the second pick reads its own name only — not the atlas's again to see that no other sprite shares it ({second})");
+                if (n58 != 100) continue;
+                // the atlas's names through every other door: the editor's resolve and judgment of 'atlas[sprite]'
+                ContentLinkEditorUtility.Invalidate(); ContentLinkEditorUtility.PackedSprites(atlas);
+                r0 = Object.NameReads;
+                int resolved = 0;
+                for (int i = 0; i < n58; ++i) if (ReferenceEquals(ContentLinkEditorUtility.ResolveAsset("Atlas/Big", "t" + i), sprites58[i])) ++resolved;
+                long k = Object.NameReads - r0;
+                Check(resolved == n58 && k <= 2 * n58, $"C32 {n58} sprite names of one atlas resolved: each name read about once ({k} reads · {resolved} found)");
+                // a name two packed sprites share, and a rename after Invalidate
+                sprites58[7].name = "t8";
+                ContentLinkEditorUtility.Invalidate();
+                var twice = ContentLinkEditorUtility.ResolveAsset("Atlas/Big", "t8");
+                var renamed = ContentLinkEditorUtility.ResolveAsset("Atlas/Big", "t7");
+                bool refused = ContentLinkEditorUtility.PackedSprite(atlas, "t8", out bool amb) == null && amb;
+                bool picked = ContentLinkEditorUtility.TryGetNameForAsset(sprites58[8], out _, out var why8);
+                Check(twice == null && refused && !picked && why8 != null && renamed == null && ContentLinkEditorUtility.PackedSprite(atlas, "t9", out bool one) == sprites58[9] && !one,
+                      $"C33 (control) a name two packed sprites share answers nothing and the pick refuses it · a renamed sprite is gone after Invalidate ({why8})");
+            }
+            // C33b · C33c: three packed sprites of one name · two atlases of one name
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                ContentDirectoryBuilder.ClearOverrides();
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+                FakeEngine.ResourcesSeeEditorOnly = false;
+                UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+                var pr = ContentBuildSettings.instance.Add("PR"); pr.SourceRoot = "Assets/CR"; pr.OutputPath = "Build/CR";
+                pr.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat/cr.asset" } };
+                (UnityEngine.U2D.SpriteAtlas atlas, Sprite[] sprites) AtlasR(string dir, params string[] names)
+                {
+                    var packablesR = new Object[names.Length]; var spritesR = new Sprite[names.Length];
+                    for (int i = 0; i < names.Length; ++i)
+                    {
+                        var texR = new Texture2D { name = dir + i }; var sprR = new Sprite { name = names[i] };
+                        FakeEngine.AddProjectAsset($"Assets/OutR/{dir}/t{i}.png", texR, sprR);
+                        packablesR[i] = texR; spritesR[i] = sprR;
+                    }
+                    var atlasR = new UnityEngine.U2D.SpriteAtlas { name = "Big", Packables = packablesR };
+                    foreach (var sp in spritesR) atlasR.Bound.Add(sp);
+                    FakeEngine.AddProjectAsset($"Assets/CR/{dir}/Big.spriteatlasv2", atlasR);
+                    return (atlasR, spritesR);
+                }
+                var A = AtlasR("A", "x", "x", "x", "y");
+                var B = AtlasR("B", "z", "y");
+                ContentLinkEditorUtility.Invalidate();
+                var x = ContentLinkEditorUtility.PackedSprite(A.atlas, "x", out bool ambX);
+                Check(x == null && ambX, $"C33b three packed sprites of one name: no answer, ambiguous ({(x == null ? "null" : x.name)} · {ambX})");
+                var ya = ContentLinkEditorUtility.PackedSprite(A.atlas, "y", out _);
+                var zb = ContentLinkEditorUtility.PackedSprite(B.atlas, "z", out _);
+                var yb = ContentLinkEditorUtility.PackedSprite(B.atlas, "y", out _);
+                var za = ContentLinkEditorUtility.PackedSprite(A.atlas, "z", out _);
+                Check(ReferenceEquals(ya, A.sprites[3]) && ReferenceEquals(zb, B.sprites[0]) && ReferenceEquals(yb, B.sprites[1]) && za == null,
+                      "C33c (control) two atlases of one name in two folders: each answers its own sprites");
+            }
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+            ContentLinkEditorUtility.Invalidate();
+        }
+        Console.WriteLine("59) IMP018 7-12 — Unicode forms: names are made and compared composed — a path the macOS editor spells decomposed, a root or a category typed composed, a name saved in another form, a res: path a player built on macOS spells its way");
+        {
+            static string D59(string s) => s.Normalize(System.Text.NormalizationForm.FormD);
+            static string Form59(string s) => s == null ? "null" : s.IsNormalized(System.Text.NormalizationForm.FormC) ? (s.IsNormalized(System.Text.NormalizationForm.FormD) ? "ascii" : "NFC") : s.IsNormalized(System.Text.NormalizationForm.FormD) ? "NFD" : "mixed";
+            static string Show59(string s) => s == null ? "null" : $"'{s}'({Form59(s)} · {s.Length})";
+            // A path as the macOS editor spells it (measured on 6000.6): the folders decomposed, the file as on disk — composed when git
+            // checked it out, decomposed when it was made so. An object is named as its file is spelled.
+            static string Mac59(string path, bool fileDecomposed = false) { int slash = path.LastIndexOf('/'); var file = path.Substring(slash + 1); return D59(path.Substring(0, slash)) + "/" + (fileDecomposed ? D59(file) : file); }
+
+            const string R59 = "Assets/C59", Res59 = "Assets/R59/Resources";
+            const string G59Pic = "c5900000000000000000000000000a01", G59Tree = "c5900000000000000000000000000a02", G59Sheet = "c5900000000000000000000000000a03";
+            const string G59Stone = "c5900000000000000000000000000a06";
+            string pathPic59 = Mac59(R59 + "/그림/파일.png"), pathTree59 = Mac59(R59 + "/나무.png", true), pathScene59 = Mac59(R59 + "/장면/무대.unity");
+            string pathLine59 = Mac59(Res59 + "/글자/한줄.png"), pathSheet59 = Mac59(Res59 + "/그림/나무.png", true);
+            Texture2D texPic59 = null, texTree59 = null, texLine59 = null, texSheet59 = null;
+            Sprite sprPic59 = null, sprTree59 = null, sprSheet59 = null;
+            var tmp59 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "verify59-" + Guid.NewGuid().ToString("N"));
+            void Settings59()
+            {
+                UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+                foreach (var k in new System.Collections.Generic.List<string>(FakeEngine.MainAssetAt.Keys)) if (k.StartsWith("Assets/Cat/", StringComparison.Ordinal)) FakeEngine.MainAssetAt.Remove(k);
+                ContentLinkEditorUtility.Invalidate();
+            }
+            void Project59()
+            {
+                Init(typeof(ContentService), "ResetStatics");
+                FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat");
+                FakeEngine.Registered.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear(); FakeEngine.Refs.Clear();
+                ContentDirectoryBuilder.ClearOverrides();
+                UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false;
+                ContentLinkSimulation.Drop(); ContentLinkSimulation.Enabled = false;
+                ContentService.ResourcesFallback = null;   // a player's Resources unless a check sets the editor's
+                FakeEngine.ResourcesSeeEditorOnly = false;
+                texPic59 = new Texture2D { name = "파일" }; sprPic59 = new Sprite { name = "파일" };
+                texTree59 = new Texture2D { name = D59("나무") }; sprTree59 = new Sprite { name = D59("나무") };
+                texLine59 = new Texture2D { name = "한줄" };
+                texSheet59 = new Texture2D { name = D59("나무") }; sprSheet59 = new Sprite { name = D59("나무") };
+                FakeEngine.AddProjectAsset(pathPic59, texPic59, sprPic59); FakeEngine.SetGuid(pathPic59, G59Pic);
+                FakeEngine.AddProjectAsset(pathTree59, texTree59, sprTree59); FakeEngine.SetGuid(pathTree59, G59Tree);
+                FakeEngine.AddProjectAsset(pathScene59, new UnityEditor.SceneAsset { name = "무대" });
+                FakeEngine.AddProjectAsset(pathLine59, texLine59);
+                FakeEngine.AddProjectAsset(pathSheet59, texSheet59, sprSheet59); FakeEngine.SetGuid(pathSheet59, G59Sheet);
+                foreach (var o in new Object[] { texPic59, sprPic59, texTree59, sprTree59, texLine59, texSheet59, sprSheet59 }) FakeEngine.Assets[FakeEngine.ObjectIdOf[o]] = o;
+                Settings59();
+            }
+            int n59 = 0;
+            ContentBuildSettings.Profile P59(string root, params string[] subs)
+            {
+                var p = ContentBuildSettings.instance.Add("C59_" + (++n59));
+                p.SourceRoot = root; p.OutputPath = System.IO.Path.Combine(tmp59, p.Name); p.Archive = ContentBuildSettings.ArchiveMode.None;
+                var cats = new ContentBuildSettings.CatalogEntry[subs.Length];
+                for (int i = 0; i < subs.Length; ++i) cats[i] = new ContentBuildSettings.CatalogEntry { SubFolder = subs[i], CreateAt = $"Assets/Cat/{p.Name}_{i}.asset" };
+                p.Catalogs = cats;
+                ContentLinkEditorUtility.Invalidate();
+                return p;
+            }
+            ContentCatalog Update59(ContentBuildSettings.Profile p, out bool ok, out string errs)
+            {
+                var e = new System.Collections.Generic.List<string>();
+                Debug.Verbose = false; ok = ContentBuildRunner.UpdateCatalogs(p, e); Debug.Verbose = true;
+                errs = string.Join(" | ", e);
+                ContentLinkEditorUtility.Invalidate();
+                return FakeEngine.MainAssetAt.TryGetValue(p.Catalogs[0].CreateAt, out var c) ? c as ContentCatalog : null;
+            }
+            string Names59(ContentCatalog c)
+            {
+                if (c == null) return "(no catalog)";
+                var l = new System.Collections.Generic.List<string>();
+                foreach (var e in c.Entries) l.Add(Show59(e.name) + (string.IsNullOrEmpty(e.sub) ? "" : " sub " + Show59(e.sub)));
+                foreach (var e in c.Scenes) l.Add("scene " + Show59(e.name));
+                return l.Count == 0 ? "(empty)" : string.Join(" · ", l);
+            }
+            static bool Composed59(string s) => !(Form59(s) is "NFD" or "mixed");
+            bool AllComposed59(ContentCatalog c)
+            {
+                if (c == null) return false;
+                foreach (var e in c.Entries) if (!Composed59(e.name) || !Composed59(e.sub)) return false;
+                foreach (var e in c.Scenes) if (!Composed59(e.name)) return false;
+                return true;
+            }
+            bool Has59(ContentCatalog c, string name)
+            {
+                if (c == null) return false;
+                foreach (var e in c.Entries) if (e.name == name) return true;
+                foreach (var e in c.Scenes) if (e.name == name) return true;
+                return false;
+            }
+            void Await59<T>(Awaitable<T> a) { for (int i = 0; i < 8 && !a.IsCompleted; ++i) FakeEngine.CompleteLoads(); }
+
+            // ⓪ the stub answers as the macOS editor does (measured on 6000.6): either form finds a path, answered with the stored spelling;
+            // a search by name matches a file only in the form it is spelled in; Resources finds only the stored spelling
+            Project59();
+            Check(UnityEditor.AssetDatabase.LoadMainAssetAtPath(R59 + "/그림/파일.png") == texPic59 && UnityEditor.AssetDatabase.LoadMainAssetAtPath(D59(R59 + "/그림/파일.png")) == texPic59
+                  && UnityEditor.AssetDatabase.GetAssetPath(texPic59) == pathPic59 && Form59(pathPic59) == "mixed",
+                  $"C0 (fidelity) a file in a decomposed folder loads by its composed and its decomposed path, and answers with the stored spelling {Show59(UnityEditor.AssetDatabase.GetAssetPath(texPic59))}");
+            Check(UnityEditor.AssetDatabase.FindAssets("파일", new[] { R59 }).Length == 1 && UnityEditor.AssetDatabase.FindAssets(D59("파일"), new[] { R59 }).Length == 0
+                  && UnityEditor.AssetDatabase.FindAssets("나무", new[] { R59 }).Length == 0 && UnityEditor.AssetDatabase.FindAssets(D59("나무"), new[] { R59 }).Length == 1
+                  && UnityEditor.AssetDatabase.FindAssets("그림", new[] { R59 }).Length == 0 && UnityEditor.AssetDatabase.FindAssets("", new[] { R59 + "/그림" }).Length == 1,
+                  "C0b (fidelity) a search by name matches a file only in the form it is spelled in and never a folder's name; a folder filter finds in either form");
+            Check(Resources.Load("글자/한줄") == null && Resources.Load(D59("글자/한줄")) == null && Resources.Load(D59("글자") + "/한줄") == texLine59
+                  && Resources.Load(D59("그림/나무")) == texSheet59 && Resources.Load("그림/나무") == null,
+                  "C0c (fidelity) Resources finds a path only in the stored spelling — folders decomposed, the file as on disk — not composed, not all decomposed (measured on 6000.6, the editor and both players)");
+
+            // ───────────── names: made composed ─────────────
+            P59(R59, "");
+            bool n1_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out var name1_59, out var why1_59);
+            Check(n1_59 && name1_59 == "그림/파일" && Form59(name1_59) == "NFC", $"C1 a file in a folder the editor spells decomposed is named composed: {Show59(name1_59)} {why1_59}");
+            bool n2_59 = ContentLinkEditorUtility.TryGetNameForAsset(texTree59, out var name2_59, out _);
+            bool n2b_59 = ContentLinkEditorUtility.TryGetNameForAsset(sprTree59, out var name2b_59, out _);
+            bool l2_59 = ContentLinkEditorUtility.TryGetLinkForAsset(sprTree59, out var link2_59, out var sub2_59, out _);
+            Check(n2_59 && name2_59 == "나무" && n2b_59 && name2b_59 == "나무[나무]" && l2_59 && link2_59 == "나무" && sub2_59 == "나무",
+                  $"C2 a file and its sprite spelled decomposed on disk are named composed — the name, the sprite's name and a link's pair: {Show59(name2_59)} · {Show59(name2b_59)} · ({Show59(link2_59)}, {Show59(sub2_59)})");
+            var pr3_59 = P59(R59, "");
+            var c3_59 = Update59(pr3_59, out var ok3_59, out var errs3_59);
+            Check(ok3_59 && AllComposed59(c3_59) && Has59(c3_59, "그림/파일") && Has59(c3_59, "그림/파일[파일]") && Has59(c3_59, "나무") && Has59(c3_59, "나무[나무]") && Has59(c3_59, "장면/무대"),
+                  $"C3 a catalog update writes every name and sprite name composed — the catalog is the same whichever machine writes it: {Names59(c3_59)} {errs3_59}");
+            bool r2_59 = ContentLinkEditorUtility.TryGetRefForAsset(sprTree59, out var guid2_59, out var rsub2_59, out _);
+            var v2_59 = ContentLinkEditorUtility.ValidateRef(G59Tree, "나무", typeof(Sprite), false, out var tip2_59);
+            var v2b_59 = ContentLinkEditorUtility.ValidateRef(G59Tree, D59("나무"), typeof(Sprite), false, out var tip2b_59);
+            Check(r2_59 && guid2_59 == G59Tree && rsub2_59 == "나무" && ContentLinkEditorUtility.ResolveRefAsset(G59Tree, "나무") == sprTree59 && ContentLinkEditorUtility.ResolveRefAsset(G59Tree, D59("나무")) == sprTree59
+                  && v2_59 == NameStatus.Ok && v2b_59 == NameStatus.Ok,
+                  $"C2b a reference keeps the sprite's name composed, finds the sprite by either form and is Ok with the catalog: ({guid2_59}, {Show59(rsub2_59)}) · {v2_59} {tip2_59} · {v2b_59} {tip2b_59}");
+            UnityEditor.EditorSettings.spritePackerMode = UnityEditor.SpritePackerMode.SpriteAtlasV2;
+            const string G59Atlas = "c5900000000000000000000000000a04";
+            var atlas2c_59 = new UnityEngine.U2D.SpriteAtlas { name = "Atlas59", Packables = new Object[] { texTree59 } }; atlas2c_59.Bound.Add(sprTree59);
+            FakeEngine.AddProjectAsset(R59 + "/Atlas59.spriteatlasv2", atlas2c_59); FakeEngine.SetGuid(R59 + "/Atlas59.spriteatlasv2", G59Atlas);
+            var c2c_59 = Update59(pr3_59, out var ok2c_59, out var errs2c_59);
+            bool ra2c_59 = ContentLinkEditorUtility.TryGetRefForAtlasSprite(atlas2c_59, sprTree59, out var ag2c_59, out var as2c_59);
+            bool la2c_59 = ContentLinkEditorUtility.TryGetLinkForAtlasSprite(atlas2c_59, sprTree59, out var an2c_59, out var al2c_59);
+            Check(ok2c_59 && Has59(c2c_59, "Atlas59[나무]") && AllComposed59(c2c_59) && ra2c_59 && as2c_59 == "나무" && la2c_59 && an2c_59 == "Atlas59" && al2c_59 == "나무"
+                  && ContentLinkEditorUtility.ResolveRefAsset(G59Atlas, "나무") == sprTree59 && ContentLinkEditorUtility.ResolveRefAsset(G59Atlas, D59("나무")) == sprTree59
+                  && ContentLinkEditorUtility.ResolveAsset("Atlas59[나무]") == sprTree59 && ContentLinkEditorUtility.ResolveAsset(D59("Atlas59[나무]")) == sprTree59,
+                  $"C2c an atlas's name for a sprite spelled decomposed: catalogued composed, picked composed (a reference, a link), resolved from either form: {Names59(c2c_59)} · ref ({ag2c_59}, {Show59(as2c_59)}) · link ({an2c_59}, {Show59(al2c_59)}) {errs2c_59}");
+            FakeEngine.MainAssetAt.Remove(R59 + "/Atlas59.spriteatlasv2"); ContentLinkEditorUtility.Invalidate();
+            var leafTex2d_59 = new Texture2D { name = D59("잎") }; var leaf2d_59 = new Sprite { name = D59("잎") };   // a file spelled decomposed outside every root
+            FakeEngine.AddProjectAsset("Assets/Out59/" + D59("잎") + ".png", leafTex2d_59, leaf2d_59);
+            var alias2d_59 = new UnityEngine.U2D.SpriteAtlas { name = "Alias59", Packables = new Object[] { leafTex2d_59 } }; alias2d_59.Bound.Add(leaf2d_59);
+            FakeEngine.AddProjectAsset(R59 + "/Alias59.spriteatlasv2", alias2d_59); FakeEngine.SetGuid(R59 + "/Alias59.spriteatlasv2", "c5900000000000000000000000000a05");
+            ContentLinkEditorUtility.Invalidate();
+            bool l2d_59 = ContentLinkEditorUtility.TryGetLinkForAsset(leaf2d_59, out var ln2d_59, out var ls2d_59, out var lw2d_59);
+            bool r2d_59 = ContentLinkEditorUtility.TryGetRefForAsset(leaf2d_59, out var rg2d_59, out var rs2d_59, out var rw2d_59);
+            Check(l2d_59 && ln2d_59 == "Alias59" && ls2d_59 == "잎" && r2d_59 && rg2d_59 == "c5900000000000000000000000000a05" && rs2d_59 == "잎",
+                  $"C2d a sprite only an atlas names (its file outside every root, spelled decomposed): a link and a reference keep the sprite name composed — ({ln2d_59}, {Show59(ls2d_59)}) {lw2d_59} · ({rg2d_59}, {Show59(rs2d_59)}) {rw2d_59}");
+            FakeEngine.MainAssetAt.Remove(R59 + "/Alias59.spriteatlasv2"); FakeEngine.MainAssetAt.Remove("Assets/Out59/" + D59("잎") + ".png"); ContentLinkEditorUtility.Invalidate();
+            var leafE2_59 = new Texture2D { name = "가지" }; var sprE2_59 = new Sprite { name = "가지" };   // a sprite outside every root that two atlases of the root pack
+            FakeEngine.AddProjectAsset("Assets/Out59/가지.png", leafE2_59, sprE2_59);
+            string eAcute59 = "\u00e9".Normalize(System.Text.NormalizationForm.FormD);   // é — composed it sorts after 'f', decomposed before
+            string atlasE2_59 = R59 + "/" + eAcute59 + "59.spriteatlasv2", atlasF2_59 = R59 + "/f59.spriteatlasv2";
+            var aE2_59 = new UnityEngine.U2D.SpriteAtlas { name = eAcute59 + "59", Packables = new Object[] { leafE2_59 } }; aE2_59.Bound.Add(sprE2_59);
+            var aF2_59 = new UnityEngine.U2D.SpriteAtlas { name = "f59", Packables = new Object[] { leafE2_59 } }; aF2_59.Bound.Add(sprE2_59);
+            FakeEngine.AddProjectAsset(atlasE2_59, aE2_59); FakeEngine.AddProjectAsset(atlasF2_59, aF2_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool l2e_59 = ContentLinkEditorUtility.TryGetLinkForAsset(sprE2_59, out var ln2e_59, out _, out var lw2e_59);
+            Check(l2e_59 && ln2e_59 == "f59", $"C2e of two atlases of a root that pack one sprite, the first by their paths composed names it — the same pick on every machine ({Show59(ln2e_59)}) {lw2e_59}");
+            FakeEngine.MainAssetAt.Remove(atlasE2_59); FakeEngine.MainAssetAt.Remove(atlasF2_59); FakeEngine.MainAssetAt.Remove("Assets/Out59/가지.png"); ContentLinkEditorUtility.Invalidate();
+            var leafF2f_59 = new Texture2D { name = "x2f" }; var sprF2f_59 = new Sprite { name = "x2f" };   // a sprite outside every root
+            FakeEngine.AddProjectAsset("Assets/Out59/x2f.png", leafF2f_59, sprF2f_59);
+            string atlasF2f_59 = R59 + "/" + D59("검") + "방패59.spriteatlasv2";   // the atlas's file name spelled in neither form throughout
+            var aF2f_59 = new UnityEngine.U2D.SpriteAtlas { name = D59("검") + "방패59", Packables = new Object[] { leafF2f_59 } }; aF2f_59.Bound.Add(sprF2f_59);
+            FakeEngine.AddProjectAsset(atlasF2f_59, aF2f_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool n2f_59 = ContentLinkEditorUtility.TryGetNameForAsset(sprF2f_59, out var name2f_59, out var why2f_59);
+            Check(!n2f_59 && why2f_59 != null && why2f_59.Contains("spelled in neither Unicode form throughout"),
+                  $"C2f a sprite only an atlas names, the atlas's file name spelled in neither form throughout: the reason looks at the atlas — the file the name is made from — not the sprite's texture ({n2f_59} {Show59(name2f_59)} · {why2f_59})");
+            FakeEngine.MainAssetAt.Remove(atlasF2f_59); FakeEngine.MainAssetAt.Remove("Assets/Out59/x2f.png"); ContentLinkEditorUtility.Invalidate();
+
+            var kana1b_59 = new Texture2D { name = D59("ガイド") }; var acc1b_59 = new Texture2D { name = D59("café") };   // a kana with a voiced mark, an accented Latin letter: spelled decomposed on disk
+            string pathKana1b_59 = Mac59(R59 + "/가나/ガイド.png", true), pathAcc1b_59 = Mac59(R59 + "/café.png", true);
+            FakeEngine.AddProjectAsset(pathKana1b_59, kana1b_59); FakeEngine.AddProjectAsset(pathAcc1b_59, acc1b_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool n1b_59 = ContentLinkEditorUtility.TryGetNameForAsset(kana1b_59, out var name1b_59, out var why1b_59);
+            bool n1c_59 = ContentLinkEditorUtility.TryGetNameForAsset(acc1b_59, out var name1c_59, out var why1c_59);
+            var r1b_59 = ContentLinkEditorUtility.ResolveAsset("가나/ガイド"); var r1c_59 = ContentLinkEditorUtility.ResolveAsset(D59("café"));
+            Check(n1b_59 && name1b_59 == "가나/ガイド" && n1c_59 && name1c_59 == "café" && r1b_59 == kana1b_59 && r1c_59 == acc1b_59,
+                  $"C1b not Hangul only: a kana with a voiced mark and an accented Latin letter, spelled decomposed on disk, are named composed and found from either form: {Show59(name1b_59)} {why1b_59} · {Show59(name1c_59)} {why1c_59} · {r1b_59?.name} · {r1c_59?.name}");
+            FakeEngine.MainAssetAt.Remove(pathKana1b_59); FakeEngine.MainAssetAt.Remove(pathAcc1b_59); ContentLinkEditorUtility.Invalidate();
+
+            Settings59();
+            var pc4_59 = P59(R59 + "/그림", "");   // typed composed, as an IME types it; the folder is spelled decomposed
+            bool n4_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out var name4_59, out var why4_59);
+            Check(n4_59 && name4_59 == "파일", $"C4 under a root typed composed over a folder the editor spells decomposed, an asset is named: {Show59(name4_59)} ({why4_59})");
+            var c4_59 = Update59(pc4_59, out var ok4_59, out var errs4_59);
+            Check(ok4_59 && Has59(c4_59, "파일") && Has59(c4_59, "파일[파일]") && AllComposed59(c4_59),
+                  $"C4b … and a catalog update names it so — not cut at the root's composed length: {Names59(c4_59)} {errs4_59}");
+
+            Settings59();
+            var pk5_59 = P59(R59, "그림");   // the category typed composed over a folder spelled decomposed
+            var errsV5_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pk5_59));
+            Debug.LastWarning = "";
+            var c5_59 = Update59(pk5_59, out var ok5_59, out var errs5_59);
+            Check(errsV5_59 == "" && ok5_59 && Has59(c5_59, "그림/파일") && Has59(c5_59, "그림/파일[파일]") && Debug.LastWarning.Contains("] 3 asset(s) under 'Assets/C59'"),
+                  $"C5 a category typed composed over a folder spelled decomposed catalogues its assets — the warning counts only the three outside it (the tree, its sprite, the scene): validation [{errsV5_59}] · {Names59(c5_59)} · {Debug.LastWarning} {errs5_59}");
+            Settings59();
+            var z5_59 = new Texture2D { name = "z" }; FakeEngine.AddProjectAsset(Mac59(R59 + "/그림/icons/z.png"), z5_59);
+            FakeEngine.Folders.Remove(R59 + "/그림/icons");   // an editor that does not find the folder by another case: validation cannot see the slip, the scanned paths can
+            var pk5b_59 = P59(R59, "그림/Icons");
+            var c5b_59 = Update59(pk5b_59, out var ok5b_59, out var errs5b_59);
+            Check(!ok5b_59 && errs5b_59.Contains("category '그림/Icons' is spelled '그림/icons' in the project"),
+                  $"C5b where validation cannot see a category in another case under a folder spelled decomposed, the scanned paths refuse it with their spelling, composed (F-35): ok={ok5b_59} [{errs5b_59}] {Names59(c5b_59)}");
+            FakeEngine.MainAssetAt.Remove(Mac59(R59 + "/그림/icons/z.png")); ContentLinkEditorUtility.Invalidate();
+            Settings59();
+            FakeEngine.AddProjectAsset(Mac59(R59 + "/그림/icons/z.png"), new Texture2D { name = "z" });
+            FakeEngine.Folders.Remove(R59 + "/그림/icons");
+            var pk5c_59 = P59(R59, D59("그림") + "/Icons");   // the category pasted decomposed, in another case
+            var c5c_59 = Update59(pk5c_59, out var ok5c_59, out var errs5c_59);
+            Check(!ok5c_59 && errs5c_59.Contains("is spelled '그림/icons' in the project"),
+                  $"C5c … a category pasted decomposed in another case too, refused with the project's spelling, composed: ok={ok5c_59} [{errs5c_59}] {Names59(c5c_59)}");
+            FakeEngine.MainAssetAt.Remove(Mac59(R59 + "/그림/icons/z.png")); ContentLinkEditorUtility.Invalidate();
+            Settings59();
+            FakeEngine.AddProjectAsset(Mac59(R59 + "/그림/icons/z.png"), new Texture2D { name = "z" });
+            FakeEngine.Folders.Remove(R59 + "/그림/icons");
+            var pk5d_59 = P59(D59(R59 + "/그림"), "Icons");   // the root written decomposed, the category in another case
+            var c5d_59 = Update59(pk5d_59, out var ok5d_59, out var errs5d_59);
+            Check(!ok5d_59 && errs5d_59.Contains("is spelled 'icons' in the project"),
+                  $"C5d … and under a root written decomposed — the scanned paths cut at the root's composed length: ok={ok5d_59} [{errs5d_59}] {Names59(c5d_59)}");
+            FakeEngine.MainAssetAt.Remove(Mac59(R59 + "/그림/icons/z.png")); ContentLinkEditorUtility.Invalidate();
+
+            // ───────────── name → asset: a name in either form ─────────────
+            Settings59();
+            var pr6_59 = P59(R59, "");   // no catalog: the path rule answers
+            var r6a_59 = ContentLinkEditorUtility.ResolveAsset("그림/파일"); var r6b_59 = ContentLinkEditorUtility.ResolveAsset(D59("그림") + "/파일");
+            var r6c_59 = ContentLinkEditorUtility.ResolveAsset("나무"); var r6d_59 = ContentLinkEditorUtility.ResolveAsset(D59("나무[나무]")); var r6e_59 = ContentLinkEditorUtility.ResolveAsset("나무[나무]");
+            Check(r6a_59 == texPic59 && r6b_59 == texPic59 && r6c_59 == texTree59 && r6d_59 == sprTree59 && r6e_59 == sprTree59,
+                  $"C6 with no catalog the path rule finds a name typed composed, the mixed spelling an earlier version made, and a file or a sprite spelled decomposed (the search runs in both forms): {r6a_59?.name} · {r6b_59?.name} · {r6c_59?.name} · {r6d_59?.name} · {r6e_59?.name}");
+            var pb6_59 = P59("Assets/C59b", ""); FakeEngine.Folders.Add("Assets/C59b");   // a second root, searched first (the longer), that has neither name
+            ContentLinkEditorUtility.Invalidate(); int q6_59 = UnityEditor.AssetDatabase.FindCalls;
+            var r6f_59 = ContentLinkEditorUtility.ResolveAsset("그림/파일"); int q6a_59 = UnityEditor.AssetDatabase.FindCalls - q6_59;
+            ContentLinkEditorUtility.Invalidate(); q6_59 = UnityEditor.AssetDatabase.FindCalls;
+            var r6g_59 = ContentLinkEditorUtility.ResolveAsset("나무"); int q6b_59 = UnityEditor.AssetDatabase.FindCalls - q6_59;
+            ContentBuildSettings.instance.Remove(pb6_59.Name); FakeEngine.Folders.Remove("Assets/C59b"); ContentLinkEditorUtility.Invalidate();
+            Check(r6f_59 == texPic59 && r6g_59 == texTree59 && q6a_59 == 2 && q6b_59 == 4,
+                  $"C6c the path search asks a root only when it has the name's folder, the decomposed form only of the root that answers composed (for the name twice) or of every root when none does: a composed file under the second of two roots takes 2 searches — the whole of every root in both forms would be 4 — and a decomposed one at the roots' top 4 ({q6a_59} · {q6b_59})");
+            var leafIn6_59 = new Texture2D { name = D59("잎") }; var leafOut6_59 = new Texture2D { name = "잎" };
+            string pathIn6_59 = Mac59(R59 + "/숲/잎.png", true), pathOut6_59 = R59 + "/잎.png";   // a nested root's file spelled decomposed · the outer root's of that name composed
+            FakeEngine.AddProjectAsset(pathIn6_59, leafIn6_59); FakeEngine.AddProjectAsset(pathOut6_59, leafOut6_59);
+            var pn6_59 = P59(R59 + "/숲", "");
+            var r6h_59 = ContentLinkEditorUtility.ResolveAsset("잎");
+            Check(r6h_59 == leafIn6_59, $"C6d a nested root wins whatever the forms on disk: its file spelled decomposed answers before the outer root's composed one of that name ({(r6h_59 == leafIn6_59 ? "the nested root's" : r6h_59 == leafOut6_59 ? "the outer root's" : "null")})");
+            ContentBuildSettings.instance.Remove(pn6_59.Name);
+            FakeEngine.MainAssetAt.Remove(pathIn6_59); FakeEngine.MainAssetAt.Remove(pathOut6_59); ContentLinkEditorUtility.Invalidate();
+            var pngE6_59 = new Texture2D { name = "칼" }; var jpgE6_59 = new Texture2D { name = D59("칼") };
+            string pathPngE6_59 = R59 + "/칼.png", pathJpgE6_59 = R59 + "/" + D59("칼") + ".jpg";   // one name, two files: one spelled composed (git), the other decomposed
+            FakeEngine.AddProjectAsset(pathPngE6_59, pngE6_59); FakeEngine.AddProjectAsset(pathJpgE6_59, jpgE6_59);
+            ContentLinkEditorUtility.Invalidate();
+            var r6dup_59 = ContentLinkEditorUtility.ResolveAsset("칼");
+            bool n6eA_59 = ContentLinkEditorUtility.TryGetNameForAsset(pngE6_59, out _, out var why6eA_59);
+            bool n6eB_59 = ContentLinkEditorUtility.TryGetNameForAsset(jpgE6_59, out _, out var why6eB_59);
+            int e6e_59 = Debug.Errors; Update59(pr6_59, out var ok6e_59, out _); bool dup6e_59 = Debug.Errors > e6e_59 && Debug.LastError.Contains("duplicate name '칼'");
+            FakeEngine.MainAssetAt.Remove(pr6_59.Catalogs[0].CreateAt);
+            Check(r6dup_59 == null && !n6eA_59 && !n6eB_59 && why6eA_59 != null && why6eA_59.Contains("names 2 files") && why6eA_59.Contains(pathPngE6_59) && why6eA_59.Contains(pathJpgE6_59)
+                  && why6eB_59 != null && why6eB_59.Contains("names 2 files") && why6eB_59.Contains(pathPngE6_59) && why6eB_59.Contains(pathJpgE6_59) && !ok6e_59 && dup6e_59,
+                  $"C6e a name two files answer in two forms — a png spelled composed, a jpg spelled decomposed — is answered by neither and refused by the picker for both, as the build refuses it ({r6dup_59?.name ?? "null"} · {why6eA_59} · {why6eB_59} · build ok={ok6e_59} · duplicate {dup6e_59})");
+            FakeEngine.MainAssetAt.Remove(pathPngE6_59); FakeEngine.MainAssetAt.Remove(pathJpgE6_59); ContentLinkEditorUtility.Invalidate();
+            var mixF6_59 = new Texture2D { name = D59("검") + "방패" };
+            string pathMixF6_59 = R59 + "/" + D59("검") + "방패.png";   // part of the name decomposed, the rest typed composed onto it
+            FakeEngine.AddProjectAsset(pathMixF6_59, mixF6_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool n6f_59 = ContentLinkEditorUtility.TryGetNameForAsset(mixF6_59, out var name6f_59, out var why6f_59);
+            Check(!n6f_59 && why6f_59 != null && why6f_59.Contains("spelled in neither Unicode form throughout"),
+                  $"C6f a file whose name is spelled in neither form throughout — part of it decomposed — is refused by the picker with that reason, not as a name another asset answers (a search by name finds it in neither form): {n6f_59} {Show59(name6f_59)} ({why6f_59})");
+            var c6j_59 = Update59(pr6_59, out var ok6j_59, out var errs6j_59);
+            bool n6j_59 = ContentLinkEditorUtility.TryGetNameForAsset(mixF6_59, out var name6j_59, out var why6j_59);
+            var r6j_59 = ContentLinkEditorUtility.ResolveAsset("검방패");
+            Check(ok6j_59 && Has59(c6j_59, "검방패") && n6j_59 && name6j_59 == "검방패" && r6j_59 == mixF6_59,
+                  $"C6j … as the reason says, a catalog update names it, composed, and the picker and the editor then answer by that name: {Names59(c6j_59)} · {n6j_59} {Show59(name6j_59)} {why6j_59} · {r6j_59?.name} {errs6j_59}");
+            FakeEngine.MainAssetAt.Remove(pr6_59.Catalogs[0].CreateAt);
+            FakeEngine.MainAssetAt.Remove(pathMixF6_59); ContentLinkEditorUtility.Invalidate();
+            var mixed6k_59 = typeof(ContentLinkEditorUtility).GetMethod("MixedForms", BindingFlags.Static | BindingFlags.NonPublic);
+            bool Mixed6k_59(string p6k) => (bool)mixed6k_59.Invoke(null, new object[] { p6k });
+            Check(mixed6k_59 != null && !Mixed6k_59(R59 + "/" + D59("검방패") + ".png") && Mixed6k_59(R59 + "/" + D59("검") + "방패.png") && !Mixed6k_59(R59 + "/검방패.png") && Mixed6k_59(R59 + "/\uF914.png") && !Mixed6k_59(R59 + "/sword.png"),
+                  "C6k (unit) the picker's reason is given for a file name in neither form throughout — part of it decomposed, or a compatibility character either form changes — and not for one decomposed, composed or ASCII");
+            Update59(pr6_59, out _, out _);
+            Check(ContentLinkEditorUtility.Validate("그림/파일", typeof(Texture2D)) == NameStatus.Ok && ContentLinkEditorUtility.Validate(D59("그림") + "/파일", typeof(Texture2D)) == NameStatus.Ok
+                  && ContentLinkEditorUtility.Validate("나무[나무]", typeof(Sprite)) == NameStatus.Ok && ContentLinkEditorUtility.Validate(D59("나무"), D59("나무"), typeof(Sprite)) == NameStatus.Ok
+                  && ContentLinkEditorUtility.Validate("장면/무대", null, scene: true) == NameStatus.Ok,
+                  $"C7 with the catalog a name, a link and a scene in either form are Ok ({ContentLinkEditorUtility.Validate("그림/파일", typeof(Texture2D))} · {ContentLinkEditorUtility.Validate(D59("그림") + "/파일", typeof(Texture2D))} · {ContentLinkEditorUtility.Validate("나무[나무]", typeof(Sprite))} · {ContentLinkEditorUtility.Validate(D59("나무"), D59("나무"), typeof(Sprite))} · {ContentLinkEditorUtility.Validate("장면/무대", null, scene: true)})");
+
+            // a PathWithExtension root: a path is found in either form (measured on 6000.6) — one pass, each file counted once
+            Settings59();
+            var pw6g_59 = P59(R59, ""); pw6g_59.NameStyle = ContentNameStyle.PathWithExtension;
+            var shield6g_59 = new Texture2D { name = "방패" }; var shieldS6g_59 = new Sprite { name = "방패" };
+            var sheet6g_59 = new Texture2D { name = "sheet59" }; var knife6g_59 = new Sprite { name = "칼" };
+            FakeEngine.AddProjectAsset(R59 + "/방패.png", shield6g_59, shieldS6g_59);   // composed (git) under an ASCII folder
+            FakeEngine.AddProjectAsset(R59 + "/sheet59.png", sheet6g_59, knife6g_59);   // an ASCII texture, a Hangul sprite
+            ContentLinkEditorUtility.Invalidate();
+            bool n6g_59 = ContentLinkEditorUtility.TryGetNameForAsset(shield6g_59, out var name6g_59, out var why6g_59);
+            bool n6gb_59 = ContentLinkEditorUtility.TryGetNameForAsset(shieldS6g_59, out var name6gb_59, out var why6gb_59);
+            bool n6gc_59 = ContentLinkEditorUtility.TryGetNameForAsset(knife6g_59, out var name6gc_59, out var why6gc_59);
+            bool n6gd_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out var name6gd_59, out var why6gd_59);
+            var r6g1_59 = ContentLinkEditorUtility.ResolveAsset("방패.png"); var r6g2_59 = ContentLinkEditorUtility.ResolveAsset("sheet59.png[칼]");
+            var r6g3_59 = ContentLinkEditorUtility.ResolveAsset("그림/파일.png"); var r6g4_59 = ContentLinkEditorUtility.ResolveAsset(D59("그림") + "/파일.png");
+            Check(n6g_59 && name6g_59 == "방패.png" && n6gb_59 && name6gb_59 == "방패.png[방패]" && n6gc_59 && name6gc_59 == "sheet59.png[칼]" && n6gd_59 && name6gd_59 == "그림/파일.png"
+                  && r6g1_59 == shield6g_59 && r6g2_59 == knife6g_59 && r6g3_59 == texPic59 && r6g4_59 == texPic59,
+                  $"C6g a PathWithExtension root: a Hangul file, its sprite, a Hangul sprite of an ASCII texture and a file in a folder spelled decomposed are named and found — each counted once: a path is found in either form, so a decomposed pass has nothing to add: {Show59(name6g_59)} {why6g_59} · {Show59(name6gb_59)} {why6gb_59} · {Show59(name6gc_59)} {why6gc_59} · {Show59(name6gd_59)} {why6gd_59} · {r6g1_59?.name} · {r6g2_59?.name} · {r6g3_59?.name} · {r6g4_59?.name}");
+            FakeEngine.MainAssetAt.Remove(R59 + "/방패.png"); FakeEngine.MainAssetAt.Remove(R59 + "/sheet59.png");
+            Settings59();
+            P59(R59, ""); P59("Assets/C59x", ""); FakeEngine.Folders.Add("Assets/C59x");   // a sibling root, searched first (the longer)
+            var leafX6h_59 = new Texture2D { name = D59("잎") }; var leafR6h_59 = new Texture2D { name = "잎" };
+            FakeEngine.AddProjectAsset("Assets/C59x/" + D59("잎") + ".png", leafX6h_59); FakeEngine.AddProjectAsset(R59 + "/잎.png", leafR6h_59);
+            ContentLinkEditorUtility.Invalidate();
+            var r6hs_59 = ContentLinkEditorUtility.ResolveAsset("잎");
+            Check(r6hs_59 == leafR6h_59, $"C6h of two sibling roots that both have a name — the longer spelling it decomposed, the other composed — the composed one answers: the decomposed form is searched only when no root has the name composed ({(r6hs_59 == leafR6h_59 ? "the composed one" : r6hs_59 == leafX6h_59 ? "the longer root's decomposed one" : "null")})");
+            FakeEngine.MainAssetAt.Remove("Assets/C59x/" + D59("잎") + ".png"); FakeEngine.MainAssetAt.Remove(R59 + "/잎.png"); FakeEngine.Folders.Remove("Assets/C59x");
+            Settings59();
+            P59(R59, ""); P59(R59 + "/숲", "");   // a nested root
+            var leafA6i_59 = new Texture2D { name = D59("잎") }; var leafB6i_59 = new Texture2D { name = D59("잎") }; var leafO6i_59 = new Texture2D { name = "잎" };
+            string pathA6i_59 = Mac59(R59 + "/숲/잎.png", true), pathB6i_59 = Mac59(R59 + "/숲/잎.jpg", true), pathO6i_59 = R59 + "/잎.png";
+            FakeEngine.AddProjectAsset(pathA6i_59, leafA6i_59); FakeEngine.AddProjectAsset(pathB6i_59, leafB6i_59); FakeEngine.AddProjectAsset(pathO6i_59, leafO6i_59);
+            ContentLinkEditorUtility.Invalidate();
+            var r6i_59 = ContentLinkEditorUtility.ResolveAsset("잎");
+            Check(r6i_59 == null, $"C6i a nested root that has a name twice, spelled decomposed, answers neither — as an ASCII name twice there — and the outer root's composed file of that name does not answer for it ({(r6i_59 == leafO6i_59 ? "the outer root's" : r6i_59 == null ? "null" : "a nested one")})");
+            FakeEngine.MainAssetAt.Remove(pathA6i_59); FakeEngine.MainAssetAt.Remove(pathB6i_59); FakeEngine.MainAssetAt.Remove(pathO6i_59); ContentLinkEditorUtility.Invalidate();
+            var inL6l_59 = new Texture2D { name = D59("잎") }; string pathInL6l_59 = Mac59(R59 + "/숲/잎.png", true);   // the nested root has the name once, decomposed
+            string pathPngL6l_59 = R59 + "/잎.png", pathJpgL6l_59 = R59 + "/잎.jpg", pathJpgDL6l_59 = R59 + "/" + D59("잎") + ".jpg";
+            FakeEngine.AddProjectAsset(pathInL6l_59, inL6l_59); FakeEngine.AddProjectAsset(pathPngL6l_59, new Texture2D { name = "잎" }); FakeEngine.AddProjectAsset(pathJpgL6l_59, new Texture2D { name = "잎" });
+            ContentLinkEditorUtility.Invalidate();
+            var r6l_59 = ContentLinkEditorUtility.ResolveAsset("잎");   // the outer root has it twice, composed
+            FakeEngine.MainAssetAt.Remove(pathJpgL6l_59); FakeEngine.AddProjectAsset(pathJpgDL6l_59, new Texture2D { name = D59("잎") });
+            ContentLinkEditorUtility.Invalidate();
+            var r6lb_59 = ContentLinkEditorUtility.ResolveAsset("잎");   // … in both forms
+            Check(r6l_59 == inL6l_59 && r6lb_59 == inL6l_59,
+                  $"C6l a nested root that has a name once answers it, spelled decomposed, though the outer root has it twice — both composed, or in both forms: the nested root is asked before the outer root's count decides ({(r6l_59 == inL6l_59 ? "nested" : r6l_59 == null ? "null" : "outer")} · {(r6lb_59 == inL6l_59 ? "nested" : r6lb_59 == null ? "null" : "outer")})");
+            FakeEngine.MainAssetAt.Remove(pathInL6l_59); FakeEngine.MainAssetAt.Remove(pathPngL6l_59); FakeEngine.MainAssetAt.Remove(pathJpgDL6l_59); ContentLinkEditorUtility.Invalidate();
+
+            // ───────────── the editor with a catalog an earlier version wrote on macOS: names as that editor spelled the paths ─────────────
+            Settings59();
+            var po8_59 = P59(R59, "");
+            var texOld8_59 = new Texture2D { name = "파일" }; var sprOld8_59 = new Sprite { name = "파일" };
+            FakeEngine.AddProjectAsset("Assets/Elsewhere59/" + D59("옛") + "/파일.png", texOld8_59, sprOld8_59);
+            var texStone8_59 = new Texture2D { name = D59("돌") }; var sprStone8_59 = new Sprite { name = D59("돌") };   // a file spelled decomposed outside every root: only the catalog names it
+            FakeEngine.AddProjectAsset("Assets/Elsewhere59/" + D59("돌") + ".png", texStone8_59, sprStone8_59); FakeEngine.SetGuid("Assets/Elsewhere59/" + D59("돌") + ".png", G59Stone);
+            var old8_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            old8_59.EditorSetSourceRoot(R59); old8_59.EditorSetNameStyle(ContentNameStyle.PathWithoutExtension);
+            old8_59.EditorSetEntries(new[] {
+                new ContentCatalog.Entry { name = D59("그림") + "/파일", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(texPic59), guid = G59Pic, sub = "" },
+                new ContentCatalog.Entry { name = D59("그림") + "/파일[파일]", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(sprPic59), guid = G59Pic, sub = "파일" },
+                new ContentCatalog.Entry { name = D59("나무"), id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(texTree59), guid = G59Tree, sub = "" },
+                new ContentCatalog.Entry { name = D59("나무[나무]"), id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(sprTree59), guid = G59Tree, sub = D59("나무") },
+                new ContentCatalog.Entry { name = D59("돌[돌]"), id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(sprStone8_59), guid = G59Stone, sub = D59("돌") },
+                new ContentCatalog.Entry { name = D59("옛") + "/파일", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(texOld8_59), guid = "", sub = "" },   // a name only the catalog knows: the file moved out of the root since
+                new ContentCatalog.Entry { name = D59("옛") + "/파일[파일]", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(sprOld8_59), guid = "", sub = "파일" } });
+            old8_59.EditorSetScenes(new[] { new ContentCatalog.SceneEntry { name = D59("장면") + "/무대", id = UnityEditor.LoadableSceneIdEditorUtility.CreateLoadableSceneId(pathScene59), guid = "" } });
+            FakeEngine.AddProjectAsset(po8_59.Catalogs[0].CreateAt, old8_59); ContentLinkEditorUtility.Invalidate();
+            bool n8_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out var name8_59, out _);
+            bool l8_59 = ContentLinkEditorUtility.TryGetLinkForAsset(sprTree59, out var link8_59, out var sub8_59, out _);
+            Check(n8_59 && name8_59 == "그림/파일" && l8_59 && link8_59 == "나무" && sub8_59 == "나무",
+                  $"C8 a catalog an earlier version wrote on macOS: the picker answers its names composed — what the next catalog update writes: {Show59(name8_59)} · ({Show59(link8_59)}, {Show59(sub8_59)})");
+            ContentLinkEditorUtility.SplitLinkName("나무[나무]", out var sn8_59, out var ss8_59);
+            var nr8a_59 = ContentLinkEditorUtility.NameForRef(G59Tree, "나무"); var nr8b_59 = ContentLinkEditorUtility.NameForRef(G59Tree, D59("나무"));
+            var scene8_59 = UnityEditor.AssetDatabase.LoadMainAssetAtPath(pathScene59);
+            bool ns8_59 = ContentLinkEditorUtility.TryGetNameForAsset(scene8_59, out var sname8_59, out _);
+            Check(sn8_59 == "나무" && ss8_59 == "나무" && nr8a_59 == "나무[나무]" && nr8b_59 == "나무[나무]" && ContentLinkEditorUtility.Validate("그림/파일", typeof(Texture2D)) == NameStatus.Ok
+                  && ContentLinkEditorUtility.Validate("장면/무대", null, scene: true) == NameStatus.Ok && ns8_59 && sname8_59 == "장면/무대",
+                  $"C8b … a typed link name splits by it, a reference in either form is named composed, a composed name and a scene are Ok, the scene picked composed — before any update: ({Show59(sn8_59)}, {Show59(ss8_59)}) · {Show59(nr8a_59)} · {Show59(nr8b_59)} · {ContentLinkEditorUtility.Validate("장면/무대", null, scene: true)} · {Show59(sname8_59)}");
+            ContentLinkEditorUtility.SplitLinkName(D59("나무[나무]"), out var sn8c_59, out var ss8c_59);
+            var o8a_59 = ContentLinkEditorUtility.ResolveAsset(D59("옛") + "/파일"); var o8b_59 = ContentLinkEditorUtility.ResolveAsset(D59("옛") + "/파일", "파일"); var o8c_59 = ContentLinkEditorUtility.ResolveAsset("옛/파일");
+            Check(sn8c_59 == "나무" && ss8c_59 == "나무" && o8a_59 == texOld8_59 && o8b_59 == sprOld8_59 && o8c_59 == texOld8_59,
+                  $"C8c … a link name typed decomposed splits too, and a name only that catalog knows resolves from its stored spelling, as a link and composed: ({Show59(sn8c_59)}, {Show59(ss8c_59)}) · {o8a_59?.name} · {o8b_59?.name} · {o8c_59?.name}");
+            var nr8e_59 = ContentLinkEditorUtility.NameForRef(G59Stone, "돌"); var nr8f_59 = ContentLinkEditorUtility.NameForRef(G59Stone, D59("돌"));
+            Check(nr8e_59 == "돌[돌]" && nr8f_59 == "돌[돌]",
+                  $"C8e … a reference to a sprite only that catalog names — its file outside every root, so no path rule answers — is named composed from either form of its sprite name: the catalog's reference index is composed too ({Show59(nr8e_59)} · {Show59(nr8f_59)})");
+            var texE8_59 = new Texture2D { name = "x8" }; var texF8_59 = new Texture2D { name = "y8" };
+            FakeEngine.AddProjectAsset("Assets/Elsewhere59/x8.png", texE8_59); FakeEngine.AddProjectAsset("Assets/Elsewhere59/y8.png", texF8_59);
+            var catE8_59 = ScriptableObject.CreateInstance<ContentCatalog>(); var catF8_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            foreach (var (c8, t8) in new[] { (catE8_59, texE8_59), (catF8_59, texF8_59) })
+            {
+                c8.EditorSetSourceRoot(R59); c8.EditorSetNameStyle(ContentNameStyle.PathWithoutExtension);
+                c8.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "x59", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(t8), guid = "", sub = "" } });
+            }
+            string catPathE8_59 = "Assets/Cat/" + "\u00e9".Normalize(System.Text.NormalizationForm.FormD) + "8.asset", catPathF8_59 = "Assets/Cat/f8.asset";   // é: composed after 'f', decomposed before
+            FakeEngine.AddProjectAsset(catPathE8_59, catE8_59); FakeEngine.AddProjectAsset(catPathF8_59, catF8_59);
+            ContentLinkEditorUtility.Invalidate();
+            var r8d_59 = ContentLinkEditorUtility.ResolveAsset("x59");
+            Check(r8d_59 == texE8_59, $"C8d catalogs are read in the order of their paths composed — the same on every machine: of two that name one name, the last by that order answers: {(r8d_59 == texE8_59 ? "é8's" : r8d_59 == texF8_59 ? "f8's" : r8d_59?.name ?? "null")}");
+            FakeEngine.MainAssetAt.Remove(catPathE8_59); FakeEngine.MainAssetAt.Remove(catPathF8_59); ContentLinkEditorUtility.Invalidate();
+
+            // ───────────── res: in the editor ─────────────
+            Project59();
+            bool n9_59 = ContentLinkEditorUtility.TryGetNameForAsset(texLine59, out var name9_59, out var why9_59);
+            bool n9b_59 = ContentLinkEditorUtility.TryGetNameForAsset(sprSheet59, out var name9b_59, out var why9b_59);
+            Check(n9_59 && name9_59 == "res:글자/한줄" && n9b_59 && name9b_59 == "res:그림/나무[나무]",
+                  $"C9 a Resources file in a folder spelled decomposed, and a sprite of a file spelled decomposed, are named composed: {Show59(name9_59)} {why9_59} · {Show59(name9b_59)} {why9b_59}");
+            var r9a_59 = ContentLinkEditorUtility.ResolveAsset("res:글자/한줄"); var r9b_59 = ContentLinkEditorUtility.ResolveAsset("res:" + D59("글자") + "/한줄"); var r9c_59 = ContentLinkEditorUtility.ResolveAsset("res:그림/나무[나무]");
+            Check(r9a_59 == texLine59 && r9b_59 == texLine59 && r9c_59 == sprSheet59,
+                  $"C9b the editor's answer for a res: name in either form is the player's file — the spelling Resources finds: {r9a_59?.name} · {r9b_59?.name} · {r9c_59?.name}");
+            var twin9_59 = new Texture2D { name = D59("한줄") };   // another Resources folder: the same path, all decomposed — a file made so
+            FakeEngine.AddProjectAsset(D59("Assets/R59b/Resources/글자/한줄.png"), twin9_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool n9d_59 = ContentLinkEditorUtility.TryGetNameForAsset(texLine59, out var name9d_59, out var why9d_59);
+            Check(!n9d_59 && why9d_59 != null && why9d_59.Contains("names 2 files") && why9d_59.Contains(pathLine59) && why9d_59.Contains(D59("Assets/R59b/Resources/글자/한줄.png")),
+                  $"C9d a res: path two files reach in two spellings is refused as one two files share — the composed name would load one of them: {n9d_59} {Show59(name9d_59)} ({why9d_59})");
+            FakeEngine.MainAssetAt.Remove(D59("Assets/R59b/Resources/글자/한줄.png")); ContentLinkEditorUtility.Invalidate();
+            var mix9e_59 = new Texture2D { name = D59("검") + "방패" }; var mixS9e_59 = new Sprite { name = D59("검") + "방패" }; var compat9e_59 = new Texture2D { name = "\uF914" };
+            string pathMix9e_59 = Res59 + "/" + D59("검") + "방패.png";   // part of the name decomposed: Resources finds the path only so
+            string pathCompat9e_59 = Mac59(Res59 + "/한자/\uF914.png");   // a CJK compatibility ideograph: either form changes it
+            FakeEngine.AddProjectAsset(pathMix9e_59, mix9e_59, mixS9e_59); FakeEngine.AddProjectAsset(pathCompat9e_59, compat9e_59);
+            ContentLinkEditorUtility.Invalidate();
+            bool n9e_59 = ContentLinkEditorUtility.TryGetNameForAsset(mix9e_59, out var name9e_59, out var why9e_59);
+            bool n9eb_59 = ContentLinkEditorUtility.TryGetNameForAsset(compat9e_59, out var name9eb_59, out var why9eb_59);
+            var r9e_59 = n9e_59 ? ContentLinkEditorUtility.ResolveAsset(name9e_59) : null; var r9eb_59 = n9eb_59 ? ContentLinkEditorUtility.ResolveAsset(name9eb_59) : null;
+            var v9e_59 = n9e_59 ? ContentLinkEditorUtility.Validate(name9e_59, typeof(Texture2D)) : NameStatus.Empty;
+            bool n9es_59 = ContentLinkEditorUtility.TryGetNameForAsset(mixS9e_59, out var name9es_59, out var why9es_59);
+            bool s9es_59 = n9e_59 && ContentLinkEditorUtility.ResolveAsset(name9e_59, "검방패") == mixS9e_59 && ContentLinkEditorUtility.ResolveAsset(name9e_59, D59("검방패")) == mixS9e_59;
+            Check(n9e_59 && name9e_59 == "res:" + D59("검") + "방패" && n9eb_59 && name9eb_59 == "res:한자/\uF914" && r9e_59 == mix9e_59 && r9eb_59 == compat9e_59 && v9e_59 == NameStatus.Ok
+                  && n9es_59 && name9es_59 == "res:" + D59("검") + "방패[검방패]" && s9es_59,
+                  $"C9e a Resources file no spelling of its composed path reaches — part of its name decomposed, a compatibility character — is named in its own spelling, the folders composed, and the editor answers and validates that name: {Show59(name9e_59)} {why9e_59} · {Show59(name9eb_59)} {why9eb_59} · {r9e_59?.name} · {r9eb_59?.name} · {v9e_59} · its sprite {Show59(name9es_59)} {why9es_59} · as a link {s9es_59}");
+            var twin9i_59 = new Texture2D { name = "검방패" };
+            FakeEngine.AddProjectAsset("Assets/R59b/Resources/검방패.png", twin9i_59);   // a composed twin in another Resources folder (one folder cannot hold both: the file system takes them for one name): the composed path reaches it
+            ContentLinkEditorUtility.Invalidate();
+            bool n9i_59 = ContentLinkEditorUtility.TryGetNameForAsset(mix9e_59, out _, out var why9i_59);
+            bool n9ib_59 = ContentLinkEditorUtility.TryGetNameForAsset(twin9i_59, out var name9ib_59, out _);
+            Check(!n9i_59 && why9i_59 != null && why9i_59.Contains("names 2 files") && why9i_59.Contains(pathMix9e_59) && why9i_59.Contains("Assets/R59b/Resources/검방패.png") && n9ib_59 && name9ib_59 == "res:검방패",
+                  $"C9i … unless a file the composed path reaches has that path too — the composed spelling is asked first, so its own name would load the other: refused, naming both, as a res: path two files share; the other is named composed ({why9i_59} · {Show59(name9ib_59)})");
+            FakeEngine.MainAssetAt.Remove(pathMix9e_59); FakeEngine.MainAssetAt.Remove(pathCompat9e_59); FakeEngine.MainAssetAt.Remove("Assets/R59b/Resources/검방패.png"); ContentLinkEditorUtility.Invalidate();
+            var line9g_59 = new Texture2D { name = "한줄2" }; var four9g_59 = new Texture2D { name = D59("파일") };
+            FakeEngine.AddProjectAsset(Res59 + "/글자2/한줄2.png", line9g_59);   // all composed: an editor that spells a path as on disk, over a git checkout
+            FakeEngine.AddProjectAsset(Res59 + "/넷째/" + D59("파일") + ".png", four9g_59);   // the folder composed, the file decomposed
+            ContentLinkEditorUtility.Invalidate();
+            bool n9g_59 = ContentLinkEditorUtility.TryGetNameForAsset(line9g_59, out var name9g_59, out var why9g_59);
+            bool n9gb_59 = ContentLinkEditorUtility.TryGetNameForAsset(four9g_59, out var name9gb_59, out var why9gb_59);
+            var r9g_59 = ContentLinkEditorUtility.ResolveAsset("res:글자2/한줄2"); var r9gb_59 = ContentLinkEditorUtility.ResolveAsset("res:넷째/파일");
+            Check(n9g_59 && name9g_59 == "res:글자2/한줄2" && n9gb_59 && name9gb_59 == "res:넷째/파일" && r9g_59 == line9g_59 && r9gb_59 == four9g_59,
+                  $"C9g the editor's spellings of a res: path hold the composed one and the folders composed with the file decomposed — what an editor that spells a path as on disk builds: {Show59(name9g_59)} {why9g_59} · {Show59(name9gb_59)} {why9gb_59} · {r9g_59?.name} · {r9gb_59?.name}");
+            FakeEngine.MainAssetAt.Remove(Res59 + "/글자2/한줄2.png"); FakeEngine.MainAssetAt.Remove(Res59 + "/넷째/" + D59("파일") + ".png"); ContentLinkEditorUtility.Invalidate();
+            var edOnly9f_59 = new Texture2D { name = "쌍" }; var player9f_59 = new Texture2D { name = D59("쌍") };
+            FakeEngine.AddProjectAsset("Assets/R59/Editor/Resources/쌍.png", edOnly9f_59);   // an editor-only file at the path, spelled composed
+            FakeEngine.AddProjectAsset(Res59 + "/" + D59("쌍") + ".png", player9f_59);         // the player's file, spelled decomposed
+            FakeEngine.ResourcesSeeEditorOnly = true; ContentLinkEditorUtility.Invalidate();
+            var ed9f_59 = Resources.Load("쌍");
+            var r9f_59 = ContentLinkEditorUtility.ResolveAsset("res:쌍");
+            FakeEngine.ResourcesSeeEditorOnly = false;
+            Check(ed9f_59 == edOnly9f_59 && r9f_59 == player9f_59, $"C9f (the editor's own Resources gives the editor-only file at the composed spelling: {ed9f_59 == edOnly9f_59}) the editor's answer for a res: name is the player's file at whichever spelling it is — not the editor-only file the editor's Resources finds at another: {(r9f_59 == player9f_59 ? "the player's" : r9f_59 == edOnly9f_59 ? "the editor-only one" : r9f_59?.name ?? "null")}");
+            FakeEngine.MainAssetAt.Remove("Assets/R59/Editor/Resources/쌍.png"); FakeEngine.MainAssetAt.Remove(Res59 + "/" + D59("쌍") + ".png"); ContentLinkEditorUtility.Invalidate();
+            ContentService.ResourcesFallback = ContentLinkEditorUtility.PlayerResources;   // the editor's res: in Play Mode
+            var h9_59 = ContentService.Acquire<Texture2D>("res:글자/한줄"); var h9b_59 = ContentService.Acquire<Sprite>("res:그림/나무[나무]");
+            Check(h9_59.IsValid && h9_59.Asset == texLine59 && h9b_59.IsValid && h9b_59.Asset == sprSheet59,
+                  $"C9c Play Mode in the editor loads a composed res: name — a file and a sprite ({h9_59.IsValid} · {h9b_59.IsValid})");
+            if (h9_59.IsValid) h9_59.Dispose(); if (h9b_59.IsValid) h9b_59.Dispose(); ContentService.Collect();
+            ContentService.ResourcesFallback = null;
+
+            // ───────────── a root or a category in another case: compared composed ─────────────
+            Settings59();
+            var pv10_59 = P59("Assets/c59/그림", "");   // the ASCII part in another case, the Hangul typed composed; the project spells it 'Assets/C59/' + decomposed
+            var errs10_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pv10_59));
+            Check(errs10_59.Contains("source root 'Assets/c59/그림' is spelled 'Assets/C59/그림' in the project — write it as 'Assets/C59/그림'"),
+                  $"C10 a root in another case over a folder spelled decomposed is refused with the project's spelling, composed — as an ASCII root is (F-41): [{errs10_59}]");
+            bool n10e_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out _, out var why10e_59);
+            Check(!n10e_59 && why10e_59 != null && why10e_59.Contains("lies under the content root 'Assets/c59/그림' only in another case — the project spells it 'Assets/C59/그림'"),
+                  $"C10e … and the picker says why an asset under it has no name, with the spelling composed: ({why10e_59})");
+            Settings59();
+            var pd10_59 = P59(D59(R59 + "/그림"), "");   // decomposed as pasted from a path, in the project's case
+            var errs10b_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pd10_59));
+            bool n10b_59 = ContentLinkEditorUtility.TryGetNameForAsset(texPic59, out var name10b_59, out _);
+            Check(errs10b_59 == "" && n10b_59 && name10b_59 == "파일", $"C10b (control) a root written decomposed in the project's case is not refused and names composed: [{errs10b_59}] · {Show59(name10b_59)}");
+            Settings59();
+            var pd10c_59 = P59(R59, D59("그림"));   // the category decomposed, as pasted from a path
+            var errs10c_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pd10c_59));
+            var c10c_59 = Update59(pd10c_59, out var ok10c_59, out var errs10cu_59);
+            Check(errs10c_59 == "" && ok10c_59 && Has59(c10c_59, "그림/파일"), $"C10c a category written decomposed in the project's case is not refused and catalogues its assets composed: [{errs10c_59}] · {Names59(c10c_59)} {errs10cu_59}");
+            Settings59();
+            FakeEngine.AddProjectAsset(Mac59(R59 + "/그림/조각/b.png"), new Texture2D { name = "b" });
+            var pw10_59 = P59(D59(R59 + "/그림"), "");   // the settings hold the root decomposed — written before, or by hand
+            var m10_59 = new ContentBuildWindowModel(); m10_59.Select(pw10_59.Name);
+            var add10_59 = m10_59.AddCategory("조각");
+            var sub10_59 = m10_59.Selected.Catalogs[m10_59.Selected.Catalogs.Length - 1].SubFolder;
+            m10_59.Edit(x => x.SourceRoot = "Assets/c59/그림");   // edited in another case, the Hangul typed composed
+            var root10_59 = m10_59.Selected.SourceRoot;
+            Check(add10_59 == null && sub10_59 == "조각" && root10_59 == "Assets/C59/그림",
+                  $"C10d the window: a category added under a root the settings hold decomposed is the project's spelling cut at the right place, and a root edited in another case becomes the project's spelling, composed: {add10_59} · {Show59(sub10_59)} · {Show59(root10_59)}");
+            Settings59();
+            var pm10m_59 = P59(D59(R59 + "/그림"), "조각");   // the root decomposed, a category typed composed under it
+            var errs10m_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pm10m_59));
+            var c10m_59 = Update59(pm10m_59, out var ok10m_59, out var errs10mu_59);
+            Check(errs10m_59 == "" && ok10m_59 && Has59(c10m_59, "조각/b"),
+                  $"C10m a root written decomposed with a category typed composed under it validates — the category cut at the root's composed length — and its update catalogues the category composed: [{errs10m_59}] · {Names59(c10m_59)} {errs10mu_59}");
+            FakeEngine.MainAssetAt.Remove(Mac59(R59 + "/그림/조각/b.png")); ContentLinkEditorUtility.Invalidate();
+
+            Settings59();
+            var cat10f_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            FakeEngine.AddProjectAsset(Mac59("Assets/카탈로그59/Main.asset"), cat10f_59);   // a catalog picked: the editor spells its folder decomposed
+            var pf10_59 = P59(R59, "그림", "장면");
+            pf10_59.Catalogs[0].Catalog = new LazyLoadReference<ContentCatalog> { asset = cat10f_59 };
+            pf10_59.Catalogs[1].CreateAt = "Assets/카탈로그59/Main.asset";   // the same catalog, typed composed
+            var errs10f_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pf10_59));
+            Check(errs10f_59.Contains("write the same catalog") && !errs10f_59.Contains("(as '"), $"C10f two categories on one catalog — one picked (the editor's spelling), one typed composed — are refused as one catalog: [{errs10f_59}]");
+            FakeEngine.MainAssetAt.Remove(Mac59("Assets/카탈로그59/Main.asset"));
+            Settings59();
+            var cat10g_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            FakeEngine.AddProjectAsset(Mac59("Assets/출력59/Main.asset"), cat10g_59);   // picked inside the output folder; the editor spells the folder decomposed
+            var pg10_59 = P59(R59, "");
+            pg10_59.OutputPath = "Assets/출력59";   // typed composed
+            pg10_59.Catalogs[0].Catalog = new LazyLoadReference<ContentCatalog> { asset = cat10g_59 };
+            var errs10g_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pg10_59));
+            Check(errs10g_59.Contains("lies inside the output path"), $"C10g a catalog picked inside the output folder typed composed — the folder spelled decomposed by the editor — is refused: the build clears that folder: [{errs10g_59}]");
+            FakeEngine.MainAssetAt.Remove(Mac59("Assets/출력59/Main.asset"));
+            Settings59();
+            var pi10_59 = P59(R59, "그림", D59("그림") + "/조각");   // a category typed composed, another pasted decomposed inside it
+            var errs10i_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pi10_59));
+            Check(errs10i_59.Contains("overlap"), $"C10i a category pasted decomposed inside one typed composed overlaps it — the same asset would be catalogued twice: [{errs10i_59}]");
+            Settings59();
+            var cat10j_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            FakeEngine.AddProjectAsset(Mac59("Assets/카탈로그59/Main.asset"), cat10j_59);
+            var pa10j_59 = P59(R59, "그림"); pa10j_59.Catalogs[0].Catalog = new LazyLoadReference<ContentCatalog> { asset = cat10j_59 };   // picked: the editor's spelling
+            var pb10j_59 = P59(R59, "장면"); pb10j_59.Catalogs[0].CreateAt = "Assets/카탈로그59/Main.asset";   // typed composed
+            var errs10j_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pb10j_59));
+            var pc10j_59 = P59(R59, D59("그림")); pc10j_59.Catalogs[0].CreateAt = "Assets/카탈로그59/Main.asset";   // the first profile's category pasted decomposed, on that catalog typed composed
+            var errs10k_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pc10j_59));
+            Check(errs10j_59.Contains($"is also written by profile '{pa10j_59.Name}'") && !errs10k_59.Contains($"is also written by profile '{pa10j_59.Name}'"),
+                  $"C10j a catalog one profile picked (the editor's spelling) and another typed composed is one catalog: the other's category is refused — and the same root and category written in another form is the same catalog written the same way: [{errs10j_59}] · [{errs10k_59}]");
+            FakeEngine.MainAssetAt.Remove(Mac59("Assets/카탈로그59/Main.asset"));
+            Settings59();
+            var pl10l_59 = P59(R59, "그림", D59("그림"));   // one category written in two forms
+            pl10l_59.Catalogs[1].CreateAt = pl10l_59.Catalogs[0].CreateAt;   // on one catalog
+            var errs10l_59 = string.Join(" | ", ContentBuildSettings.instance.Validate(pl10l_59));
+            Check(errs10l_59.Contains("overlap") && !errs10l_59.Contains("write the same catalog"),
+                  $"C10l one category written in two forms on one catalog is one overlap — not also two categories writing one catalog: [{errs10l_59}]");
+            Settings59();
+
+            // ───────────── Play Mode served from the project ─────────────
+            Project59();
+            var ps11_59 = P59(R59, "");
+            UnityEditor.EditorApplication.isPlaying = true; FakeEngine.EditorServesAnyId = true;
+            ContentLinkSimulation.Enabled = true; Init(typeof(ContentLinkSimulation), "Install");
+            Debug.Verbose = false; int dirS11_59 = ContentService.RegisterDirectory(ps11_59.OutputPath); Debug.Verbose = true;
+            bool s11a_59 = ContentService.Contains("그림/파일"), s11b_59 = ContentService.Contains(D59("그림") + "/파일"), s11c_59 = ContentService.Contains("나무[나무]");
+            var h11_59 = ContentService.Acquire<Texture2D>("그림/파일");
+            Check(s11a_59 && s11b_59 && s11c_59 && h11_59.IsValid && h11_59.Asset == texPic59,
+                  $"C11 served from the project: a name typed composed, the mixed spelling and a sprite of a file spelled decomposed ({s11a_59} · {s11b_59} · {s11c_59} · loads {h11_59.IsValid})");
+            var ref11a_59 = new ContentRef<Sprite>(G59Tree, "나무"); var ref11b_59 = new ContentRef<Sprite>(G59Tree, D59("나무"));
+            bool t11a_59 = ContentService.TryGetName(ref11a_59, out var nm11a_59), t11b_59 = ContentService.TryGetName(ref11b_59, out var nm11b_59);
+            Check(t11a_59 && t11b_59 && nm11a_59 == "나무[나무]" && nm11b_59 == "나무[나무]" && ContentService.Contains(ref11a_59) && ContentService.Contains(ref11b_59),
+                  $"C11b … a reference whose sprite name is in either form is named composed and served: {Show59(nm11a_59)} · {Show59(nm11b_59)}");
+            bool g11d_59 = ContentLinkSimulation.TryGetPath(D59("그림/파일"), out var p11d_59, out _);
+            Check(g11d_59 && p11d_59 == pathPic59, $"C11d the simulation's own lookup (TryGetPath — tests and diagnostics) takes a name in another form too: {g11d_59} {Show59(p11d_59)}");
+            FakeEngine.LoadedScenes.Clear(); SceneManager.Open(NewScene(5976, "Boot59s"));   // the engine cannot unload the last remaining scene
+            var load11e_59 = ContentService.LoadSceneAsync("장면/무대", LoadSceneMode.Additive);
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); var s11e_59 = load11e_59.GetResult();
+            if (s11e_59.IsValid()) { SceneManager.UnloadSceneAsync(s11e_59); FakeEngine.CompleteLoads(); Tick(); }
+            if (h11_59.IsValid) h11_59.Dispose(); ContentService.Collect();
+            var known11_59 = ScriptableObject.CreateInstance<ContentCatalog>();   // the profile's catalog as an earlier version wrote it on macOS
+            known11_59.EditorSetEntries(new[] { new ContentCatalog.Entry { name = D59("그림") + "/파일", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(texPic59), guid = G59Pic, sub = "" } });
+            known11_59.EditorSetScenes(new[] { new ContentCatalog.SceneEntry { name = D59("장면") + "/무대", id = UnityEditor.LoadableSceneIdEditorUtility.CreateLoadableSceneId(pathScene59), guid = "" } });
+            FakeEngine.AddProjectAsset(ps11_59.Catalogs[0].CreateAt, known11_59);
+            Debug.LastLog = ""; Init(typeof(ContentLinkSimulation), "Report");
+            Check(!Debug.LastLog.Contains("그림/파일") && Debug.LastLog.Contains("나무[나무]"), $"C11c the exit summary does not list a name the profile's catalog carries in another form — it lists one the catalog lacks: '{Debug.LastLog}'");
+            Check(s11e_59.IsValid() && !Debug.LastLog.Contains("장면/무대"), $"C11e … nor a scene it carries in another form, loaded from the project ({s11e_59.IsValid()}): '{Debug.LastLog}'");
+            FakeEngine.MainAssetAt.Remove(ps11_59.Catalogs[0].CreateAt);
+            Debug.Verbose = false; ContentService.UnregisterDirectory(dirS11_59); Debug.Verbose = true;
+            var png11f_59 = new Texture2D { name = "칼" }; var jpg11f_59 = new Texture2D { name = D59("칼") };
+            FakeEngine.AddProjectAsset(R59 + "/칼.png", png11f_59); FakeEngine.AddProjectAsset(R59 + "/" + D59("칼") + ".jpg", jpg11f_59);   // one name, two files in two forms
+            ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install");
+            Debug.Verbose = false; int w11f_59 = Debug.Warnings; int dir11f_59 = ContentService.RegisterDirectory(ps11_59.OutputPath);
+            bool c11f_59 = ContentService.Contains("칼"); string lw11f_59 = Debug.LastWarning; int nw11f_59 = Debug.Warnings - w11f_59;
+            c11f_59 |= ContentService.Contains(D59("칼"));
+            ContentService.UnregisterDirectory(dir11f_59); Debug.Verbose = true;
+            FakeEngine.MainAssetAt.Remove(R59 + "/칼.png"); FakeEngine.MainAssetAt.Remove(R59 + "/" + D59("칼") + ".jpg");
+            ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install");
+            Check(!c11f_59 && nw11f_59 > 0 && lw11f_59.Contains("duplicate name '칼'"), $"C11f served from the project, a name two files answer in two forms is answered by neither, with the builder's duplicate warning ({c11f_59} · {lw11f_59})");
+            var hangul12_59 = "Assets/한글59"; var path12_59 = Mac59(hangul12_59 + "/a.png"); var tex12_59 = new Texture2D { name = "a" };
+            FakeEngine.AddProjectAsset(path12_59, tex12_59); FakeEngine.Assets[FakeEngine.ObjectIdOf[tex12_59]] = tex12_59;
+            var ph12_59 = P59(hangul12_59, "");   // a root typed composed whose folder the editor spells decomposed
+            string x12_59 = ""; int dirH12_59 = -1;
+            Debug.Verbose = false;
+            try { dirH12_59 = ContentService.RegisterDirectory(ph12_59.OutputPath); } catch (InvalidOperationException e) { x12_59 = e.Message; }
+            bool s12_59 = ContentService.Contains("a"); var h12_59 = ContentService.Acquire<Texture2D>("a");
+            Debug.Verbose = true;
+            Check(x12_59 == "" && s12_59 && h12_59.IsValid && h12_59.Asset == tex12_59,
+                  $"C12 a root typed composed over a folder spelled decomposed is served from the project — its files named under it, the covered folder holding them ({s12_59} · {h12_59.IsValid}) {x12_59}");
+            if (h12_59.IsValid) h12_59.Dispose(); ContentService.Collect();
+            Debug.Verbose = false; if (dirH12_59 >= 0) ContentService.UnregisterDirectory(dirH12_59); Debug.Verbose = true;
+            ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install");   // the scan of the root written composed would answer for this one
+            var pd12_59 = P59(D59(hangul12_59), "");   // the root written decomposed
+            string x12b_59 = ""; int dirD12_59 = -1;
+            Debug.Verbose = false;
+            try { dirD12_59 = ContentService.RegisterDirectory(pd12_59.OutputPath); } catch (InvalidOperationException e) { x12b_59 = e.Message; }
+            bool s12b_59 = ContentService.Contains("a");
+            if (dirD12_59 >= 0) ContentService.UnregisterDirectory(dirD12_59);
+            Debug.Verbose = true;
+            Check(x12b_59 == "" && s12b_59, $"C12b a root written decomposed is served too — not refused as a case slip: ({s12b_59}) {x12b_59}");
+            // a scene of a Hangul root served from the project: its path spells the folder decomposed, the covered folder is typed composed
+            Project59();
+            var pathScene12c_59 = Mac59("Assets/한글59/무대59.unity");
+            FakeEngine.AddProjectAsset(pathScene12c_59, new UnityEditor.SceneAsset { name = "무대59" });
+            var ph12c_59 = P59("Assets/한글59", "");
+            UnityEditor.EditorApplication.isPlaying = true; FakeEngine.EditorServesAnyId = true;
+            ContentLinkSimulation.Enabled = true; ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install");
+            FakeEngine.LoadedScenes.Clear(); SceneManager.Open(NewScene(5977, "Boot59"));   // the engine cannot unload the last remaining scene
+            Debug.Verbose = false; int dir12c_59 = ContentService.RegisterDirectory(ph12c_59.OutputPath); Debug.Verbose = true;
+            var load12c_59 = ContentService.LoadSceneAsync("무대59", LoadSceneMode.Additive);
+            bool fly12c_59 = ContentService.HasSceneLoadsInFlight(dir12c_59);
+            FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); var s12c_59 = load12c_59.GetResult();
+            Debug.Verbose = false; bool open12c_59 = ContentService.UnregisterDirectory(dir12c_59); Debug.Verbose = true;
+            if (s12c_59.IsValid()) { SceneManager.UnloadSceneAsync(s12c_59); FakeEngine.CompleteLoads(); Tick(); }
+            Debug.Verbose = false; bool after12c_59 = !open12c_59 && ContentService.UnregisterDirectory(dir12c_59); Debug.Verbose = true;
+            Check(fly12c_59 && s12c_59.IsValid() && !open12c_59 && after12c_59,
+                  $"C12c a scene of a Hangul root served from the project — its path spelling the folder decomposed — is the directory's: in flight while it loads, holding the directory while it is open ({fly12c_59} · {s12c_59.IsValid()} · unregistered while open {open12c_59} · after {after12c_59})");
+            // a project whose own path holds a folder spelled decomposed: the covered folders and a scene's path are made absolute from it
+            var cwd12d_59 = Environment.CurrentDirectory; var data12d_59 = UnityEngine.Application.dataPath;
+            var nfd12d_59 = System.IO.Path.Combine(tmp59, "cwd" + D59("검사"));
+            System.IO.Directory.CreateDirectory(nfd12d_59);
+            bool fly12d_59 = false, valid12d_59 = false, open12d_59 = true, after12d_59 = false, same10h_59 = false, inside10h_59 = false, assets10h_59 = false, assets10hb_59 = false, nfd12d_59ok = false;
+            try
+            {
+                Environment.CurrentDirectory = nfd12d_59;
+                nfd12d_59ok = !Environment.CurrentDirectory.IsNormalized(System.Text.NormalizationForm.FormC);   // the premise: this file system keeps the folder decomposed
+                Project59();
+                var ph12d_59 = P59(R59, "");
+                UnityEditor.EditorApplication.isPlaying = true; FakeEngine.EditorServesAnyId = true;
+                ContentLinkSimulation.Enabled = true; ContentLinkSimulation.Drop(); Init(typeof(ContentLinkSimulation), "Install");
+                FakeEngine.LoadedScenes.Clear(); SceneManager.Open(NewScene(5978, "Boot59d"));
+                Debug.Verbose = false; int dir12d_59 = ContentService.RegisterDirectory(ph12d_59.OutputPath); Debug.Verbose = true;
+                var load12d_59 = ContentService.LoadSceneAsync("장면/무대", LoadSceneMode.Additive);
+                fly12d_59 = ContentService.HasSceneLoadsInFlight(dir12d_59);
+                FakeEngine.CompleteLoads(); FakeEngine.CompleteLoads(); var s12d_59 = load12d_59.GetResult(); valid12d_59 = s12d_59.IsValid();
+                Debug.Verbose = false; open12d_59 = ContentService.UnregisterDirectory(dir12d_59); Debug.Verbose = true;
+                if (s12d_59.IsValid()) { SceneManager.UnloadSceneAsync(s12d_59); FakeEngine.CompleteLoads(); Tick(); }
+                Debug.Verbose = false; after12d_59 = !open12d_59 && ContentService.UnregisterDirectory(dir12d_59); Debug.Verbose = true;
+                var abs10h_59 = Environment.CurrentDirectory.Normalize(System.Text.NormalizationForm.FormC);   // the project's path typed composed
+                same10h_59 = ContentBuildSettings.SameFolder("Build59", abs10h_59 + "/Build59");
+                inside10h_59 = ContentBuildSettings.IsInside(abs10h_59 + "/Out59", "Out59/sub");
+                UnityEngine.Application.dataPath = Environment.CurrentDirectory + "/Assets";   // the engine's spelling of that project: decomposed
+                assets10h_59 = ContentBuildRunner.InsideAssets(abs10h_59 + "/Assets/StreamingAssets/X59");
+                UnityEngine.Application.dataPath = abs10h_59 + "/Assets";   // and the other way round: the project composed, the output path as the engine spells it
+                assets10hb_59 = ContentBuildRunner.InsideAssets(Environment.CurrentDirectory + "/Assets/StreamingAssets/X59");
+            }
+            finally { Environment.CurrentDirectory = cwd12d_59; UnityEngine.Application.dataPath = data12d_59; }
+            Check(nfd12d_59ok && fly12d_59 && valid12d_59 && !open12d_59 && after12d_59,
+                  $"C12d a project whose own path holds a folder spelled decomposed: a scene of a directory served from the project is the directory's while it loads and while it is open — its covered folders and the scene's path are made absolute from that path ({fly12d_59} · {valid12d_59} · unregistered while open {open12d_59} · after {after12d_59})");
+            Check(nfd12d_59ok && same10h_59 && inside10h_59 && assets10h_59 && assets10hb_59, $"C10h … and the editor's path helpers take a path typed composed for the one that project spells decomposed, and the other way round: SameFolder {same10h_59} · IsInside {inside10h_59} · InsideAssets {assets10h_59} · {assets10hb_59}");
+            UnityEditor.EditorApplication.isPlaying = false; FakeEngine.EditorServesAnyId = false; ContentLinkSimulation.Enabled = false; ContentLinkSimulation.Drop();
+
+            // ───────────── the runtime: a catalog an earlier version built on macOS ─────────────
+            Project59();
+            int idPic59 = FakeEngine.ObjectIdOf[texPic59], idTree59 = FakeEngine.ObjectIdOf[sprTree59];
+            var cat13_59 = ScriptableObject.CreateInstance<ContentCatalog>();
+            cat13_59.EditorSetEntries(new[] {
+                new ContentCatalog.Entry { name = D59("그림") + "/파일", id = new LoadableObjectId { value = idPic59 }, guid = G59Pic, sub = "" },
+                new ContentCatalog.Entry { name = D59("나무[나무]"), id = new LoadableObjectId { value = idTree59 }, guid = G59Tree, sub = D59("나무") },
+                new ContentCatalog.Entry { name = "Icons/x59", id = new LoadableObjectId { value = idPic59 }, guid = "", sub = "" },
+                new ContentCatalog.Entry { name = D59("그림") + "/적", id = new LoadableObjectId { value = 59001 }, guid = "", sub = "" },
+                new ContentCatalog.Entry { name = D59("ガイド"), id = new LoadableObjectId { value = 59002 }, guid = "", sub = "" },
+                new ContentCatalog.Entry { name = D59("café"), id = new LoadableObjectId { value = 59003 }, guid = "", sub = "" } });
+            FakeEngine.Assets[59001] = new GameObject { name = "적" }; FakeEngine.Assets[59002] = new Texture2D { name = D59("ガイド") }; FakeEngine.Assets[59003] = new Texture2D { name = D59("café") };
+            foreach (var idX59 in new[] { 59001, 59002, 59003 }) FakeEngine.IdDir[idX59] = "Old59";
+            cat13_59.EditorSetScenes(new[] { new ContentCatalog.SceneEntry { name = D59("장면") + "/무대", id = SceneId(5901), guid = "c5900000000000000000000000000b01" } });
+            FakeEngine.SceneDir[5901] = "Old59"; FakeEngine.SceneNames[5901] = "무대";
+            FakeEngine.Dirs["Old59"] = new ScriptableObject[] { cat13_59 }; FakeEngine.IdDir[idPic59] = "Old59"; FakeEngine.IdDir[idTree59] = "Old59";
+            int w13_59 = Debug.Warnings; int dir13_59 = ContentService.RegisterDirectory("Old59"); bool quiet13_59 = Debug.Warnings == w13_59;
+            string mixed13_59 = D59("그림") + "/파일", nfd13_59 = D59("그림/파일");
+            bool c13a_59 = ContentService.Contains("그림/파일"), c13b_59 = ContentService.Contains(mixed13_59), c13c_59 = ContentService.Contains(nfd13_59), c13d_59 = ContentService.Contains("나무[나무]");
+            bool id13_59 = ContentService.TryGetLoadableObjectId("그림/파일", out var lid13_59) && lid13_59.value == idPic59
+                           && ContentService.TryGetLoadableObjectId(nfd13_59, out var lid13b_59) && lid13b_59.value == idPic59;
+            Check(c13a_59 && c13b_59 && c13c_59 && c13d_59 && id13_59,
+                  $"C13 a catalog an earlier version built on macOS (names as that editor spelled the paths): a name typed composed, the stored spelling and all decomposed are found, and the id ({c13a_59} · {c13b_59} · {c13c_59} · {c13d_59} · {id13_59})");
+            bool k13e_59 = ContentService.Contains("ガイド") && ContentService.Contains(D59("ガイド")) && ContentService.Contains("café") && ContentService.Contains(D59("café"))
+                           && ContentService.TryGetLoadableObjectId("ガイド", out var lid13e_59) && lid13e_59.value == 59002;
+            Check(k13e_59, "C13e … not Hangul only: a kana with a voiced mark and an accented Latin letter that catalog stores decomposed are found from either form");
+            int live13_59 = ContentService.LiveAssetCount;
+            var h13a_59 = ContentService.Acquire<Texture2D>(mixed13_59); var h13b_59 = ContentService.Acquire<Texture2D>("그림/파일");
+            Check(h13a_59.IsValid && h13b_59.IsValid && ReferenceEquals(h13a_59.Asset, h13b_59.Asset) && ContentService.LiveAssetCount == live13_59 + 1 && h13a_59.Key == "그림/파일" && h13b_59.Key == "그림/파일",
+                  $"C13b … and load into one slot keyed composed whichever form asked first (live +{ContentService.LiveAssetCount - live13_59} · keys {Show59(h13a_59.Key)} {Show59(h13b_59.Key)})");
+            var sc13_59 = ContentScope.Root.CreateChild("C13c59");
+            sc13_59.Load<Texture2D>(nfd13_59);
+            string key13_59 = null; foreach (var k in sc13_59.Keys) key13_59 = k;
+            AssetHandle<Object> sh13_59 = default;
+            bool share13_59 = key13_59 == "그림/파일" && ContentService.TryShareLive(key13_59, out sh13_59);
+            Check(share13_59 && ReferenceEquals(sh13_59.Asset, h13a_59.Asset),
+                  $"C13c a scope holds a name loaded in another form under its composed key, and the live slot is shared by that key ({Show59(key13_59)} · {share13_59})");
+            if (h13a_59.IsValid) h13a_59.Dispose(); if (h13b_59.IsValid) h13b_59.Dispose(); if (sh13_59.IsValid) sh13_59.Dispose();
+            sc13_59.Dispose();
+            ContentService.Collect();
+            bool sc14a_59 = ContentService.ContainsScene("장면/무대") && ContentService.ContainsScene(D59("장면/무대")),
+                 sc14b_59 = ContentService.TryGetLoadableSceneId("장면/무대", out var sid14_59) && sid14_59.guid == 5901 && ContentService.TryGetLoadableSceneId(D59("장면/무대"), out var sid14b_59) && sid14b_59.guid == 5901;
+            var scene14_59 = Run(ContentService.LoadSceneAsync("장면/무대"));
+            Check(sc14a_59 && sc14b_59 && scene14_59.IsValid() && scene14_59.name == "무대", $"C14 a scene of that catalog by its composed name: contained · its id · loaded ({sc14a_59} · {sc14b_59} · {scene14_59.IsValid()})");
+            bool sr14_59 = ContentService.TryGetSceneName(new ContentSceneRef("c5900000000000000000000000000b01"), out var srn14_59);
+            Check(sr14_59 && srn14_59 == "장면/무대", $"C14c a scene reference names it composed: {Show59(srn14_59)}");
+            Check(ContentService.GetSceneKey(scene14_59) == "장면/무대", $"C14d … and the loaded scene is keyed by its composed name: {Show59(ContentService.GetSceneKey(scene14_59))}");
+            if (scene14_59.IsValid()) { SceneManager.UnloadSceneAsync(scene14_59); FakeEngine.CompleteLoads(); Tick(); }
+            var scene14b_59 = Run(ContentService.LoadSceneAsync(D59("장면/무대")));
+            Check(scene14b_59.IsValid() && scene14b_59.name == "무대", $"C14b … and by all decomposed ({scene14b_59.IsValid()})");
+            if (scene14b_59.IsValid()) { SceneManager.UnloadSceneAsync(scene14b_59); FakeEngine.CompleteLoads(); Tick(); }
+            var ref15a_59 = new ContentRef<Sprite>(G59Tree, "나무"); var ref15b_59 = new ContentRef<Sprite>(G59Tree, D59("나무"));
+            bool t15a_59 = ContentService.TryGetName(ref15a_59, out var nm15a_59), t15b_59 = ContentService.TryGetName(ref15b_59, out var nm15b_59);
+            Check(t15a_59 && t15b_59 && nm15a_59 == "나무[나무]" && nm15b_59 == "나무[나무]" && ContentService.Contains(ref15a_59),
+                  $"C15 a reference — the catalog's sprite name decomposed, the reference's in either form — resolves to the composed name: {Show59(nm15a_59)} · {Show59(nm15b_59)}");
+            bool k16_59 = ContentService.Contains("나무", "나무") && ContentService.Contains(D59("나무"), D59("나무")) && ContentService.Contains("나무", D59("나무"));
+            Check(k16_59, "C16 a link's pair (main name, sprite name) in either form, or the two in different forms, is found");
+            bool t16b_59 = ContentService.TryGetName(nfd13_59, "", out var cn16b_59);
+            bool u16b_59 = ContentService.TryGetName(D59("나무"), "나무", out var cl16b_59);   // a pair no check asked before: the first answer, not a cached one
+            Check(t16b_59 && u16b_59 && cn16b_59 == "그림/파일" && cl16b_59 == "나무[나무]", $"C16b TryGetName answers the catalog's name, composed — for a name and a link's pair asked in another form: {Show59(cn16b_59)} · {Show59(cl16b_59)}");
+            var sc17_59 = ContentScope.Root.CreateChild("C59");
+            int live17_59 = ContentService.LiveAssetCount;
+            var a17_59 = sc17_59.Load<Texture2D>(mixed13_59); var b17_59 = sc17_59.Load<Texture2D>("그림/파일");
+            int keys17_59 = 0; string key17_59 = null; foreach (var k in sc17_59.Keys) { ++keys17_59; key17_59 = k; }
+            bool one17_59 = a17_59 != null && ReferenceEquals(a17_59, b17_59) && ContentService.LiveAssetCount == live17_59 + 1 && keys17_59 == 1 && key17_59 == "그림/파일";
+            bool held17_59 = sc17_59.Contains(nfd13_59) && sc17_59.Contains(mixed13_59);
+            bool rel17_59 = sc17_59.Release(nfd13_59) && !sc17_59.Contains("그림/파일");
+            ContentService.Collect();
+            int after17_59 = ContentService.LiveAssetCount - live17_59;
+            sc17_59.Dispose(); ContentService.Collect();
+            Check(one17_59 && held17_59 && rel17_59 && after17_59 == 0,
+                  $"C17 a scope that loads one asset by two forms holds one key, composed — Contains and Release answer either form, and the release returns it ({keys17_59} key(s) {Show59(key17_59)} · {held17_59} · {rel17_59} · live after the release {after17_59})");
+            var sc17b_59 = ContentScope.Root.CreateChild("C17b59"); var to17b_59 = ContentScope.Root.CreateChild("C17bTo59");
+            var la17b_59 = sc17b_59.LoadAsync<Texture2D>(nfd13_59); Await59(la17b_59); var t17b_59 = la17b_59.GetResult();
+            bool shared17b_59 = sc17b_59.ShareTo(to17b_59, mixed13_59);
+            string k17b_59 = null, k17c_59 = null; foreach (var k in sc17b_59.Keys) k17b_59 = k; foreach (var k in to17b_59.Keys) k17c_59 = k;
+            Check(ReferenceEquals(t17b_59, texPic59) && k17b_59 == "그림/파일" && shared17b_59 && k17c_59 == "그림/파일",
+                  $"C17b … LoadAsync keys it composed, and ShareTo by another form gives the composed key ({Show59(k17b_59)} · {shared17b_59} · {Show59(k17c_59)})");
+            sc17b_59.Dispose(); to17b_59.Dispose(); ContentService.Collect();
+            var sc17c_59 = ContentScope.Root.CreateChild("C17c59");
+            var go17c_59 = Run(sc17c_59.InstantiateAsync(D59("그림/적")));   // all decomposed; the catalog stores it as the macOS editor spelled it
+            sc17c_59.Dispose(); Tick();
+            int n17c_59 = 0; string k17c2_59 = null; if (go17c_59 != null) foreach (var k in go17c_59.Scope().Keys) { ++n17c_59; k17c2_59 = k; }
+            var clone17c_59 = go17c_59 != null ? Object.Instantiate(go17c_59) : null;
+            var inherit17c_59 = clone17c_59 != null ? typeof(ContentScopeOwner).GetField("m_InheritKeys", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(clone17c_59.GetComponent<ContentScopeOwner>()) as string[] : null;
+            bool keys17c_59 = inherit17c_59 != null && Array.IndexOf(inherit17c_59, "그림/적") >= 0 && Array.IndexOf(inherit17c_59, D59("그림/적")) < 0 && Array.IndexOf(inherit17c_59, D59("그림") + "/적") < 0;
+            bool held17c_59 = clone17c_59 != null && clone17c_59.Scope().Contains("그림/적") && clone17c_59.Scope().Contains(D59("그림/적"));
+            Check(go17c_59 != null && n17c_59 == 1 && k17c2_59 == "그림/적" && keys17c_59 && held17c_59,
+                  $"C17c InstantiateAsync by another form keeps the instance's lease under the composed key, and a clone inherits that key — Contains answers either form ({n17c_59} key(s) {Show59(k17c2_59)} · inherited {(inherit17c_59 == null ? "none" : string.Join(", ", inherit17c_59))} · {held17c_59})");
+            if (go17c_59 != null) Object.Destroy(go17c_59); if (clone17c_59 != null) Object.Destroy(clone17c_59); Tick(); ContentService.Collect();
+            // the redirect costs nothing once a form is seen: an ASCII name scans its characters, another form is normalized once
+            var ref18_59 = new ContentRef<Sprite>(G59Tree, "나무"); var ref18b_59 = new ContentRef<Sprite>(G59Tree, D59("나무"));
+            string tree18d_59 = D59("나무"), scene18d_59 = D59("장면/무대");
+            foreach (var w in new[] { "Icons/x59", "그림/파일", mixed13_59, "없음59" }) { ContentService.Contains(w); ContentService.TryGetLoadableObjectId(w, out _); }
+            ContentService.TryGetName(ref18_59, out _); ContentService.Contains("나무", "나무");
+            ContentService.TryGetName(ref18b_59, out _); ContentService.Contains(tree18d_59, tree18d_59); ContentService.ContainsScene(scene18d_59);
+            var fb18_59 = ContentService.NameFallback; ContentService.NameFallback = null;   // a player has no simulation: a miss ends at the index
+            long a18_59 = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; ++i)
+            {
+                ContentService.Contains("Icons/x59"); ContentService.Contains("그림/파일"); ContentService.Contains(mixed13_59); ContentService.TryGetLoadableObjectId(mixed13_59, out _);
+                ContentService.Contains("없음59"); ContentService.TryGetLoadableObjectId("없음59", out _);
+                ContentService.TryGetName(ref18_59, out _); ContentService.Contains("나무", "나무");
+                ContentService.TryGetName(ref18b_59, out _); ContentService.Contains(tree18d_59, tree18d_59); ContentService.ContainsScene(scene18d_59);
+            }
+            long alloc18_59 = GC.GetAllocatedBytesForCurrentThread() - a18_59;
+            ContentService.NameFallback = fb18_59;
+            Check(alloc18_59 == 0, $"C18 (guard) lookups by an ASCII name, a composed one, another form seen before — a name, a reference, a link's pair, a scene — a composed name no catalog has, and a reference allocate nothing ({alloc18_59} B over 1000 rounds)");
+            var keys18_59 = typeof(ContentService).GetField("s_ComposedKeys", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as System.Collections.IDictionary;
+            int before18_59 = keys18_59?.Count ?? -1;
+            Debug.Verbose = false; ContentService.Contains("Nope/ascii59"); ContentService.TryGetLoadableObjectId("Nope/ascii59", out _); Debug.Verbose = true;
+            int after18b_59 = keys18_59?.Count ?? -1;
+            if (keys18_59 != null) keys18_59["Plant/ascii59"] = "Icons/x59";   // planted: only a redirect that looks an ASCII name up in its memory follows it
+            Debug.Verbose = false; bool plant18b_59 = ContentService.Contains("Plant/ascii59"); Debug.Verbose = true;
+            keys18_59?.Remove("Plant/ascii59");
+            Check(keys18_59 != null && after18b_59 == before18_59 && !plant18b_59, $"C18b an ASCII name is scanned, never looked up in the redirect's memory: a miss is not remembered ({before18_59} → {after18b_59}) and a planted entry for one is not followed ({plant18b_59})");
+            Debug.Verbose = false; for (int i = 0; i < 100; ++i) { ContentService.Contains("없음" + i); ContentService.TryGetLoadableObjectId("없음" + i, out _); } Debug.Verbose = true;
+            Check(keys18_59 != null && keys18_59.Count == before18_59, $"C18c composed names that miss are not remembered either — a name no catalog has adds nothing ({before18_59} → {keys18_59?.Count} after 100)");
+            string lone18d_59 = "그림/\uD800";   // not Unicode: an unpaired surrogate
+            bool ok18d_59; string x18d_59 = "";
+            Debug.Verbose = false;
+            try { ok18d_59 = !ContentService.Contains(lone18d_59) && !ContentService.TryGetLoadableObjectId(lone18d_59, out _); }
+            catch (Exception e18d) { ok18d_59 = false; x18d_59 = e18d.GetType().Name; }
+            Debug.Verbose = true;
+            Check(ok18d_59, $"C18d a name that is not Unicode — an unpaired surrogate — has no other form: a lookup misses, as before, and does not throw {x18d_59}");
+            Debug.Verbose = false; ContentService.UnregisterDirectory(dir13_59); Debug.Verbose = true;
+            var twin13d_59 = ScriptableObject.CreateInstance<ContentCatalog>(); twin13d_59.name = "Twin59";   // an earlier version named a file spelled composed and one spelled decomposed apart
+            twin13d_59.EditorSetEntries(new[] {
+                new ContentCatalog.Entry { name = "칼", id = new LoadableObjectId { value = 59011 }, guid = "", sub = "" },
+                new ContentCatalog.Entry { name = D59("칼"), id = new LoadableObjectId { value = 59012 }, guid = "", sub = "" } });
+            FakeEngine.Assets[59011] = new Texture2D { name = "칼" }; FakeEngine.Assets[59012] = new Texture2D { name = D59("칼") };
+            FakeEngine.IdDir[59011] = FakeEngine.IdDir[59012] = "Twin59"; FakeEngine.Dirs["Twin59"] = new ScriptableObject[] { twin13d_59 };
+            Debug.Verbose = false; int w13d_59 = Debug.Warnings;
+            int dir13d_59 = ContentService.RegisterDirectory("Twin59"); string lw13d_59 = Debug.LastWarning; int once13d_59 = Debug.Warnings - w13d_59;
+            ContentService.UnregisterDirectory(dir13d_59); dir13d_59 = ContentService.RegisterDirectory("Twin59"); int again13d_59 = Debug.Warnings - w13d_59;
+            ContentService.UnregisterDirectory(dir13d_59); Debug.Verbose = true;
+            Check(quiet13_59 && once13d_59 == 1 && lw13d_59.Contains("holds the name '칼' twice") && again13d_59 == 1,
+                  $"C13d a catalog an earlier version built with two names that compose to one is warned once, at its registration — one asset answers both now; one spelled otherwise without such a pair is not ({quiet13_59} · {once13d_59} · {again13d_59} · {lw13d_59})");
+
+            // ───────────── res: in a player ─────────────
+            Project59();
+            Debug.Verbose = false; int e19_59 = Debug.Errors;
+            var h19a_59 = ContentService.Acquire<Texture2D>("res:글자/한줄");
+            var a19_59 = ContentService.AcquireAsync<Texture2D>("res:" + D59("글자") + "/한줄"); Await59(a19_59); var h19b_59 = a19_59.GetResult();
+            var h19c_59 = ContentService.Acquire<Sprite>("res:그림/나무[나무]");
+            int errs19_59 = Debug.Errors - e19_59; Debug.Verbose = true;
+            Check(h19a_59.IsValid && h19a_59.Asset == texLine59 && h19b_59.IsValid && ReferenceEquals(h19b_59.Asset, h19a_59.Asset) && h19c_59.IsValid && h19c_59.Asset == sprSheet59 && errs19_59 == 0,
+                  $"C19 res: in a player — a composed path loads the file a macOS build spells its way (the folders decomposed), the stored spelling is the same slot, and a sprite of a file spelled decomposed loads by its composed name ({h19a_59.IsValid} · {h19b_59.IsValid} · {h19c_59.IsValid} · errors {errs19_59})");
+            foreach (var h in new[] { h19a_59, h19b_59 }) if (h.IsValid) h.Dispose();
+            if (h19c_59.IsValid) h19c_59.Dispose();
+            ContentService.Collect();
+            Project59();
+            Debug.Verbose = false; int e19b_59 = Debug.Errors;
+            var a19b_59 = ContentService.AcquireAsync<Texture2D>("res:글자/한줄"); Await59(a19b_59); var h19d_59 = a19b_59.GetResult();
+            var a19c_59 = ContentService.AcquireAsync<Sprite>("res:그림/나무[나무]"); Await59(a19c_59); var h19e_59 = a19c_59.GetResult();
+            int errs19b_59 = Debug.Errors - e19b_59; Debug.Verbose = true;
+            Check(h19d_59.IsValid && h19d_59.Asset == texLine59 && h19e_59.IsValid && h19e_59.Asset == sprSheet59 && errs19b_59 == 0,
+                  $"C19b … asynchronously, in the same order: the spellings are asked for at once (C19e) ({h19d_59.IsValid} · {h19e_59.IsValid} · errors {errs19b_59})");
+            if (h19d_59.IsValid) h19d_59.Dispose(); if (h19e_59.IsValid) h19e_59.Dispose(); ContentService.Collect();
+            var ascii19_59 = new Texture2D { name = "sheet" }; var s0_19_59 = new Sprite { name = "s0" };
+            FakeEngine.AddProjectAsset(Res59 + "/UI59/sheet.png", ascii19_59, s0_19_59);
+            var slots19c_59 = typeof(ContentService).GetField("s_Slots", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as System.Collections.ICollection;
+            Debug.Verbose = false; int e19c_59 = Debug.Errors;
+            var h19f_59 = ContentService.Acquire<Sprite>("res:그림/나무[나무]"); bool first19_59 = h19f_59.IsValid; int n19c_59 = slots19c_59?.Count ?? -1; h19f_59.Dispose(); ContentService.Collect();
+            var h19g_59 = ContentService.Acquire<Sprite>("res:UI59/sheet[s0]");   // the slot the Hangul path had, used again
+            bool reused19c_59 = slots19c_59 != null && slots19c_59.Count == n19c_59;
+            int errs19c_59 = Debug.Errors - e19c_59; Debug.Verbose = true;
+            Check(first19_59 && reused19c_59 && h19g_59.IsValid && h19g_59.Asset == s0_19_59 && errs19c_59 == 0, $"C19c a slot used again reads its own path, not the spelling the last one found ({first19_59} · used again {reused19c_59} · {h19g_59.IsValid} · errors {errs19c_59})");
+            if (h19g_59.IsValid) h19g_59.Dispose(); ContentService.Collect();
+            var four19_59 = new Texture2D { name = D59("파일") }; var four19b_59 = new Texture2D { name = D59("그림") };   // an editor that spells a path as on disk: the folder composed, the file decomposed
+            FakeEngine.AddProjectAsset(Res59 + "/넷째/" + D59("파일") + ".png", four19_59); FakeEngine.AddProjectAsset(Res59 + "/넷째/" + D59("그림") + ".png", four19b_59);
+            Debug.Verbose = false; int e19d_59 = Debug.Errors;
+            var h19h_59 = ContentService.Acquire<Texture2D>("res:넷째/파일");
+            var a19d_59 = ContentService.AcquireAsync<Texture2D>("res:넷째/그림"); Await59(a19d_59); var h19i_59 = a19d_59.GetResult();
+            int errs19d_59 = Debug.Errors - e19d_59; Debug.Verbose = true;
+            Check(h19h_59.IsValid && h19h_59.Asset == four19_59 && h19i_59.IsValid && h19i_59.Asset == four19b_59 && errs19d_59 == 0,
+                  $"C19d res: in a player an editor built spelling the path as on disk — the folder composed, the file decomposed — loads by the composed path, sync and async ({h19h_59.IsValid} · {h19i_59.IsValid} · errors {errs19d_59})");
+            if (h19h_59.IsValid) h19h_59.Dispose(); if (h19i_59.IsValid) h19i_59.Dispose(); ContentService.Collect();
+            Project59();
+            Debug.Verbose = false;
+            var a19e_59 = ContentService.AcquireAsync<Texture2D>("res:글자/한줄");
+            int frames19e_59 = 0; while (!a19e_59.IsCompleted && frames19e_59 < 8) { FakeEngine.CompleteLoads(); ++frames19e_59; }
+            var h19j_59 = a19e_59.GetResult();
+            Debug.Verbose = true;
+            Check(h19j_59.IsValid && h19j_59.Asset == texLine59 && frames19e_59 == 1,
+                  $"C19e … the spellings are asked for at once: a path a macOS build spells its way loads in the frame a path as given does ({frames19e_59} frame(s))");
+            if (h19j_59.IsValid) h19j_59.Dispose(); ContentService.Collect();
+            // files at several spellings of one path: the first in the order answers — a player sync and async, Play Mode in the editor, the editor
+            Project59();
+            string twinD19f_59 = D59("Assets/R59b/Resources/글자/한줄.png"), twinC19f_59 = "Assets/R59c/Resources/글자/한줄.png";
+            FakeEngine.AddProjectAsset(twinD19f_59, new Texture2D { name = D59("한줄") });   // all decomposed: the third spelling
+            string Path19f_59(Object o19f) => o19f == null ? "null" : UnityEditor.AssetDatabase.GetAssetPath(o19f);
+            string[] Four19f_59()
+            {
+                var got19f = new string[4];
+                var hs19f = ContentService.Acquire<Texture2D>("res:글자/한줄"); got19f[0] = Path19f_59(hs19f.Asset); if (hs19f.IsValid) hs19f.Dispose(); ContentService.Collect();
+                var aa19f = ContentService.AcquireAsync<Texture2D>("res:글자/한줄"); Await59(aa19f); var ha19f = aa19f.GetResult(); got19f[1] = Path19f_59(ha19f.Asset); if (ha19f.IsValid) ha19f.Dispose(); ContentService.Collect();
+                ContentService.ResourcesFallback = ContentLinkEditorUtility.PlayerResources;
+                var he19f = ContentService.Acquire<Texture2D>("res:글자/한줄"); got19f[2] = Path19f_59(he19f.Asset); if (he19f.IsValid) he19f.Dispose(); ContentService.Collect();
+                ContentService.ResourcesFallback = null;
+                ContentLinkEditorUtility.Invalidate(); got19f[3] = Path19f_59(ContentLinkEditorUtility.ResolveAsset("res:글자/한줄"));
+                return got19f;
+            }
+            Debug.Verbose = false; int e19f_59 = Debug.Errors;
+            var macFirst19f_59 = Four19f_59();   // the folders decomposed (texLine59) before all of it decomposed
+            FakeEngine.AddProjectAsset(twinC19f_59, new Texture2D { name = "한줄" });   // and the composed one before both
+            var composedFirst19f_59 = Four19f_59();
+            int errs19f_59 = Debug.Errors - e19f_59; Debug.Verbose = true;
+            Check(Array.TrueForAll(macFirst19f_59, p19f => p19f == pathLine59) && Array.TrueForAll(composedFirst19f_59, p19f => p19f == twinC19f_59) && errs19f_59 == 0,
+                  $"C19f of files at several spellings of one path the first in the order answers — composed, then the folders decomposed, then all of it — in a player sync and async, in Play Mode in the editor and in the editor's answer ({string.Join(" · ", macFirst19f_59)} | {string.Join(" · ", composedFirst19f_59)} · errors {errs19f_59})");
+            FakeEngine.MainAssetAt.Remove(twinD19f_59); FakeEngine.MainAssetAt.Remove(twinC19f_59); ContentLinkEditorUtility.Invalidate();
+            // a synchronous load completes the slot while the other spellings are still asked for
+            Project59();
+            Debug.Verbose = false; int e19g_59 = Debug.Errors; int u19g_59 = FakeEngine.ResourcesUnloaded.Count; int x19g_59 = FakeEngine.AsyncVoidExceptions.Count;
+            AssetHandle<Texture2D> hs19g_59 = default;
+            var a19g_59 = ContentService.AcquireAsync<Texture2D>("res:글자/한줄");
+            FakeEngine.PendingLoads.Insert(Math.Min(FakeEngine.PendingLoads.Count, Math.Max(1, FakeEngine.PendingLoads.Count - 3)), () => hs19g_59 = ContentService.Acquire<Texture2D>("res:글자/한줄"));   // after the composed request, before the other spellings
+            Await59(a19g_59); var ha19g_59 = a19g_59.GetResult();
+            bool same19g_59 = ha19g_59.IsValid && hs19g_59.IsValid && ReferenceEquals(ha19g_59.Asset, hs19g_59.Asset) && ReferenceEquals(ha19g_59.Asset, texLine59);
+            if (ha19g_59.IsValid) ha19g_59.Dispose(); if (hs19g_59.IsValid) hs19g_59.Dispose(); ContentService.Collect();
+            bool unloaded19g_59 = FakeEngine.ResourcesUnloaded.Count > u19g_59 && FakeEngine.ResourcesUnloaded.Contains(texLine59);
+            int errs19g_59 = Debug.Errors - e19g_59, esc19g_59 = FakeEngine.AsyncVoidExceptions.Count - x19g_59; Debug.Verbose = true;
+            Check(same19g_59 && unloaded19g_59 && errs19g_59 == 0 && esc19g_59 == 0,
+                  $"C19g a synchronous load that completes the slot while the other spellings are still asked for ends the asynchronous one there: one target, unloaded once both let go ({same19g_59} · unloaded {unloaded19g_59} · errors {errs19g_59} · escaped {esc19g_59})");
+            // a name in a file's own spelling, which no spelling of the composed path reaches
+            Project59();
+            var mix19h_59 = new Texture2D { name = D59("검") + "방패" }; var compat19h_59 = new Texture2D { name = "\uF914" }; var compatW19h_59 = new Texture2D { name = "\uF914" };
+            var mixS19h_59 = new Sprite { name = D59("검") + "방패" };
+            FakeEngine.AddProjectAsset(Res59 + "/" + D59("검") + "방패.png", mix19h_59, mixS19h_59);
+            FakeEngine.AddProjectAsset(Mac59(Res59 + "/한자/\uF914.png"), compat19h_59);   // a build made on macOS: the folders decomposed
+            FakeEngine.AddProjectAsset(Res59 + "/한자w/\uF914.png", compatW19h_59);         // one made elsewhere: the folders as git has them, composed
+            Debug.Verbose = false; int e19h_59 = Debug.Errors;
+            var h19h1_59 = ContentService.Acquire<Texture2D>("res:" + D59("검") + "방패");
+            var h19h5_59 = ContentService.Acquire<Sprite>("res:" + D59("검") + "방패[검방패]");   // its sprite, as the picker names it
+            var a19h_59 = ContentService.AcquireAsync<Texture2D>("res:한자/\uF914"); Await59(a19h_59); var h19h2_59 = a19h_59.GetResult();
+            var h19h3_59 = ContentService.Acquire<Texture2D>("res:" + D59("한자w") + "/\uF914");   // a link an earlier version saved: the folders as the macOS editor spells them
+            var deep19h_59 = new Texture2D { name = "파일" }; string pathDeep19h_59 = Res59 + "/가/" + D59("나") + "/파일.png";   // folders made in two forms, which an editor that spells a path as on disk keeps
+            FakeEngine.AddProjectAsset(pathDeep19h_59, deep19h_59);
+            bool nd19h_59 = ContentLinkEditorUtility.TryGetNameForAsset(deep19h_59, out var named19h_59, out var whyd19h_59);
+            var h19h4_59 = ContentService.Acquire<Texture2D>("res:가/" + D59("나") + "/파일");
+            bool ed19h_59 = ContentLinkEditorUtility.ResolveAsset("res:" + D59("검") + "방패") == mix19h_59 && ContentLinkEditorUtility.ResolveAsset("res:한자/\uF914") == compat19h_59
+                            && ContentLinkEditorUtility.ResolveAsset("res:" + D59("한자w") + "/\uF914") == compatW19h_59 && ContentLinkEditorUtility.ResolveAsset("res:가/" + D59("나") + "/파일") == deep19h_59;
+            int errs19h_59 = Debug.Errors - e19h_59; Debug.Verbose = true;
+            Check(h19h1_59.IsValid && h19h1_59.Asset == mix19h_59 && h19h2_59.IsValid && h19h2_59.Asset == compat19h_59 && h19h3_59.IsValid && h19h3_59.Asset == compatW19h_59
+                  && h19h5_59.IsValid && h19h5_59.Asset == mixS19h_59 && nd19h_59 && named19h_59 == "res:가/" + D59("나") + "/파일" && h19h4_59.IsValid && h19h4_59.Asset == deep19h_59 && ed19h_59 && errs19h_59 == 0,
+                  $"C19h res: in a player — a name in a file's own spelling, which no spelling of the composed path reaches, loads it after them: the file as given under either form of the folders — sync and async — and under folders spelled in both forms, the path as it is spelled; the editor answers the same ({h19h1_59.IsValid} · {h19h2_59.IsValid} · {h19h3_59.IsValid} · {Show59(named19h_59)} {whyd19h_59} {h19h4_59.IsValid} · editor {ed19h_59} · errors {errs19h_59})");
+            if (h19h1_59.IsValid) h19h1_59.Dispose(); if (h19h2_59.IsValid) h19h2_59.Dispose(); if (h19h3_59.IsValid) h19h3_59.Dispose(); if (h19h4_59.IsValid) h19h4_59.Dispose(); if (h19h5_59.IsValid) h19h5_59.Dispose(); ContentService.Collect();
+            ContentService.ResourcesFallback = ContentLinkEditorUtility.PlayerResources;   // Play Mode in the editor: the seam answers what a player's Resources holds
+            Debug.Verbose = false; int e19k_59 = Debug.Errors;
+            var h19k1_59 = ContentService.Acquire<Texture2D>("res:" + D59("검") + "방패");
+            var a19k_59 = ContentService.AcquireAsync<Texture2D>("res:한자/\uF914"); Await59(a19k_59); var h19k2_59 = a19k_59.GetResult();
+            var h19k3_59 = ContentService.Acquire<Sprite>("res:" + D59("검") + "방패[검방패]");
+            int errs19k_59 = Debug.Errors - e19k_59; Debug.Verbose = true;
+            ContentService.ResourcesFallback = null;
+            string p19k1_59 = h19k1_59.IsValid ? UnityEditor.AssetDatabase.GetAssetPath(h19k1_59.Asset) : null, p19k2_59 = h19k2_59.IsValid ? UnityEditor.AssetDatabase.GetAssetPath(h19k2_59.Asset) : null;
+            string p19k3_59 = h19k3_59.IsValid ? UnityEditor.AssetDatabase.GetAssetPath(h19k3_59.Asset) : null;
+            Check(p19k1_59 == Res59 + "/" + D59("검") + "방패.png" && p19k2_59 == Mac59(Res59 + "/한자/\uF914.png") && p19k3_59 == p19k1_59 && h19k3_59.Asset is Sprite && errs19k_59 == 0,
+                  $"C19k … and in Play Mode in the editor: the seam gets the path as the name gave it and asks the editor's spellings — a file sync and async, a sprite ({Show59(p19k1_59)} · {Show59(p19k2_59)} · {Show59(p19k3_59)} · errors {errs19k_59})");
+            if (h19k1_59.IsValid) h19k1_59.Dispose(); if (h19k2_59.IsValid) h19k2_59.Dispose(); if (h19k3_59.IsValid) h19k3_59.Dispose(); ContentService.Collect();
+            Project59();
+            FakeEngine.AddProjectAsset(Res59 + "/" + D59("검") + "방패.png", new Texture2D { name = D59("검") + "방패" });
+            Debug.Verbose = false; int e19j_59 = Debug.Errors;
+            var h19j1_59 = ContentService.Acquire<Texture2D>("res:" + D59("검") + "방패"); bool first19j_59 = h19j1_59.IsValid; if (h19j1_59.IsValid) h19j1_59.Dispose(); ContentService.Collect();
+            var h19j2_59 = ContentService.Acquire<Texture2D>("res:없음59");   // the slot that name had, used again
+            int errs19j_59 = Debug.Errors - e19j_59; Debug.Verbose = true;
+            Check(first19j_59 && !h19j2_59.IsValid && errs19j_59 >= 1, $"C19j a slot used again forgets the spelling the last name gave: a path no file has stays missing ({first19j_59} · {h19j2_59.IsValid} · errors {errs19j_59})");
+            if (h19j2_59.IsValid) h19j2_59.Dispose(); ContentService.Collect();
+            // the spellings asked for at once are only the distinct ones
+            FakeEngine.AddProjectAsset(Res59 + "/UI59/sheet.png", new Texture2D { name = "sheet" }); FakeEngine.AddProjectAsset(Res59 + "/쌍.png", new Texture2D { name = "쌍" });
+            int Requests19i_59(string name19i) { int at19i = FakeEngine.ResourcesAsyncLoads; var a19i = ContentService.AcquireAsync<Texture2D>(name19i); int n19i = FakeEngine.ResourcesAsyncLoads - at19i; Await59(a19i); var h19i = a19i.GetResult(); if (h19i.IsValid) h19i.Dispose(); ContentService.Collect(); return n19i; }
+            Debug.Verbose = false;
+            int q19iA_59 = Requests19i_59("res:UI59/sheet"), q19iP_59 = Requests19i_59("res:쌍"), q19iL_59 = Requests19i_59("res:글자/한줄"), q19iM_59 = Requests19i_59("res:" + D59("글자") + "/한줄"), q19iX_59 = Requests19i_59("res:" + D59("검") + "방패");
+            Debug.Verbose = true;
+            Check(q19iA_59 == 1 && q19iP_59 == 2 && q19iL_59 == 4 && q19iM_59 == 4 && q19iX_59 == 3,
+                  $"C19i the spellings asked for at once are only the distinct ones: an ASCII path 1, a Hangul file at the top 2, a Hangul path 4 — given in the macOS spelling too — and a name in a file's own spelling 3 ({q19iA_59} · {q19iP_59} · {q19iL_59} · {q19iM_59} · {q19iX_59})");
+            ContentService.Contains(D59("씨앗59"));   // a name in another form: remembered
+            var keys20_59 = typeof(ContentService).GetField("s_ComposedKeys", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as System.Collections.ICollection;
+            int before20_59 = keys20_59?.Count ?? -1;
+            Init(typeof(ContentService), "ResetStatics");
+            Check(keys20_59 != null && before20_59 > 0 && keys20_59.Count == 0, $"C20 the reset at every Play entry drops the forms the redirect remembered ({before20_59} → {keys20_59?.Count})");
+            Project59();
+        }
+        Console.WriteLine("60) IMP018 7-13 — an asset another directory carries under its own name: registered later, that directory serves it, so it may not go while the asset is held (N-9)");
+        {
+            const int P60 = 960001, Q60 = 960002, T60 = 960003, SP60 = 960004;
+            const string G60 = "e6000000000000000000000000000001";
+            var p0_60 = new Texture2D { name = "p0" }; var q_60 = new Texture2D { name = "q" }; var t_60 = new Texture2D { name = "t" }; var sp_60 = new Sprite { name = "sp" };
+            ContentCatalog Cat60(params (string name, int id)[] es)
+            {
+                var c = ScriptableObject.CreateInstance<ContentCatalog>();
+                var l = new System.Collections.Generic.List<ContentCatalog.Entry>();
+                foreach (var (n, id) in es) l.Add(new() { name = n, id = new LoadableObjectId { value = id }, guid = id == P60 ? G60 : "", sub = "" });
+                c.EditorSetEntries(l.ToArray());
+                return c;
+            }
+            // S60 ⊂ M60 ⊂ W60: p0 is S60's "p0", M60's "S/p0" and W60's "M/S/p0" — one id; q is M60's own, t and sp S60's
+            void Fresh60()
+            {
+                Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");
+                FakeEngine.ClearProject(); FakeEngine.Registered.Clear(); FakeEngine.RegisterOrder.Clear(); FakeEngine.Assets.Clear(); FakeEngine.IdDir.Clear(); FakeEngine.Dirs.Clear();
+                FakeEngine.Refs.Clear(); FakeEngine.RefsAway.Clear(); FakeEngine.AlsoIn.Clear(); FakeEngine.LoadedScenes.Clear(); FakeEngine.PendingLoads.Clear(); FakeEngine.ScenesInFlight.Clear();
+                ContentService.SceneContainsFallback = null; ContentService.SceneFallback = null; ContentService.SceneResultFallback = null;
+                ContentService.NameFallback = null; ContentService.RefFallback = null; ContentService.DirectoryFallback = null; ContentService.SceneLoadsInFlightFallback = null;
+                FakeEngine.Assets[P60] = p0_60; FakeEngine.Assets[Q60] = q_60; FakeEngine.Assets[T60] = t_60; FakeEngine.Assets[SP60] = sp_60;
+                FakeEngine.IdDir[P60] = "S60"; FakeEngine.IdDir[T60] = "S60"; FakeEngine.IdDir[SP60] = "S60"; FakeEngine.IdDir[Q60] = "M60";
+                FakeEngine.AlsoIn[P60] = new System.Collections.Generic.List<string> { "M60", "W60" };
+                FakeEngine.Dirs["S60"] = new ScriptableObject[] { Cat60(("p0", P60), ("t", T60), ("sp", SP60)) };
+                FakeEngine.Dirs["M60"] = new ScriptableObject[] { Cat60(("S/p0", P60), ("q", Q60)) };
+                FakeEngine.Dirs["W60"] = new ScriptableObject[] { Cat60(("M/S/p0", P60)) };
+            }
+
+            // ⓪ the stub answers as the engine does (measured on 6000.6) — what the checks below stand on
+            Fresh60();
+            int s0_60 = ContentService.RegisterDirectory("S60"); ContentService.RegisterDirectory("M60");
+            var l0a_60 = new Loadable<Object>(new LoadableObjectId { value = P60 }); l0a_60.Load();
+            string latest0_60 = FakeEngine.ServingDir(P60); int away0_60 = FakeEngine.AwayRefs(P60);
+            ContentService.RegisterDirectory("W60"); string third0_60 = FakeEngine.ServingDir(P60);
+            ContentService.UnregisterDirectory(s0_60); ContentService.RegisterDirectory("S60"); string again0_60 = FakeEngine.ServingDir(P60);
+            l0a_60.Release();
+            Check(latest0_60 == "M60" && away0_60 == 1 && third0_60 == "W60" && again0_60 == "S60" && FakeEngine.AwayRefs(P60) == 0,
+                  $"N0a (stub) an id two directories carry is served from the one registered last — a third registered after both, one registered again — and a load counts against it ({latest0_60} · away {away0_60} · {third0_60} · {again0_60})");
+            Fresh60();
+            ContentService.RegisterDirectory("S60");
+            var l0b_60 = new Loadable<Object>(new LoadableObjectId { value = P60 }); var op0b_60 = l0b_60.LoadAsync();
+            int m0b_60 = ContentService.RegisterDirectory("M60");
+            FakeEngine.CompleteLoads();
+            var status0b_60 = l0b_60.Status;
+            int awayStart0_60 = FakeEngine.AwayRefs(P60);
+            var l0c_60 = new Loadable<Object>(new LoadableObjectId { value = P60 }); l0c_60.Load();
+            int awayNew0_60 = FakeEngine.AwayRefs(P60);
+            string threw0_60 = null;
+            try { ContentLoadManager.UnregisterContentDirectory(new ContentDirectoryHandle { path = "M60" }); } catch (Exception e) { threw0_60 = e.Message; }
+            l0b_60.Release(); l0c_60.Release();
+            Check(op0b_60.IsCompleted && status0b_60 == LoadableStatus.Loaded && awayStart0_60 == 0 && awayNew0_60 == 1 && threw0_60 != null && threw0_60.Contains("it serves for another directory"),
+                  $"N0b (stub) a load keeps the directory it started with — one registered while it was in flight serves the next — and unregistering that directory under a live load it serves throws, as for its owner's ({awayStart0_60} · {awayNew0_60} · {threw0_60})");
+            // ── ① ──
+            string thrown60 = null;
+            bool Unreg60(int d, bool force = false)
+            {
+                thrown60 = null; Debug.LastError = "";
+                try { return ContentService.UnregisterDirectory(d, force); }
+                catch (Exception e) { thrown60 = e.Message; return false; }
+            }
+            string Why60() => thrown60 != null ? "threw: " + thrown60 : "'" + Debug.LastError.Replace("\n", " ") + "'";
+
+            // ① the directory that serves an asset another directory's name opened refuses to go while it is held
+            Fresh60();
+            int s1_60 = ContentService.RegisterDirectory("S60"), m1_60 = ContentService.RegisterDirectory("M60");
+            var h1_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; Debug.LastError = "";
+            bool r1_60 = Unreg60(m1_60);
+            Debug.Verbose = true;
+            Check(!r1_60 && thrown60 == null && h1_60.IsValid && h1_60.Asset == p0_60 && FakeEngine.Registered.Contains("M60")
+                  && Debug.LastError.Contains("still has 1 live asset") && Debug.LastError.Contains("p0 refs=1") && Debug.LastError.Contains("a name of 'S60'"),
+                  $"N1 S60 then M60, 'p0' (S60's name) held — M60 carries it as 'S/p0' and, registered later, serves it: unregistering M60 is refused, naming the asset and the directory whose name opened it ({r1_60} · {Why60()})");
+            if (h1_60.IsValid) h1_60.Dispose(); ContentService.Collect(); Tick();
+            bool r1b_60 = Unreg60(m1_60);
+            var h1b_60 = ContentService.Acquire<Texture2D>("p0");
+            Check(r1b_60 && thrown60 == null && h1b_60.IsValid && h1b_60.Asset == p0_60 && FakeEngine.AwayRefs(P60) == 0 && Ref(P60) == 1,
+                  $"N1b … once it is released M60 goes, and 'p0' loads again from S60 ({r1b_60} · {Why60()} · away={FakeEngine.AwayRefs(P60)} ref={Ref(P60)})");
+            if (h1b_60.IsValid) h1b_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ② the directory whose name opened it still refuses
+            Fresh60();
+            int s2_60 = ContentService.RegisterDirectory("S60"); ContentService.RegisterDirectory("M60");
+            var h2_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; Debug.LastError = "";
+            bool r2_60 = Unreg60(s2_60);
+            Debug.Verbose = true;
+            Check(!r2_60 && thrown60 == null && Debug.LastError.Contains("p0 refs=1") && !Debug.LastError.Contains("a name of"),
+                  $"N2 … and S60, whose name opened it, still refuses (no second note: it is the name's own) ({r2_60} · {Why60()})");
+            if (h2_60.IsValid) h2_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ②b an ordinary refusal — the name's own directory gave it — carries no second note
+            Fresh60();
+            int s2b_60 = ContentService.RegisterDirectory("S60"); ContentService.RegisterDirectory("M60");
+            var h2b_60 = ContentService.Acquire<Texture2D>("t");
+            Debug.Verbose = false;
+            bool r2b_60 = Unreg60(s2b_60);
+            Debug.Verbose = true;
+            Check(!r2b_60 && thrown60 == null && Debug.LastError.EndsWith("t refs=1 status=Loaded"),
+                  $"N2b 't' (S60's name, S60's own asset) held: S60's refusal names it with no second note ({r2b_60} · {Why60()})");
+            if (h2b_60.IsValid) h2b_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ③ an asset opened before the later directory was registered is the earlier one's: the later one goes
+            Fresh60();
+            ContentService.RegisterDirectory("S60");
+            var h3_60 = ContentService.Acquire<Texture2D>("p0");
+            int m3_60 = ContentService.RegisterDirectory("M60");
+            Debug.Verbose = false; int e3_60 = Debug.Errors;
+            bool r3_60 = Unreg60(m3_60);
+            int errs3_60 = Debug.Errors - e3_60; Debug.Verbose = true;
+            Check(r3_60 && thrown60 == null && errs3_60 == 0 && h3_60.IsValid && h3_60.Asset == p0_60,
+                  $"N3 'p0' opened while S60 alone carried it, then M60 registered: the engine gave S60's — M60 goes while it is held ({r3_60} · {Why60()} · errors +{errs3_60})");
+            if (h3_60.IsValid) h3_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ④ three carriers: the most recently registered serves; a carrier between them neither names nor serves it
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m4_60 = ContentService.RegisterDirectory("M60"), w4_60 = ContentService.RegisterDirectory("W60");
+            var h4_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; int e4_60 = Debug.Errors;
+            bool r4m_60 = Unreg60(m4_60); string t4m_60 = thrown60;
+            int errs4m_60 = Debug.Errors - e4_60;
+            bool r4w_60 = Unreg60(w4_60); string t4w_60 = thrown60;
+            Debug.Verbose = true;
+            Check(r4m_60 && t4m_60 == null && errs4m_60 == 0 && !r4w_60 && t4w_60 == null && Debug.LastError.Contains("a name of 'S60'"),
+                  $"N4 S60, M60, W60, 'p0' held: M60 — a carrier registered between — goes; W60, which serves it, is refused (M60 {r4m_60} {t4m_60} · W60 {r4w_60} {t4w_60 ?? Debug.LastError.Replace("\n", " ")})");
+            if (h4_60.IsValid) h4_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ④b a carrier registered after the load did not give it: the one that did still refuses, the later one goes
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m4c_60 = ContentService.RegisterDirectory("M60");
+            var h4c_60 = ContentService.Acquire<Texture2D>("p0");   // M60 gives it
+            int w4c_60 = ContentService.RegisterDirectory("W60");
+            Debug.Verbose = false; int e4c_60 = Debug.Errors;
+            bool r4cw_60 = Unreg60(w4c_60); string t4cw_60 = thrown60; int errs4c_60 = Debug.Errors - e4c_60;
+            bool r4cm_60 = Unreg60(m4c_60); string t4cm_60 = thrown60;
+            Debug.Verbose = true;
+            Check(r4cw_60 && t4cw_60 == null && errs4c_60 == 0 && !r4cm_60 && t4cm_60 == null && h4c_60.IsValid && h4c_60.Asset == p0_60,
+                  $"N4c 'p0' opened while M60 was the latest carrier, then W60 registered: W60 — which never gave it — goes; M60, which did, is still refused (W60 {r4cw_60} {t4cw_60} · M60 {r4cm_60} {t4cm_60 ?? Debug.LastError.Replace("\n", " ")})");
+            if (h4c_60.IsValid) h4c_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ④c the same name acquired again (a hit) after a later carrier was registered keeps the directory that gave it
+            Fresh60();
+            ContentService.RegisterDirectory("S60");
+            var h4d_60 = ContentService.Acquire<Texture2D>("p0");   // S60 gives it
+            int m4d_60 = ContentService.RegisterDirectory("M60");
+            var h4d2_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; int e4d_60 = Debug.Errors;
+            bool r4d_60 = Unreg60(m4d_60); int errs4d_60 = Debug.Errors - e4d_60;
+            Debug.Verbose = true;
+            Check(r4d_60 && thrown60 == null && errs4d_60 == 0 && h4d2_60.IsValid,
+                  $"N4d 'p0' opened while S60 alone carried it, M60 registered, 'p0' acquired again: M60 — which never gave it — goes ({r4d_60} · {Why60()})");
+            if (h4d_60.IsValid) h4d_60.Dispose(); if (h4d2_60.IsValid) h4d2_60.Dispose(); ContentService.Collect(); Tick();
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m4e_60 = ContentService.RegisterDirectory("M60");
+            var h4e_60 = ContentService.Acquire<Texture2D>("p0");   // M60 gives it
+            int w4e_60 = ContentService.RegisterDirectory("W60");
+            var h4e2_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false;
+            bool r4ew_60 = Unreg60(w4e_60); string t4ew_60 = thrown60;
+            bool r4em_60 = Unreg60(m4e_60); string t4em_60 = thrown60;
+            Debug.Verbose = true;
+            Check(r4ew_60 && t4ew_60 == null && !r4em_60 && t4em_60 == null,
+                  $"N4e 'p0' (M60 gives it) acquired again after W60 registered: W60 goes, M60 is still refused (W60 {r4ew_60} {t4ew_60} · M60 {r4em_60} {t4em_60})");
+            if (h4e_60.IsValid) h4e_60.Dispose(); if (h4e2_60.IsValid) h4e2_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ④d an async load keeps the directory it started with when another carrier is registered while it is in flight
+            Fresh60();
+            ContentService.RegisterDirectory("S60");
+            var a4f_60 = ContentService.AcquireAsync<Texture2D>("p0");   // S60 gives it
+            int m4f_60 = ContentService.RegisterDirectory("M60");
+            FakeEngine.CompleteLoads(); Tick(); var h4f_60 = a4f_60.GetResult();
+            Debug.Verbose = false; int e4f_60 = Debug.Errors;
+            bool r4f_60 = Unreg60(m4f_60); int errs4f_60 = Debug.Errors - e4f_60;
+            Debug.Verbose = true;
+            Check(h4f_60.IsValid && r4f_60 && thrown60 == null && errs4f_60 == 0,
+                  $"N4f an async load of 'p0' started with S60 alone, M60 registered while it was in flight: the load is S60's — M60 goes ({r4f_60} · {Why60()})");
+            if (h4f_60.IsValid) h4f_60.Dispose(); ContentService.Collect(); Tick();
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m4g_60 = ContentService.RegisterDirectory("M60");
+            var a4g_60 = ContentService.AcquireAsync<Texture2D>("p0");   // M60 gives it
+            int w4g_60 = ContentService.RegisterDirectory("W60");
+            FakeEngine.CompleteLoads(); Tick(); var h4g_60 = a4g_60.GetResult();
+            Debug.Verbose = false;
+            bool r4gw_60 = Unreg60(w4g_60); string t4gw_60 = thrown60;
+            bool r4gm_60 = Unreg60(m4g_60); string t4gm_60 = thrown60;
+            Debug.Verbose = true;
+            Check(h4g_60.IsValid && r4gw_60 && t4gw_60 == null && !r4gm_60 && t4gm_60 == null,
+                  $"N4g an async load of 'p0' started with M60 the latest, W60 registered while it was in flight: W60 goes, M60 is refused (W60 {r4gw_60} {t4gw_60} · M60 {r4gm_60} {t4gm_60})");
+            if (h4g_60.IsValid) h4g_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ⑤ registered again, a directory is the most recent one again
+            Fresh60();
+            int s5_60 = ContentService.RegisterDirectory("S60"); int m5_60 = ContentService.RegisterDirectory("M60");
+            ContentService.UnregisterDirectory(s5_60); s5_60 = ContentService.RegisterDirectory("S60");
+            var h5_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; int e5_60 = Debug.Errors;
+            bool r5_60 = Unreg60(m5_60);
+            int errs5_60 = Debug.Errors - e5_60; Debug.Verbose = true;
+            Check(r5_60 && thrown60 == null && errs5_60 == 0 && h5_60.IsValid && FakeEngine.AwayRefs(P60) == 0,
+                  $"N5 S60 unregistered and registered again after M60: S60 serves 'p0' now, and M60 goes while it is held ({r5_60} · {Why60()})");
+            if (h5_60.IsValid) h5_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ⑥ forced, the serving directory takes the asset's leases with it — the handle is invalid, not alive over an unloaded object
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m6_60 = ContentService.RegisterDirectory("M60");
+            var h6_60 = ContentService.Acquire<Texture2D>("p0");
+            Debug.Verbose = false; int w6_60 = Debug.Warnings;
+            bool r6_60 = Unreg60(m6_60, force: true);
+            int warn6_60 = Debug.Warnings - w6_60; Debug.Verbose = true;
+            Check(r6_60 && thrown60 == null && !h6_60.IsValid && warn6_60 == 1 && Debug.LastWarning.Contains("force released") && Ref(P60) == 0,
+                  $"N6 force=true on M60 while 'p0' is held: the lease goes with it — the handle is invalid (one warning) ({r6_60} · {Why60()} · valid={h6_60.IsValid} · warnings +{warn6_60})");
+            ContentService.Collect(); Tick();
+
+            // ⑦ a load in flight that the directory serves: refused even when forced
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m7_60 = ContentService.RegisterDirectory("M60");
+            var a7_60 = ContentService.AcquireAsync<Texture2D>("p0");
+            Debug.Verbose = false; Debug.LastError = "";
+            bool r7_60 = Unreg60(m7_60, force: true);
+            Debug.Verbose = true;
+            Check(!r7_60 && thrown60 == null && Debug.LastError.Contains("p0 refs=1 status=Loading"),
+                  $"N7 a load of 'p0' in flight from M60: unregistering M60 is refused, forced or not ({r7_60} · {Why60()})");
+            FakeEngine.CompleteLoads(); Tick();
+            var h7_60 = a7_60.GetResult(); if (h7_60.IsValid) h7_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ⑦a a cancelled load — no lease left, the engine's load still in flight — holds the directory that serves it too
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m7c_60 = ContentService.RegisterDirectory("M60");
+            var cts7c_60 = new System.Threading.CancellationTokenSource();
+            var a7c_60 = ContentService.AcquireAsync<Texture2D>("p0", cts7c_60.Token);
+            cts7c_60.Cancel();
+            Debug.Verbose = false;
+            bool r7c_60 = Unreg60(m7c_60); string t7c_60 = thrown60; string err7c_60 = Debug.LastError;
+            bool r7cf_60 = Unreg60(m7c_60, force: true); string t7cf_60 = thrown60;
+            Debug.Verbose = true;
+            FakeEngine.CompleteLoads(); Tick();
+            try { a7c_60.GetResult(); } catch (OperationCanceledException) { }
+            ContentService.Collect(); Tick();
+            Debug.Verbose = false; bool r7ca_60 = Unreg60(m7c_60); Debug.Verbose = true;
+            Check(!r7c_60 && t7c_60 == null && err7c_60.Contains("p0 refs=0 status=Loading") && !r7cf_60 && t7cf_60 == null && r7ca_60 && thrown60 == null,
+                  $"N7c an async load of 'p0' from M60 cancelled while in flight: M60 is refused, forced or not, until the engine's load ends ({r7c_60} · forced {r7cf_60} · after {r7ca_60} · '{err7c_60.Replace("\n", " ")}')");
+
+            // ⑦b quitting with that load in flight leaves the serving directory for the next session, as the name's
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); ContentService.RegisterDirectory("M60");
+            var a7b_60 = ContentService.AcquireAsync<Texture2D>("p0");
+            string t7b_60 = null;
+            Debug.Verbose = false; int e7b_60 = Debug.Errors;
+            try { ContentService.Shutdown(); } catch (Exception e) { t7b_60 = e.Message; }
+            int errs7b_60 = Debug.Errors - e7b_60; Debug.Verbose = true;
+            Check(t7b_60 == null && errs7b_60 == 0 && FakeEngine.Registered.Contains("M60") && FakeEngine.Registered.Contains("S60"),
+                  $"N7b Shutdown with a load of 'p0' in flight from M60: neither directory is let go, and quietly — the load holds them both, as the name's own does ({(t7b_60 == null ? "no exception" : "threw: " + t7b_60)} · errors +{errs7b_60} · registered: {string.Join(",", FakeEngine.Registered)})");
+            FakeEngine.CompleteLoads(); Tick();
+
+            // ⑧ a load by id already counts against the directory that serves it
+            Fresh60();
+            int s8_60 = ContentService.RegisterDirectory("S60"); int m8_60 = ContentService.RegisterDirectory("M60");
+            var id8_60 = new LoadableObjectId { value = P60 };
+            bool asked8_60 = ContentService.TryGetLoadableObjectId("p0", out var named8_60) && named8_60.Equals(id8_60);
+            var h8_60 = ContentService.Acquire<Texture2D>(id8_60);
+            Debug.Verbose = false; int e8_60 = Debug.Errors;
+            bool r8s_60 = Unreg60(s8_60); string t8s_60 = thrown60; int errs8_60 = Debug.Errors - e8_60;
+            bool r8m_60 = Unreg60(m8_60); string t8m_60 = thrown60;
+            Debug.Verbose = true;
+            Check(asked8_60 && r8s_60 && t8s_60 == null && errs8_60 == 0 && !r8m_60 && t8m_60 == null && h8_60.IsValid,
+                  $"N8 (control) a load by id is M60's — the directory that serves it: S60 goes, M60 is refused ({r8s_60} {t8s_60} · {r8m_60} {t8m_60})");
+            if (h8_60.IsValid) h8_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ⑨ a reference takes the most recently registered directory's name
+            Fresh60();
+            ContentService.RegisterDirectory("S60"); int m9_60 = ContentService.RegisterDirectory("M60");
+            var h9_60 = ContentService.Acquire(new ContentRef<Texture2D>(G60));
+            Debug.Verbose = false;
+            bool r9_60 = Unreg60(m9_60);
+            Debug.Verbose = true;
+            Check(h9_60.IsValid && h9_60.Key == "S/p0" && !r9_60 && thrown60 == null,
+                  $"N9 (control) a reference to p0's GUID opens M60's name 'S/p0' — and M60 is refused while it is held (key {h9_60.Key} · {r9_60} · {Why60()})");
+            if (h9_60.IsValid) h9_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ⑩ an object unloaded under its holder is named as such
+            Fresh60();
+            ContentService.RegisterDirectory("S60");
+            var h10_60 = ContentService.Acquire<Texture2D>("t");
+            t_60.destroyed = true;   // what code that destroys or unloads it — or a directory gone under it — leaves
+            var sc10_60 = ContentScope.Root.CreateChild("N10");
+            Debug.Verbose = false; Debug.LastError = "";
+            var got10_60 = Run(sc10_60.LoadAsync<Texture2D>("t"));
+            string err10_60 = Debug.LastError;
+            Debug.LastError = "";
+            var got10b_60 = Run(sc10_60.LoadAsync<Texture2D>("sp"));
+            string err10b_60 = Debug.LastError;
+            Debug.Verbose = true;
+            t_60.destroyed = false;
+            Check(ReferenceEquals(got10_60, null) && err10_60.Contains("'t' was unloaded while held") && err10_60.Contains("let go of every reference to it, and it loads again after the next Collect"),
+                  $"N10 a held object that was unloaded under its holder: a scope load says so, not that it is of another type ('{err10_60}')");
+            Check(ReferenceEquals(got10b_60, null) && err10b_60 == "[ContentLink] 'sp' is Sprite, not Texture2D.",
+                  $"N10b (control) an asset of another type is still named by its type ('{err10b_60}')");
+            sc10_60.Dispose(); if (h10_60.IsValid) h10_60.Dispose(); ContentService.Collect(); Tick();
+            // ⑩c a lease a clone took over while the load was in flight, on a load that then failed: not "unloaded"
+            Fresh60();
+            FakeEngine.Assets.Remove(T60);   // 't' fails to load
+            ContentService.RegisterDirectory("S60");
+            var a10c_60 = ContentService.AcquireAsync<Texture2D>("t");
+            bool shared10c_60 = ContentService.TryShareLive("t", out var lease10c_60);
+            var clone10c_60 = ContentScope.Root.CreateChild("N10c");
+            clone10c_60.KeepHandle("t", lease10c_60);   // what a clone's inheritance does (ContentScopeOwner)
+            Debug.Verbose = false;
+            FakeEngine.CompleteLoads(); Tick(); a10c_60.GetResult();
+            Debug.LastError = "";
+            var got10c_60 = Run(clone10c_60.LoadAsync<Texture2D>("t"));
+            string err10c_60 = Debug.LastError;
+            Debug.Verbose = true;
+            Check(shared10c_60 && ReferenceEquals(got10c_60, null) && err10c_60 == "[ContentLink] 't' is null, not Texture2D.",
+                  $"N10c a lease taken over while loading, on a load that failed: the scope's load is not told it was unloaded — the slot never loaded ('{err10c_60}')");
+            clone10c_60.Dispose(); ContentService.Collect(); Tick();
+
+            // ── ① end ──
+            Fresh60();
+            Init(typeof(ContentService), "ResetStatics"); Init(typeof(ContentScope), "ResetStatics");
+            FakeEngine.Registered.Clear(); FakeEngine.RegisterOrder.Clear(); FakeEngine.AlsoIn.Clear(); FakeEngine.RefsAway.Clear();
+        }
+        Console.WriteLine("61) IMP018 7-14 — a build carries, with no name, what its content holds by id or through a catalog: one another catalog names is refused (N-10 · N-12), and a catalog saved under another extension drops the caches when imported again (N-11)");
+        {
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat61"); FakeEngine.Folders.Add("Assets/Other61");
+            ContentLinkEditorUtility.Invalidate();
+            var settings61 = ContentBuildSettings.instance;
+            var tmp61 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-61-" + Guid.NewGuid().ToString("N"));
+            settings61.Active.OutputPath = System.IO.Path.Combine(tmp61, "main");
+
+            // another profile's names: big (an asset) and os (a scene) — and an asset in no root, free
+            var big61 = new Texture2D { name = "big" }; var free61 = new Texture2D { name = "free" }; var os61 = new UnityEditor.SceneAsset { name = "os" };
+            FakeEngine.AddProjectAsset("Assets/O61/big.png", big61); FakeEngine.AddProjectAsset("Assets/O61/os.unity", os61); FakeEngine.AddProjectAsset("Assets/Lib61/free.png", free61);
+            var other61 = ScriptableObject.CreateInstance<ContentCatalog>();
+            other61.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "big", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(big61), guid = "Assets/O61/big.png", sub = "" } });
+            other61.EditorSetScenes(new[] { new ContentCatalog.SceneEntry { name = "os", id = UnityEditor.LoadableSceneIdEditorUtility.CreateLoadableSceneId("Assets/O61/os.unity"), guid = "Assets/O61/os.unity" } });
+            UnityEditor.AssetDatabase.CreateAsset(other61, "Assets/Other61/O.asset");
+            int bigId61 = FakeEngine.ObjectIdOf[big61], freeId61 = FakeEngine.ObjectIdOf[free61];
+
+            // this profile: C61 with a holder Top/h and Sub/s
+            FakeEngine.AddProjectAsset("Assets/C61/Top/h.asset", new Object { name = "h" });
+            FakeEngine.AddProjectAsset("Assets/C61/Sub/s.png", new Texture2D { name = "s" });
+            int sId61 = FakeEngine.ObjectIdOf[FakeEngine.MainAssetAt["Assets/C61/Sub/s.png"]];
+            int n61 = 0;
+            ContentBuildSettings.Profile P61(ContentBuildSettings.ArchiveMode mode = ContentBuildSettings.ArchiveMode.None, bool categories = false)
+            {
+                var p = settings61.Add("P61" + (++n61));
+                p.SourceRoot = "Assets/C61"; p.OutputPath = System.IO.Path.Combine(tmp61, p.Name); p.Archive = mode;
+                p.Catalogs = categories
+                    ? new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "Sub", CreateAt = $"Assets/Cat61/{p.Name}-sub.asset" }, new ContentBuildSettings.CatalogEntry { SubFolder = "Top", CreateAt = $"Assets/Cat61/{p.Name}-top.asset" } }
+                    : new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = $"Assets/Cat61/{p.Name}.asset" } };
+                return p;
+            }
+            void Hold61(System.Collections.Generic.List<int> ids = null, System.Collections.Generic.List<string> scenes = null)
+            {
+                FakeEngine.HeldIds.Remove("Assets/C61/Top/h.asset"); FakeEngine.HeldScenes.Remove("Assets/C61/Top/h.asset");
+                if (ids != null) FakeEngine.HeldIds["Assets/C61/Top/h.asset"] = ids;
+                if (scenes != null) FakeEngine.HeldScenes["Assets/C61/Top/h.asset"] = scenes;
+            }
+            string Errs61(ContentBuildResult r) => string.Join(" | ", r.Errors);
+
+            // ── ① the stub's manifest as the real engine writes it ──
+            Hold61();
+            var p0_61 = P61(); var r0_61 = ContentBuildRunner.Build(p0_61, showProgress: false);
+            bool rootListed0_61 = r0_61.Manifest != null && r0_61.Manifest.RootAssets.Length == 1 && Array.Exists(r0_61.Manifest.Loadables, l => l.ObjectIdHash == r0_61.Manifest.RootAssets[0]);
+            Check(r0_61.Succeeded && rootListed0_61 && r0_61.BuiltNames.Count == 2,
+                  $"X0 (stub ①) a flat build's manifest lists each root catalog as a load target, keyed by the hash RootAssets gives (measured on 6000.6: E10) — and with nothing held, the build succeeds (actual: {r0_61.Succeeded} · root listed {rootListed0_61} · names {r0_61.BuiltNames.Count} · {Errs61(r0_61)})");
+            // ── ① end ──
+            ContentLinkEditorUtility.Invalidate();   // cold: the build itself has just warmed the shared catalog cache
+            int find0_61 = UnityEditor.AssetDatabase.TypeFindCalls; var e0_61 = new System.Collections.Generic.List<string>();
+            var check0_61 = typeof(ContentBuildRunner).GetMethod("CheckLoadTargets", BindingFlags.Static | BindingFlags.NonPublic);   // by reflection: the section also runs on code without this method
+            bool ok0_61 = check0_61 != null && (bool)check0_61.Invoke(null, new object[] { r0_61.Manifest, "Assets/C61", new[] { p0_61.Catalogs[0].ResolvePath() }, e0_61 });
+            Check(ok0_61 && e0_61.Count == 0 && UnityEditor.AssetDatabase.TypeFindCalls == find0_61,
+                  $"X1 (E13 · E15) nothing held, nothing reported — and the project's catalogs are not searched: the check costs a set of the build's names (actual: {ok0_61} · {e0_61.Count} · searches {UnityEditor.AssetDatabase.TypeFindCalls - find0_61})");
+
+            // h holds big's LoadableObjectId — another catalog names big
+            Hold61(new System.Collections.Generic.List<int> { bigId61 });
+            int w2_61 = 0; ContentBuildResult r2_61 = null; w2_61 = Warn(() => r2_61 = ContentBuildRunner.Build(P61(), showProgress: false));
+            Check(!r2_61.Succeeded && r2_61.Errors.Count == 1 && r2_61.Errors[0].Contains("this build carries 1 asset(s) that 'Assets/Other61/O.asset' names") && r2_61.Errors[0].Contains("— 'big' (Assets/O61/big.png): ") && r2_61.Errors[0].Contains("content under 'Assets/C61', or an asset it references,"),
+                  $"X2 (N-12 · E4) content that holds the LoadableObjectId of an asset another catalog names fails the build, naming it, its path and that catalog (HEAD: built — the directory carries big with no name, and registered after O it serves big and unloads it when it goes — Plan-N9 E26) (actual: {r2_61.Succeeded} · {Errs61(r2_61)})");
+            bool kept2_61 = !string.IsNullOrEmpty(r2_61.ManifestPath) && System.IO.File.Exists(r2_61.ManifestPath) && System.IO.Directory.GetFiles(r2_61.OutputPath, "*.cf").Length > 0;
+            Check(kept2_61,
+                  $"X2b (control · test-net F4) a refused build's output stays on disk for inspection — the manifest and the .cf files, not only result.Files (Collect's list) (actual: kept {kept2_61})");
+            Check(w2_61 == 0,
+                  $"X2c (control · test-net F2) a refused build warns of nothing — what another catalog names is not also 'no catalog names' (actual: warnings {w2_61})");
+
+            // h holds catalog O — the build carries every name of it, the scene too
+            Hold61(new System.Collections.Generic.List<int> { bigId61 }, new System.Collections.Generic.List<string> { "Assets/O61/os.unity" });
+            var r3_61 = ContentBuildRunner.Build(P61(), showProgress: false);
+            Check(!r3_61.Succeeded && r3_61.Errors.Count == 1 && r3_61.Errors[0].Contains("this build carries 1 asset(s) and 1 scene(s) that 'Assets/Other61/O.asset' names") && r3_61.Errors[0].Contains("— scene 'os' (Assets/O61/os.unity), 'big' (Assets/O61/big.png): "),
+                  $"X3 (N-10 · E1) what holding catalog O carries — its names and its scene (the stub holds their ids; the engine's own meaning of holding a catalog is Unity L1's): one error for that catalog, counting the asset and the scene apart, the scene first (HEAD: built — 692,360 B for a 256² texture and an empty scene) (actual: {Errs61(r3_61)})");
+
+            // a scene's id alone
+            Hold61(null, new System.Collections.Generic.List<string> { "Assets/O61/os.unity" });
+            var r4_61 = ContentBuildRunner.Build(P61(), showProgress: false);
+            Check(!r4_61.Succeeded && r4_61.Errors.Count == 1 && r4_61.Errors[0].Contains("this build carries 1 scene(s) that 'Assets/Other61/O.asset' names") && r4_61.Errors[0].Contains("— scene 'os' (Assets/O61/os.unity): "),
+                  $"X4 (E6) a LoadableSceneId of a scene another catalog names fails the build too (actual: {Errs61(r4_61)})");
+
+            // an id no catalog names: a warning
+            Hold61(new System.Collections.Generic.List<int> { freeId61 }, new System.Collections.Generic.List<string> { "Assets/Lib61/loose.unity" });
+            FakeEngine.AddProjectAsset("Assets/Lib61/loose.unity", new UnityEditor.SceneAsset { name = "loose" });
+            ContentBuildResult r5_61 = null; int w5_61 = Warn(() => r5_61 = ContentBuildRunner.Build(P61(), showProgress: false));
+            bool warned5_61 = Debug.LastWarning.Contains("of 2 load target(s) no catalog of this project names as it is saved now — scene 'Assets/Lib61/loose.unity', oid-" + Unity.Loading.LoadableObjectId.OidHex(freeId61) + ": ");
+            Check(r5_61.Succeeded && w5_61 == 1 && warned5_61,
+                  $"X5 (E3) an id no catalog names is carried as well — the build succeeds with one warning that lists it (it loads by that id only) (actual: {r5_61.Succeeded} · warnings {w5_61} · {Debug.LastWarning})");
+
+            // many names of one catalog: one error, the first five listed
+            var many61 = new System.Collections.Generic.List<ContentCatalog.Entry>(); var manyIds61 = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < 7; ++i)
+            {
+                var t = new Texture2D { name = "m" + i }; FakeEngine.AddProjectAsset($"Assets/O61/m{i}.png", t);
+                many61.Add(new ContentCatalog.Entry { name = "m" + i, id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(t), guid = $"Assets/O61/m{i}.png", sub = "" }); manyIds61.Add(FakeEngine.ObjectIdOf[t]);
+            }
+            var otherMany61 = ScriptableObject.CreateInstance<ContentCatalog>(); otherMany61.EditorSetEntries(many61.ToArray());
+            UnityEditor.AssetDatabase.CreateAsset(otherMany61, "Assets/Other61/M.asset");
+            Hold61(manyIds61);
+            var r6_61 = ContentBuildRunner.Build(P61(), showProgress: false);
+            Check(!r6_61.Succeeded && r6_61.Errors.Count == 1 && r6_61.Errors[0].Contains("this build carries 7 asset(s) that 'Assets/Other61/M.asset' names") && r6_61.Errors[0].Contains("'m4' (Assets/O61/m4.png) and 2 more") && !r6_61.Errors[0].Contains("'m5'"),
+                  $"X6 a catalog held with many names is one error, the first five named (actual: {Errs61(r6_61)})");
+
+            // two categories: h (Top) holds the id of s (Sub) — the profile names it
+            Hold61(new System.Collections.Generic.List<int> { sId61 });
+            ContentBuildResult r7_61 = null; int w7_61 = Warn(() => r7_61 = ContentBuildRunner.Build(P61(categories: true), showProgress: false));
+            Check(r7_61.Succeeded && w7_61 == 0,
+                  $"X7 (control) an id another category of the same profile names is named by this build — every catalog of the profile counts (actual: {r7_61.Succeeded} · warnings {w7_61} · {Errs61(r7_61)})");
+
+            // packed: refused before packing
+            Hold61(new System.Collections.Generic.List<int> { bigId61 });
+            ContentArchivePacker.TestLimitBytes = 100;
+            var r8_61 = ContentBuildRunner.Build(P61(ContentBuildSettings.ArchiveMode.Packed), showProgress: false);
+            ContentArchivePacker.TestLimitBytes = null;
+            Check(!r8_61.Succeeded && r8_61.Errors.Count == 1 && r8_61.Errors[0].Contains("'big'") && r8_61.Archives.Length == 0 && !System.IO.File.Exists(System.IO.Path.Combine(r8_61.OutputPath, ContentArchives.IndexFile)),
+                  $"X8 a packed build is refused before it is packed — no archive, no archives.json (actual: {r8_61.Succeeded} · archives {r8_61.Archives.Length} · {Errs61(r8_61)})");
+            PpCalls.Clear();
+            var pp61 = P61(); pp61.PostProcessors = new[] { typeof(PpA).FullName };
+            var rpp61 = ContentBuildRunner.Build(pp61, showProgress: false);
+            Check(!rpp61.Succeeded && PpCalls.Count == 0,
+                  $"X8b (test-net F7) a refused build runs no post-processor (actual: {rpp61.Succeeded} · [{string.Join(",", PpCalls)}])");
+
+            // Engine: the manifest is inside the archive — not checked
+            var r9_61 = ContentBuildRunner.Build(P61(ContentBuildSettings.ArchiveMode.Engine), showProgress: false);
+            Check(r9_61.Succeeded && r9_61.Manifest == null,
+                  $"X9 (D4 · E11) an Engine archive is not checked — its manifest is inside the archive (actual: {r9_61.Succeeded} · manifest {(r9_61.Manifest != null)})");
+            Check(Debug.LastLog.Contains(", Engine — load targets not checked: the manifest is inside the archive)"),
+                  $"X9b (D4 ⓐ′ — design review 6) the Engine build's summary says it was not checked (actual: {Debug.LastLog})");
+
+            // the static Build
+            var p10_61 = P61(); settings61.SetActive(p10_61.Name);
+            int e10_61 = Debug.Errors; Debug.Verbose = false; var rep10_61 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            bool said10_61 = Debug.LastError.Contains("'Assets/Other61/O.asset' names") && Debug.LastError.Contains("'big'");
+            Hold61();
+            Debug.Verbose = false; var rep10b_61 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            Check(rep10_61 == null && Debug.Errors - e10_61 == 1 && said10_61 && rep10b_61 != null && rep10b_61.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded,
+                  $"X10 (D5) the static Build refuses it too — null, the reason logged; with nothing held it builds (actual: {(rep10_61 == null ? "null" : "report")} · errors {Debug.Errors - e10_61} · {said10_61} · {(rep10b_61 == null ? "null" : "report")})");
+            Hold61(new System.Collections.Generic.List<int> { bigId61 });
+            var p10c_61 = P61(); settings61.SetActive(p10c_61.Name);
+            Debug.Verbose = false; var rep10c_61 = ContentDirectoryBuilder.Build(); Debug.Verbose = true;
+            bool kept10c_61 = System.IO.Directory.Exists(p10c_61.OutputPath) && ContentBuildManifest.Read(p10c_61.OutputPath, out _) != null;
+            Check(rep10c_61 == null && kept10c_61,
+                  $"X10b (test-net F4) the static Build's refusal leaves the output, as its summary says (actual: {(rep10c_61 == null ? "null" : "report")} · kept {kept10c_61})");
+
+            // mixed: two other catalogs and two loose targets in one build
+            Hold61(new System.Collections.Generic.List<int> { bigId61, manyIds61[0], freeId61 }, new System.Collections.Generic.List<string> { "Assets/O61/os.unity", "Assets/Lib61/loose.unity" });
+            ContentBuildResult r12_61 = null; int w12_61 = Warn(() => r12_61 = ContentBuildRunner.Build(P61(), showProgress: false));
+            bool err12_61 = r12_61.Errors.Count == 2
+                && r12_61.Errors[0].Contains("this build carries 1 asset(s) that 'Assets/Other61/M.asset' names") && r12_61.Errors[0].Contains("— 'm0' (Assets/O61/m0.png): ")
+                && r12_61.Errors[1].Contains("this build carries 1 asset(s) and 1 scene(s) that 'Assets/Other61/O.asset' names") && r12_61.Errors[1].Contains("— scene 'os' (Assets/O61/os.unity), 'big' (Assets/O61/big.png): ");
+            bool warn12_61 = w12_61 == 1 && Debug.LastWarning.Contains("of 2 load target(s) no catalog of this project names as it is saved now — scene 'Assets/Lib61/loose.unity', oid-" + Unity.Loading.LoadableObjectId.OidHex(freeId61) + ": ");
+            Check(!r12_61.Succeeded && err12_61 && warn12_61,
+                  $"X12 (test-net F2) one build carrying two other catalogs' names and two loose targets — one error per catalog in path order, each counting and listing its own only, and the warning as well (actual: {r12_61.Succeeded} · {Errs61(r12_61)} · warnings {w12_61} · {Debug.LastWarning})");
+
+            // a catalog and a scene whose GUID is not their path (the stub's convention hides GUIDToAssetPath and GUID/Path mix-ups)
+            var g61 = new Texture2D { name = "g" }; FakeEngine.AddProjectAsset("Assets/O61/g.png", g61);
+            FakeEngine.AddProjectAsset("Assets/O61/gs.unity", new UnityEditor.SceneAsset { name = "gs" }); FakeEngine.SetGuid("Assets/O61/gs.unity", "6a5c0000000000000000000000000001");
+            var otherG61 = ScriptableObject.CreateInstance<ContentCatalog>();
+            otherG61.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "g", id = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(g61), guid = "Assets/O61/g.png", sub = "" } });
+            otherG61.EditorSetScenes(new[] { new ContentCatalog.SceneEntry { name = "gs", id = UnityEditor.LoadableSceneIdEditorUtility.CreateLoadableSceneId("Assets/O61/gs.unity"), guid = "6a5c0000000000000000000000000001" } });
+            FakeEngine.SetGuid("Assets/Other61/G.asset", "6a5c0000000000000000000000000002"); UnityEditor.AssetDatabase.CreateAsset(otherG61, "Assets/Other61/G.asset");
+            Hold61(new System.Collections.Generic.List<int> { FakeEngine.ObjectIdOf[g61] }, new System.Collections.Generic.List<string> { "Assets/O61/gs.unity" });
+            var r13_61 = ContentBuildRunner.Build(P61(), showProgress: false);
+            Check(!r13_61.Succeeded && r13_61.Errors.Count == 1 && r13_61.Errors[0].Contains("this build carries 1 asset(s) and 1 scene(s) that 'Assets/Other61/G.asset' names") && r13_61.Errors[0].Contains("— scene 'gs' (Assets/O61/gs.unity), 'g' (Assets/O61/g.png): "),
+                  $"X13 (test-net F6) a catalog found by a GUID that is not its path, and a scene whose GUID is not its path, are named all the same (actual: {r13_61.Succeeded} · {Errs61(r13_61)})");
+
+            // two categories: a scene the second category's catalog names
+            FakeEngine.AddProjectAsset("Assets/C61/Top/ts.unity", new UnityEditor.SceneAsset { name = "ts" });
+            Hold61();
+            ContentBuildResult r7b_61 = null; int w7b_61 = Warn(() => r7b_61 = ContentBuildRunner.Build(P61(categories: true), showProgress: false));
+            bool listed7b_61 = r7b_61.Manifest?.LoadableScenes != null && r7b_61.Manifest.LoadableScenes.Length == 1;
+            Check(r7b_61.Succeeded && w7b_61 == 0 && listed7b_61,
+                  $"X7b (control · test-net F1) a scene the second category's catalog names is named by this build — every catalog's scenes count (actual: {r7b_61.Succeeded} · warnings {w7b_61} · listed {listed7b_61} · {Errs61(r7b_61)})");
+
+            // a copy left behind names big too — under two names of the one id, as an atlas's name for a sprite does
+            var bigOid61 = UnityEditor.LoadableObjectIdEditorUtility.CreateLoadableObjectId(big61);
+            var copy61 = ScriptableObject.CreateInstance<ContentCatalog>();
+            copy61.EditorSetEntries(new[] { new ContentCatalog.Entry { name = "big", id = bigOid61, guid = "Assets/O61/big.png", sub = "" }, new ContentCatalog.Entry { name = "Atlas/A[big]", id = bigOid61, guid = "Assets/O61/big.png", sub = "big" } });
+            UnityEditor.AssetDatabase.CreateAsset(copy61, "Assets/Other61/Copy.asset");
+            Hold61(new System.Collections.Generic.List<int> { bigId61 });
+            var r14_61 = ContentBuildRunner.Build(P61(), showProgress: false);
+            FakeEngine.MainAssetAt.Remove("Assets/Other61/Copy.asset"); FakeEngine.PathOf.Remove(copy61);
+            Check(!r14_61.Succeeded && r14_61.Errors.Count == 2 && r14_61.Errors[0].Contains("this build carries 1 asset(s) that 'Assets/Other61/Copy.asset' names") && r14_61.Errors[0].Contains("— 'big' (Assets/O61/big.png): ")
+                  && r14_61.Errors[1].Contains("this build carries 1 asset(s) that 'Assets/Other61/O.asset' names"),
+                  $"X14 (design review 3) every catalog that names what the build carries gets its error, in path order — a copy left behind as well as the live one — and an id under two names of one catalog counts once (actual: {Errs61(r14_61)})");
+
+            // a manifest of a version the package does not know
+            UnityEditor.BuildPipeline.ManifestVersion = 2;
+            ContentBuildResult r16_61 = null; int w16_61 = Warn(() => r16_61 = ContentBuildRunner.Build(P61(), showProgress: false));
+            UnityEditor.BuildPipeline.ManifestVersion = 1;
+            Check(r16_61.Succeeded && r16_61.Manifest == null && w16_61 == 1 && Debug.LastWarning.Contains("is version 2"),
+                  $"X16 (control · U-1) a manifest of a version the package does not know is not checked — the build goes on with the reader's one warning (actual: {r16_61.Succeeded} · manifest {(r16_61.Manifest != null)} · warnings {w16_61} · {Debug.LastWarning})");
+
+            // BuildAll updates every catalog first — a profile built before M sees what M's root names now
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            var st15_61 = ContentBuildSettings.instance;
+            var d15_61 = st15_61.Active; d15_61.SourceRoot = "Assets/D61"; d15_61.OutputPath = System.IO.Path.Combine(tmp61, "D61"); d15_61.Archive = ContentBuildSettings.ArchiveMode.None;
+            d15_61.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat61/D61.asset" } };
+            var m15_61 = st15_61.Add("M61"); m15_61.SourceRoot = "Assets/M61"; m15_61.OutputPath = System.IO.Path.Combine(tmp61, "M61"); m15_61.Archive = ContentBuildSettings.ArchiveMode.None;
+            m15_61.Catalogs = new[] { new ContentBuildSettings.CatalogEntry { SubFolder = "", CreateAt = "Assets/Cat61/M61.asset" } };
+            FakeEngine.AddProjectAsset("Assets/M61/old.png", new Texture2D { name = "old" });
+            FakeEngine.AddProjectAsset("Assets/D61/h.asset", new Object { name = "dh" });
+            var m15first_61 = ContentBuildRunner.Build(m15_61, showProgress: false);   // M's catalog names old only
+            var new61 = new Texture2D { name = "new" }; FakeEngine.AddProjectAsset("Assets/M61/new.png", new61);
+            FakeEngine.HeldIds["Assets/D61/h.asset"] = new System.Collections.Generic.List<int> { FakeEngine.ObjectIdOf[new61] };
+            ContentLinkEditorUtility.Invalidate();
+            System.Collections.Generic.List<ContentBuildResult> all15_61 = null; int w15_61 = Warn(() => all15_61 = ContentBuildRunner.BuildAll(showProgress: false));
+            Check(m15first_61.Succeeded && all15_61.Count == 1 && !all15_61[0].Succeeded && all15_61[0].Errors.Count == 1 && all15_61[0].Errors[0].Contains("that 'Assets/Cat61/M61.asset' names") && all15_61[0].Errors[0].Contains("— 'new' (Assets/M61/new.png): "),
+                  $"X15 (D8 ⓒ — design review 1) BuildAll updates every profile's catalogs before it builds any: D, built before M, is refused for the id of an asset M's root has gained since M was built (v2 · HEAD: D built with a warning, then M — the id shipped unnamed) (actual: {m15first_61.Succeeded} · {all15_61.Count} · {(all15_61.Count > 0 ? all15_61[0].Succeeded + " · " + Errs61(all15_61[0]) : "")} · warnings {w15_61})");
+
+            // a catalog saved under another extension, imported again
+            var preset61 = ScriptableObject.CreateInstance<ContentCatalog>(); UnityEditor.AssetDatabase.CreateAsset(preset61, "Assets/Cat61/w.preset");
+            var mat61 = new Object { name = "m" }; FakeEngine.AddProjectAsset("Assets/C61/m.mat", mat61);
+            int g11a_61 = ContentLinkEditorUtility.Generation; FakeEngine.Import(new[] { "Assets/Cat61/w.preset" });
+            int g11b_61 = ContentLinkEditorUtility.Generation; FakeEngine.Import(new[] { "Assets/C61/m.mat" });
+            int g11c_61 = ContentLinkEditorUtility.Generation; FakeEngine.Import(new[] { "Assets/Other61/O.asset" });
+            int g11d_61 = ContentLinkEditorUtility.Generation;
+            Check(g11b_61 == g11a_61 + 1,
+                  $"X11 (N-11 · E12) a catalog saved as .preset and imported again drops the editor's caches — the engine imports it as a catalog (HEAD: kept — the watcher looked at .asset paths only) (actual: generation +{g11b_61 - g11a_61})");
+            Check(g11c_61 == g11b_61 && g11d_61 == g11c_61 + 1,
+                  $"X11b (control) another asset imported again keeps them, a catalog at .asset drops them (actual: +{g11c_61 - g11b_61} · +{g11d_61 - g11c_61})");
+            var matCat61 = ScriptableObject.CreateInstance<ContentCatalog>(); UnityEditor.AssetDatabase.CreateAsset(matCat61, "Assets/Cat61/w.mat");
+            int g11e_61 = ContentLinkEditorUtility.Generation; FakeEngine.Import(new[] { "Assets/Cat61/w.mat" });
+            int g11f_61 = ContentLinkEditorUtility.Generation;
+            Check(g11f_61 == g11e_61 + 1,
+                  $"X11c (test-net F5) a catalog saved as .mat and imported again drops the caches as well — by its type, not a list of extensions (E12 measured .preset and .mat) (actual: +{g11f_61 - g11e_61})");
+            try { System.IO.Directory.Delete(tmp61, true); } catch (System.IO.IOException) { }
+        }
+        Console.WriteLine("62) build window — a category's findings go under the rows they are about (both rows of a pair, one row otherwise), the profile's own stay below, and Validate(Profile) is unchanged");
+        {
+            UnityEditor.ScriptableSingleton<ContentBuildSettings>.ResetForTests();
+            ContentDirectoryBuilder.ClearOverrides();
+            FakeEngine.ClearProject(); FakeEngine.Folders.Add("Assets/Cat62");
+            ContentLinkEditorUtility.Invalidate();
+            var settings62 = ContentBuildSettings.instance;
+            var tmp62 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clink-62-" + Guid.NewGuid().ToString("N"));
+            settings62.Active.SourceRoot = "Assets/Main62"; settings62.Active.OutputPath = System.IO.Path.Combine(tmp62, "main");
+            FakeEngine.AddProjectAsset("Assets/C62/Icons/a.png", new Texture2D { name = "a" });
+            FakeEngine.AddProjectAsset("Assets/C62/Materials/m.mat", new Object { name = "m" });
+            int n62 = 0;
+            ContentBuildSettings.Profile P62(params (string sub, string at)[] cats)
+            {
+                var p = settings62.Add("P62_" + (++n62));
+                p.SourceRoot = "Assets/C62"; p.OutputPath = System.IO.Path.Combine(tmp62, p.Name); p.Archive = ContentBuildSettings.ArchiveMode.None;
+                p.Catalogs = Array.ConvertAll(cats, c => new ContentBuildSettings.CatalogEntry { SubFolder = c.sub, CreateAt = c.at });
+                return p;
+            }
+            var rows62 = new System.Collections.Generic.List<(int Row, string Error)>();
+            // one finding containing `what`, attached to exactly `rows` in that order — and the overload returns what Validate(Profile) returns
+            bool One62(ContentBuildSettings.Profile p, string what, out string actual, params int[] rows)
+            {
+                rows62.Clear();
+                var errors = settings62.Validate(p, rows62);
+                actual = $"{string.Join(" | ", errors)} @ rows {string.Join(",", rows62.ConvertAll(r => r.Row))}";
+                if (errors.Count != 1 || !errors[0].Contains(what) || rows62.Count != rows.Length) return false;
+                for (int i = 0; i < rows.Length; ++i) if (rows62[i].Row != rows[i] || rows62[i].Error != errors[0]) return false;
+                return string.Join("\n", errors) == string.Join("\n", settings62.Validate(p));
+            }
+
+            // W1 · W2: a pair goes under both rows — also a pair past the first row
+            Check(One62(P62(("", "Assets/Cat62/w1a.asset"), ("Icons", "Assets/Cat62/w1b.asset")), "overlap", out var w1_62, 0, 1)
+                  & One62(P62(("Materials", "Assets/Cat62/w1c.asset"), ("Icons", "Assets/Cat62/w1d.asset"), ("Icons/Sub", "Assets/Cat62/w1e.asset")), "overlap", out var w1b_62, 1, 2),
+                  $"W1 overlapping categories: the finding is under both rows ({w1_62} // {w1b_62})");
+            Check(One62(P62(("Icons", "Assets/Cat62/w2.asset"), ("Materials", "Assets/Cat62/w2.asset")), "write the same catalog", out var w2_62, 0, 1)
+                  & One62(P62(("Icons", "Assets/Cat62/w2b.asset"), ("Materials", "Assets/Cat62/w2c.asset"), ("A62", "Assets/Cat62/w2c.asset")), "write the same catalog", out var w2b_62, 1, 2),
+                  $"W2 two categories on one catalog: the finding is under both rows ({w2_62} // {w2b_62})");
+
+            // W3: every other category finding goes under its own row — the second row, so a finding filed under row 0 shows
+            Check(One62(P62(("Materials", "Assets/Cat62/w3a1.asset"), ("icons", "Assets/Cat62/w3a2.asset")), "is spelled 'Icons'", out var w3a_62, 1),
+                  $"W3a a category spelled in another case than on disk: under its row ({w3a_62})");
+            Check(One62(P62(("Icons", "Assets/Cat62/w3b1.asset"), ("Materials", "Assets/C62/w3b2.asset")), "would catalogue itself", out var w3b_62, 1),
+                  $"W3b a catalog under the source root: under its row ({w3b_62})");
+            Check(One62(P62(("Icons", "Assets/Cat62/w3c1.asset"), ("Materials", "")), "has no catalog", out var w3c_62, 1),
+                  $"W3c a category with no catalog: under its row ({w3c_62})");
+            P62(("Icons", "Assets/Cat62/w3d-shared.asset"));
+            Check(One62(P62(("Icons", "Assets/Cat62/w3d1.asset"), ("Materials", "Assets/Cat62/w3d-shared.asset")), "is also written by profile", out var w3d_62, 1),
+                  $"W3d a catalog another profile writes: under its row ({w3d_62})");
+            var p3e_62 = P62(("Icons", "Assets/Cat62/w3e1.asset"), ("Materials", "Assets/Out62/w3e2.asset")); p3e_62.OutputPath = "Assets/Out62";
+            Check(One62(p3e_62, "lies inside the output path", out var w3e_62, 1),
+                  $"W3e a catalog inside the output path: under its row ({w3e_62})");
+            Check(One62(P62(("Icons", "Assets/Cat62/w3f1.asset"), ("Materials", "Packages/w62/w3f2.asset")), "would be created outside Assets/", out var w3f_62, 1),
+                  $"W3f a catalog to be created outside Assets/: under its row ({w3f_62})");
+
+            // W4: no category at all is the profile's own
+            rows62.Clear();
+            var e4_62 = settings62.Validate(P62(), rows62);
+            Check(e4_62.Count == 1 && e4_62[0].Contains("no category") && rows62.Count == 0,
+                  $"W4 no category: a finding about no row ({string.Join(" | ", e4_62)} @ {rows62.Count} rows)");
+
+            // W5: the model splits them — Errors and CanBuild see every finding, the pair under its rows, the target mismatch below; an edit refreshes the rows
+            var p5_62 = P62(("", "Assets/Cat62/w5a.asset"), ("Icons", "Assets/Cat62/w5b.asset")); p5_62.Target = UnityEditor.BuildTarget.StandaloneWindows64;
+            var m5_62 = new ContentBuildWindowModel(); m5_62.Select(p5_62.Name);
+            var c5_62 = m5_62.CategoryErrors;
+            Check(m5_62.Errors.Count == 2 && !m5_62.CanBuild && m5_62.ProfileErrors.Count == 1 && m5_62.ProfileErrors[0].Contains("active build target")
+                  && c5_62.Count == 2 && c5_62[0].Row == 0 && c5_62[1].Row == 1 && c5_62[0].Error.Contains("overlap") && c5_62[1].Error == c5_62[0].Error,
+                  $"W5 the model: the overlap under rows 0 and 1, the target mismatch below, both in Errors (errors={string.Join(" | ", m5_62.Errors)} · below={string.Join(" | ", m5_62.ProfileErrors)} · rows={c5_62.Count})");
+            m5_62.RemoveCategory(0);
+            Check(m5_62.CategoryErrors.Count == 0 && m5_62.ProfileErrors.Count == 1 && m5_62.Errors.Count == 1,
+                  $"W5b removing a row of the pair clears the rows' findings; the profile's own stays (rows={m5_62.CategoryErrors.Count} · below={m5_62.ProfileErrors.Count} · errors={m5_62.Errors.Count})");
+
+            // W6: every finding of every profile above is shown in exactly one place — under rows, or below
+            var wrong62 = new System.Collections.Generic.List<string>();
+            foreach (var p in settings62.Profiles)
+            {
+                var m = new ContentBuildWindowModel(); m.Select(p.Name);
+                foreach (var e in m.Errors)
+                {
+                    bool below = false, underRow = false;
+                    foreach (var b in m.ProfileErrors) below |= b == e;
+                    foreach (var c in m.CategoryErrors) underRow |= c.Error == e;
+                    if (below == underRow) wrong62.Add($"{p.Name}: {(below ? "both" : "neither")}: {e}");
+                }
+            }
+            Check(wrong62.Count == 0 && settings62.Profiles.Count == 14,
+                  $"W6 each finding is shown once: under its rows or below, never both, never neither ({settings62.Profiles.Count} profiles · {string.Join(" | ", wrong62)})");
+            try { System.IO.Directory.Delete(tmp62, true); } catch (System.IO.IOException) { }
+        }
+
+        Console.WriteLine("end) the run as a whole");
+#pragma warning disable CS1998
+        async void CanaryEnd() { throw new InvalidOperationException("canary"); }
+#pragma warning restore CS1998
+        int canaryAt = FakeEngine.AsyncVoidExceptions.Count; CanaryEnd();
+        bool canary = FakeEngine.AsyncVoidExceptions.Count == canaryAt + 1 && FakeEngine.AsyncVoidExceptions[canaryAt].Message == "canary";
+        if (canary) FakeEngine.AsyncVoidExceptions.RemoveAt(canaryAt);
+        Check(canary, "the recording context records an exception that escapes an async void — a canary: the judgment below would pass with no context at all");
+        Check(FakeEngine.AsyncVoidExceptions.Count == 0, $"no exception escaped an async void method — StartLoad · StartResourcesLoad ({FakeEngine.AsyncVoidExceptions.Count}{(FakeEngine.AsyncVoidExceptions.Count > 0 ? ": " + FakeEngine.AsyncVoidExceptions[0].GetType().Name + " " + FakeEngine.AsyncVoidExceptions[0].Message : "")})");
 
         Console.WriteLine(fails == 0 ? "\nALL PASS" : $"\n{fails} FAIL");
     }

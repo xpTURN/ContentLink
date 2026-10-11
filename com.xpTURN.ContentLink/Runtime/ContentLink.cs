@@ -18,6 +18,7 @@ namespace xpTURN.ContentLink
     /// A sprite sub-asset is the main name plus the sprite's name, kept apart like ContentRef's m_SubObjectName:
     /// ("Icons/sheet", "s0") loads the catalog name "Icons/sheet[s0]". With no sub-object name, Name is the catalog name
     /// as it is, so a full "Icons/sheet[s0]" still loads.
+    /// A name that starts with "res:" loads from a Resources folder of the player: "res:UI/logo", ("res:UI/sheet", "s0").
     /// </summary>
     [Serializable]
     public class ContentLink<T> where T : Object

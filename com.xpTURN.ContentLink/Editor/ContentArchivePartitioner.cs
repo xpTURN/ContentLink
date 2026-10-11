@@ -62,7 +62,7 @@ namespace xpTURN.ContentLink.Editor
     /// <summary>Name helpers the built-in partitioners share; a custom one may use them too.</summary>
     public static class ArchiveNaming
     {
-        public const string Extension = ".archive";
+        public const string Extension = ContentArchives.ArchiveExtension;
 
         public static byte[] Md5(string text)
         {
@@ -90,14 +90,11 @@ namespace xpTURN.ContentLink.Editor
     /// </summary>
     public static class ArchivePartitionValidator
     {
-        static readonly char[] k_InvalidNameChars = InvalidNameChars();
-        static char[] InvalidNameChars() { var l = new List<char> { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }; for (int c = 0; c < 32; ++c) l.Add((char)c); return l.ToArray(); }
         public static bool Validate(ArchivePartitionInput input, IReadOnlyList<ArchiveGroup> groups, List<string> errors, List<string> warnings)
         {
             int before = errors.Count;
             if (groups == null) { errors.Add("partitioner returned null"); return false; }
 
-            var invalid = k_InvalidNameChars;   // a fixed set: Path.GetInvalidFileNameChars() depends on the platform the build runs on
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var inputs = new HashSet<string>(input.Files ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             var seen = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -113,8 +110,10 @@ namespace xpTURN.ContentLink.Editor
                 if (name.Length == 0) errors.Add($"group {g} has no name");
                 else
                 {
-                    if (name.IndexOfAny(invalid) >= 0 || name.IndexOf('/') >= 0 || name.IndexOf('\\') >= 0 || name == "." || name == "..")
+                    if (!ContentArchives.IsPlainFileName(name))
                         errors.Add($"archive name '{name}' is not a plain file name");
+                    else if (!ContentArchives.IsPortableName(name))
+                        errors.Add($"archive name '{name}' has a character a URL or a CDN key does not carry as is — letters, digits, '.', '-' and '_' only");
                     if (!name.EndsWith(ArchiveNaming.Extension, StringComparison.Ordinal))
                         errors.Add($"archive name '{name}' does not end with {ArchiveNaming.Extension}");
                     if (string.Equals(name, ContentArchives.IndexFile, StringComparison.OrdinalIgnoreCase) || inputs.Contains(name))

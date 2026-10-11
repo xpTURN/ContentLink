@@ -45,14 +45,17 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::xpTURN.ContentLink.Samples.LinkShowcase
   iconA:
-    m_Name: Atlas/piece_1_1
+    m_Name: Atlas/piece_1_1.jpg
     m_SubObjectName: piece_1_1
   iconB:
-    m_Name: Atlas/piece_2_2
+    m_Name: Atlas/SampleAtlas.spriteatlasv2
     m_SubObjectName: piece_2_2
   clip:
-    m_Name: Wav/descent
-    m_SubObjectName: 
+    m_Name: Wav/descent.mp3
+    m_SubObjectName:
   material:
-    m_Name: Materials/Test
-    m_SubObjectName: 
+    m_Name: Materials/Test.mat
+    m_SubObjectName:
+  badge:
+    m_Name: res:Sample/badge
+    m_SubObjectName: badge
